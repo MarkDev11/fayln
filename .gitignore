@@ -1,0 +1,46 @@
+# Repositori fayLN — backend, frontend, dan dokumen.
+#
+# Setiap aplikasi di blitz.cloud dibangun dari satu folder:
+#   backend  → folder "backend"
+#   frontend → folder "frontend"
+# Karena itu keduanya berada dalam satu repositori ini.
+
+# Dependensi
+node_modules/
+.pnp/
+.pnp.js
+
+# Hasil build
+dist/
+build/
+web-build/
+.expo/
+
+# Lingkungan — JANGAN pernah di-commit
+.env
+.env.*
+!.env.example
+
+# Log
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor dan OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Native
+android/
+ios/
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Uji
+coverage/

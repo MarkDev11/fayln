@@ -1,0 +1,200 @@
+/**
+ * Kontrak gateway cerita.
+ *
+ * Frontend hanya berbicara dengan antarmuka ini. Mengganti mock ke backend nyata
+ * tidak boleh mengubah satu pun komponen layar (NFR-15).
+ */
+
+import type {
+  Beat,
+  GenreId,
+  JourneyDetailDTO,
+  JourneySummary,
+  MemorySnapshot,
+  RelationEntry,
+  TurnResultEnvelope,
+  UsageDTO,
+  WorldCatalogItem,
+  WorldDetailDTO,
+} from '@/domain/types';
+
+export type CatalogQuery = {
+  search?: string;
+  genres?: GenreId[];
+  page?: number;
+  pageSize?: number;
+};
+
+export type CatalogPage = {
+  items: WorldCatalogItem[];
+  page: number;
+  pageSize: number;
+  total: number;
+  hasMore: boolean;
+};
+
+export type SubmitChoiceInput = {
+  clientOperationId: string;
+  journeyId: string;
+  decisionId: string;
+  optionId: string;
+  responseLocale: 'id-ID' | 'en-US';
+};
+
+export type SubmitCustomInput = {
+  clientOperationId: string;
+  journeyId: string;
+  decisionId: string;
+  customText: string;
+  responseLocale: 'id-ID' | 'en-US';
+};
+
+export type CreateJourneyInput = {
+  clientOperationId: string;
+  worldId: string;
+  persona: { name: string; age: number };
+  responseLocale: 'id-ID' | 'en-US';
+};
+
+export type CreateJourneyResult = {
+  journeyId: string;
+  worldVersion: number;
+  opening: TurnResultEnvelope;
+};
+
+/**
+ * Sesi bermain: semua yang dibutuhkan pemutar untuk memulai atau melanjutkan.
+ *
+ * `relationsBaseline` SENGAJA berisi hubungan SEBELUM beat mana pun, bukan hubungan
+ * kanonik terkini. Frontend menurunkan hubungan yang boleh dilihat dengan menerapkan
+ * hanya beat yang sudah dibaca pemain. Bila server mengirim hubungan kanonik di sini,
+ * perubahan dari beat yang belum dibaca akan bocor ke UI (R-04, AC-12).
+ */
+export type JourneySession = {
+  journeyId: string;
+  world: WorldDetailDTO;
+  /** Seluruh beat yang sudah di-commit, terurut menaik. */
+  beats: Beat[];
+  relationsBaseline: RelationEntry[];
+  memory: MemorySnapshot;
+  /** Perkiraan posisi baca menurut server; frontend tetap memakai autosave lokal. */
+  committedCursor: number;
+  simulator: boolean;
+};
+
+export type ReadProgressInput = {
+  journeyId: string;
+  /** Jumlah beat yang sudah benar-benar dibaca pemain. */
+  lastReadSequence: number;
+  lastReadBeatId: string;
+  decisionCount: number;
+  hasUnreadBeats: boolean;
+};
+
+export const REPORT_CATEGORIES = [
+  'story',
+  'character',
+  'asset',
+  'relationship',
+  'content',
+  'technical',
+] as const;
+export type ReportCategory = (typeof REPORT_CATEGORIES)[number];
+
+export function isReportCategory(value: unknown): value is ReportCategory {
+  return typeof value === 'string' && (REPORT_CATEGORIES as readonly string[]).includes(value);
+}
+
+export type ReportInput = {
+  clientOperationId: string;
+  category: ReportCategory;
+  /** Keterangan yang ditulis pemain. Boleh kosong. */
+  detail: string;
+  /** Konteks opsional; hanya disertakan bila pemain memilihnya. */
+  journeyId?: string;
+  beatId?: string;
+};
+
+export type ReportResult = {
+  reportId: string;
+  accepted: boolean;
+  /** Benar bila laporan hanya dicatat lokal dan belum sampai ke server. */
+  localOnly: boolean;
+};
+
+export type OperationStatus = {
+  operationId: string;
+  state: 'running' | 'succeeded' | 'failed';
+  result: TurnResultEnvelope | null;
+  errorCode: string | null;
+};
+
+/** Skenario gangguan yang dapat dipicu manual saat pengembangan dan pengujian. */
+export type FaultMode =
+  | 'none'
+  | 'slow'
+  | 'timeout'
+  | 'quotaExhausted'
+  | 'conflict'
+  | 'assetMissing'
+  | 'rateLimited'
+  | 'abuseBlocked'
+  | 'modelUnavailable';
+
+export interface StoryGateway {
+  /** Penanda mode simulator agar UI tidak pernah mengklaim AI sungguhan (NFR-16). */
+  readonly isSimulator: boolean;
+
+  fetchCatalog(query: CatalogQuery): Promise<CatalogPage>;
+  fetchWorld(worldId: string): Promise<WorldDetailDTO>;
+
+  fetchJourneys(): Promise<JourneySummary[]>;
+  fetchJourneyDetail(journeyId: string): Promise<JourneyDetailDTO>;
+  /** Membuka sesi bermain untuk memulai atau melanjutkan (FR-23, FR-25). */
+  openJourneySession(journeyId: string): Promise<JourneySession>;
+  createJourney(input: CreateJourneyInput): Promise<CreateJourneyResult>;
+  deleteJourney(journeyId: string): Promise<void>;
+  /**
+   * Melaporkan posisi baca pemain.
+   *
+   * Tanpa ini, daftar Perjalanan akan selalu menampilkan "belum selesai dibaca"
+   * karena server tidak tahu bagian mana yang benar-benar sudah dilihat pemain.
+   */
+  syncReadProgress(input: ReadProgressInput): Promise<void>;
+
+  submitChoice(input: SubmitChoiceInput): Promise<TurnResultEnvelope>;
+  submitCustom(input: SubmitCustomInput): Promise<TurnResultEnvelope>;
+  fetchOperation(operationId: string): Promise<OperationStatus>;
+
+  fetchUsage(): Promise<UsageDTO>;
+
+  /**
+   * Mengirim laporan masalah.
+   *
+   * Isi cerita TIDAK dikirim otomatis; hanya kategori dan keterangan yang ditulis
+   * pemain (NFR-10, docs/10 §5).
+   */
+  submitReport(input: ReportInput): Promise<ReportResult>;
+}
+
+export class StoryGatewayError extends Error {
+  readonly code: string;
+  readonly retryable: boolean;
+  readonly retryAfterSec?: number;
+  readonly blockedUntil?: string;
+
+  constructor(options: {
+    code: string;
+    message: string;
+    retryable: boolean;
+    retryAfterSec?: number;
+    blockedUntil?: string;
+  }) {
+    super(options.message);
+    this.name = 'StoryGatewayError';
+    this.code = options.code;
+    this.retryable = options.retryable;
+    this.retryAfterSec = options.retryAfterSec;
+    this.blockedUntil = options.blockedUntil;
+  }
+}

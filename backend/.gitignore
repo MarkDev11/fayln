@@ -1,0 +1,20 @@
+node_modules/
+dist/
+coverage/
+
+# Jangan pernah commit berkas lingkungan
+.env
+.env.*
+!.env.example
+
+# Log
+*.log
+npm-debug.log*
+
+# Editor
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db

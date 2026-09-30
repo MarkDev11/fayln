@@ -1,0 +1,335 @@
+import type { Dictionary } from './id';
+
+/** Kamus Bahasa Inggris. Wajib memuat seluruh kunci yang ada di id.ts. */
+export const en: Dictionary = {
+  'app.name': 'fayLN',
+  'app.tagline': 'Choose your path, live your story.',
+
+  'common.retry': 'Try again',
+  'common.cancel': 'Cancel',
+  'common.close': 'Close',
+  'common.back': 'Back',
+  'common.loading': 'Loading…',
+  'common.reset': 'Reset',
+  'common.apply': 'Apply',
+  'common.seeAll': 'See all',
+  'common.optional': 'optional',
+
+  'tabs.home': 'Home',
+  'tabs.journey': 'Journeys',
+  'tabs.settings': 'Settings',
+
+  'sim.badge': 'SIMULATOR',
+  'sim.notice':
+    'Simulator mode. The story below comes from bundled sample data, not from a real AI.',
+
+  'home.title': 'Home',
+  'home.searchLabel': 'Search story titles',
+  'home.searchPlaceholder': 'Search titles…',
+  'home.searchClear': 'Clear search',
+  'home.filterOpen': 'Open genre filter',
+  'home.filterTitle': 'Genre filter',
+  'home.filterActiveCount': '{count} active filters',
+  'home.filterAny': 'All genres',
+  'home.emptySearchTitle': 'No matching stories',
+  'home.emptySearchBody': 'Try another keyword, or reset the active genre filters.',
+  'home.emptyCatalogTitle': 'The catalog is empty',
+  'home.emptyCatalogBody':
+    'No stories have been published yet. Check back after a curator adds new worlds.',
+  'home.resumeTitle': 'Continue journey',
+  'home.resumeBody': '{world} • beat {beat}',
+
+  'state.offlineTitle': 'You are offline',
+  'state.offlineBody':
+    'Cached catalog and saved history stay readable. Starting a new story needs a connection.',
+  'state.errorTitle': 'Failed to load',
+  'state.errorBody': 'Something went wrong while fetching data. Your saved data is safe.',
+
+  'genre.romance': 'Romance',
+  'genre.drama': 'Drama',
+  'genre.office': 'Office Life',
+  'genre.fantasy': 'Fantasy',
+  'genre.mystery': 'Mystery',
+
+  'world.status.published': 'Published',
+  'world.status.retired': 'Archived',
+  'world.status.revoked': 'Withdrawn',
+  'world.status.draft': 'Draft',
+
+  'world.rating.18_plus': 'Adult 18+',
+  'world.rating.13_plus': 'Teen 13+',
+  'world.rating.all': 'All ages',
+
+  'detail.startJourney': 'Start Journey',
+  'detail.continueJourney': 'Continue',
+  'detail.unavailable': 'Not playable yet',
+  'detail.retiredNotice':
+    'This world has been archived. Existing journeys stay readable, but new stories cannot start.',
+  'detail.synopsisTitle': 'Synopsis',
+  'detail.genresTitle': 'Genres',
+  'detail.charactersTitle': 'Characters',
+  'detail.versionLabel': 'World version {version}',
+  'detail.contentNoticeTitle': 'Content note',
+  'detail.contentNoticeBody':
+    'This story targets adult readers. All romantic characters are adults.',
+
+  'npc.relationTitle': 'Initial relationship',
+  'npc.roleLabel': 'Role',
+  'npc.openProfile': 'Open {name} profile',
+
+  'relation.normal': 'Neutral',
+  'relation.hangat': 'Warm',
+  'relation.waspada': 'Wary',
+  'relation.tegang': 'Tense',
+  'relation.renggang': 'Strained',
+  'relation.dekat': 'Close',
+  'relation.sayang': 'Fond',
+  'relation.cinta': 'In love',
+  'relation.unknown': 'Not yet known',
+
+  'journey.title': 'Journeys',
+  'journey.emptyTitle': 'No journeys yet',
+  'journey.emptyBody':
+    'Pick a story on Home, then tap Start Journey to open your first path.',
+  'journey.emptyAction': 'Find a story',
+  'journey.lastPlayed': 'Last played {when}',
+  'journey.unreadBadge': 'Unread scenes',
+  'journey.continue': 'Continue',
+  'journey.delete': 'Delete',
+  'journey.deleteLabel': 'Delete {world} journey',
+  'journey.detailTitle': 'Journey detail',
+  'journey.progress': 'Beat {beat} • {decisions} decisions',
+  'journey.relationsTitle': 'Current relationships',
+  'journey.notice': 'Relationship status only shows the part of the story you have read.',
+  'journey.personaLabel': 'Character: {name}',
+  'journey.openDetail': 'Open journey detail for {world}',
+  'journey.deleteTitle': 'Delete this journey?',
+  'journey.deleteBody':
+    'The journey "{world}" along with all of its history and relationships will be permanently deleted. Other worlds and journeys are not affected. This cannot be undone.',
+  'journey.deleteConfirm': 'Delete permanently',
+  'journey.deleteCancel': 'Cancel',
+  'journey.deleting': 'Deleting…',
+  'journey.deleted': 'Journey deleted.',
+  'journey.deleteFailed': 'The journey could not be deleted. Nothing changed — try again.',
+  'journey.notFound': 'Journey not found.',
+  'journey.continueAction': 'Continue the journey {world}',
+  'journey.openLog': 'View history',
+  'journey.logFailed': 'The history could not be loaded. Your journey is not affected.',
+
+  'plan.title': 'Plan & usage',
+  'plan.currentTier': 'Active plan',
+  'plan.free': 'Free',
+  'plan.paid': 'Paid',
+  'plan.usageTitle': 'Today’s usage',
+  'plan.spent': 'Used',
+  'plan.reserved': 'In progress',
+  'plan.available': 'Remaining',
+  'plan.limit': 'Limit',
+  'plan.resetAt': 'Refreshes {time}',
+  'plan.estimateNote':
+    'These numbers are an estimate from this device. Official accounting happens on the server.',
+  'plan.contextTitle': 'Context limit',
+  'plan.contextBody':
+    'The context limit is the capacity of a single request, not how much story you keep. Old story stays saved and you can read it again.',
+  'plan.contextFree': '64,000 tokens',
+  'plan.contextPaid': '256,000 tokens',
+  'plan.compactionTitle': 'Memory summarising',
+  'plan.compactionOn':
+    'On. Older history is summarised into memory notes so the story keeps its context.',
+  'plan.compactionOff':
+    'Not available on Free. Older history leaves the model context, but stays saved and readable.',
+  'plan.compactionHonest':
+    'Summarising helps continuity but does not guarantee perfect memory. Summaries can lose detail.',
+  'plan.upgradeNotice':
+    'Pricing and purchases are not active yet. This page only shows the plan contract.',
+  'plan.memoryTitle': 'Memory notes',
+  'plan.memoryNone': 'No memory notes for this plan yet.',
+  'plan.memoryVersion': 'Version {version} · {source}',
+
+  'network.title': 'No connection',
+  'network.body':
+    'Stories are generated by AI, so playing needs a connection. Your action and reading position stay saved and are not lost.',
+  'network.retry': 'Try again',
+
+  'cache.title': 'Asset cache & connection',
+  'cache.connectionNotice':
+    'Playing needs a connection because stories are generated by AI. There is no offline reading mode.',
+  'cache.body':
+    'The cache only speeds up image loading. Clearing it does not delete journeys, history, or drafts.',
+  'cache.clear': 'Clear asset cache',
+  'cache.cleared': 'Asset cache cleared. Your journeys are not affected.',
+  'cache.unsupported':
+    'This device does not offer cache clearing. Nothing changed.',
+  'cache.failed': 'The cache could not be cleared. Nothing changed — try again.',
+  'cache.confirmTitle': 'Clear the asset cache?',
+  'cache.confirmBody':
+    'Images will be downloaded again when needed. Journeys, history, relationships, and drafts are not affected.',
+
+  'report.title': 'Report a problem',
+  'report.intro':
+    'Reports help improve the stories and the app. Pick the closest category.',
+  'report.category': 'Category',
+  'report.category.story': 'Inconsistent story',
+  'report.category.character': 'Character out of character',
+  'report.category.asset': 'Wrong image or asset',
+  'report.category.relationship': 'Relationship change does not make sense',
+  'report.category.content': 'Inappropriate content',
+  'report.category.technical': 'Technical problem',
+  'report.detail': 'Additional detail',
+  'report.detailPlaceholder': 'Briefly describe what happened',
+  'report.detailOptional': 'optional',
+  'report.privacy':
+    'Story text is not sent automatically. Only the category and the detail you type are reported.',
+  'report.submit': 'Send report',
+  'report.cancel': 'Cancel',
+  'report.sent': 'Report received.',
+  'report.simulatorNotice':
+    'Simulator mode: the report is recorded locally and has not been sent to a server.',
+  'report.failed': 'The report could not be sent. Nothing changed — try again.',
+  'report.categoryRequired': 'Pick one category first.',
+
+  'settings.title': 'Settings',
+  'settings.profile': 'Profile',
+  'settings.profileNotice':
+    'This name and age are used as the starting values when you begin a new story. Journeys already in progress are not changed.',
+  'settings.profileIncomplete':
+    'Fill in your name and age so you do not have to enter them again when starting a story.',
+  'settings.saveProfile': 'Save profile',
+  'settings.profileSaved': 'Profile saved.',
+  'settings.name': 'Name',
+  'settings.namePlaceholder': 'The name you use',
+  'settings.age': 'Age',
+  'settings.agePlaceholder': 'Example: 24',
+  'settings.languageUi': 'Interface language',
+  'settings.languageResponse': 'Story response language',
+  'settings.languageNotice':
+    'Changing the interface language does not translate past stories and does not call the AI.',
+  'settings.responseLanguageNotice':
+    'The response language applies to the next story you start or continue, not to existing history.',
+  'settings.reading': 'Reading',
+  'settings.textSize': 'Text size',
+  'settings.theme': 'Theme',
+  'settings.themeSystem': 'Follow system',
+  'settings.themeLight': 'Light',
+  'settings.themeDark': 'Dark',
+  'settings.plan': 'Plan & usage',
+  'settings.planFree': 'Free',
+  'settings.planPaid': 'Paid',
+  'settings.planNotice':
+    'Pricing and purchases are not active yet. This page only shows the plan contract.',
+  'settings.privacy': 'Privacy & data',
+  'settings.help': 'Help',
+  'settings.about': 'About',
+  'settings.aboutBody':
+    'fayLN — a dynamic visual novel. Version 0.1.0 (frontend foundation, simulator mode).',
+
+  'player.tapHint': 'Tap once to finish the text, tap again to continue.',
+  'player.tapToContinue': 'Tap to continue',
+  'player.optionLabel': 'Option {index}',
+  'player.auto': 'Auto',
+  'player.autoOn': 'Auto is on',
+  'player.autoOff': 'Auto is off',
+  'player.autoStopDecision': 'Auto stopped because a choice is waiting.',
+  'player.autoStopError': 'Auto stopped because something went wrong.',
+  'player.autoStoppedBackground': 'Auto paused because the app is not active.',
+  'player.log': 'History',
+  'player.characters': 'Characters',
+  'player.pause': 'Pause',
+  'player.composerLabel': 'Write your action or line',
+  'player.composerPlaceholder': 'Example: I step closer and ask about the job',
+  'player.composerHint':
+    'Your action is an attempt, not a command. Characters may still refuse or misread it.',
+  'player.send': 'Send',
+  'player.charactersLeft': '{count} characters left',
+  'player.customTooLong': 'Your action is too long. Try shortening it.',
+  'player.waiting': 'Writing the story…',
+  'player.waitingHint': 'You can cancel as long as the story has not finished.',
+  'player.cancel': 'Cancel',
+  'player.decisionWaiting': 'Pick one action to continue.',
+  'player.noBeatsLeft': 'No further continuation is stored.',
+  'player.continueHint': 'Tap to continue',
+  'player.back': 'Back to menu',
+  'player.hideUi': 'Hide UI',
+  'player.showUi': 'Show UI',
+  'player.hiddenHint': 'Tap anywhere to show the interface again',
+  'player.hiddenNotice': 'Clean view. The story pauses while the interface is hidden.',
+  'player.leaveTitle': 'Leave the story?',
+  'player.leaveBody':
+    'Your reading position is saved, so you can continue later. No scene is lost.',
+  'player.leaveConfirm': 'Leave',
+  'player.leaveCancel': 'Stay here',
+  'player.leaveWhileWritingTitle': 'The story is still being written',
+  'player.leaveWhileWritingBody':
+    'If you leave now, this request is cancelled and the scene being written will not appear. Quota already used is not refunded.',
+  'player.leaveWhileWritingConfirm': 'Leave anyway',
+  'player.leaveWhileWritingCancel': 'Wait a moment',
+
+  'log.title': 'History',
+  'log.close': 'Close history',
+  'log.narration': 'Narration',
+  'log.unknownSpeaker': 'Character',
+  'log.you': 'You',
+  'log.empty': 'Nothing recorded in this journey yet.',
+  'log.readOnly': 'History is read-only. Opening it costs no quota.',
+
+  'inspector.title': 'Characters',
+  'inspector.close': 'Close character list',
+  'inspector.relation': 'Relationship',
+  'inspector.traits': 'Traits',
+  'inspector.reason': 'Reason for change',
+  'inspector.empty': 'No character has appeared in this journey yet.',
+
+  'notice.relationChanged': 'Relationship with {name}: {status}',
+  'notice.dismiss': 'Dismiss notice',
+
+  'gateway.retry': 'Try again',
+  'gateway.retryHint': 'A retry reuses the same request, so nothing is charged twice.',
+  'gateway.rateLimitedTitle': 'Too many requests',
+  'gateway.rateLimitedBody': 'Wait {seconds} seconds before trying again.',
+  'gateway.abuseTitle': 'Sending is paused for now',
+  'gateway.abuseBody':
+    'Unusual activity paused story sending. History and settings stay available.',
+  'gateway.abuseUntil': 'Try again after {time}.',
+  'gateway.quotaTitle': 'Daily quota is used up',
+  'gateway.quotaBody':
+    'Quota refreshes automatically. The story you already read stays saved and readable.',
+  'gateway.contextTitle': 'Context is full',
+  'gateway.contextBody':
+    'The conversation reached its context limit. Old story stays saved but is no longer read by the model.',
+  'gateway.modelTitle': 'Story engine unavailable',
+  'gateway.modelBody': 'Try again later. Your progress is not lost.',
+  'gateway.conflictTitle': 'Open on another device',
+  'gateway.conflictBody':
+    'This journey is open elsewhere. Choose which copy you want to continue.',
+  'gateway.networkTitle': 'Connection lost',
+  'gateway.networkBody': 'The story was not finished. Your action is still saved.',
+  'gateway.notFoundTitle': 'Data not found',
+  'gateway.notFoundBody':
+    'This journey or story does not exist, or has been deleted. Go back to the list to continue another one.',
+  'gateway.internalTitle': 'The server is having trouble',
+  'gateway.internalBody':
+    'This is not your fault. Your progress is still saved; try again in a moment.',
+
+  'persona.title': 'Start Journey',
+  'persona.subtitle': 'Decide who you are inside this story.',
+  'persona.saveNotice':
+    'This name and age are saved in Settings, so you will not have to enter them again.',
+  'persona.nameLabel': 'Character name',
+  'persona.namePlaceholder': 'The name used in the story',
+  'persona.ageLabel': 'Character age',
+  'persona.agePlaceholder': 'Example: 24',
+  'persona.responseLanguage': 'Story response language',
+  'persona.nameError': 'Name is required, 1 to 30 characters.',
+  'persona.ageError': 'Age must be a number between 13 and 99.',
+  'persona.confirm': 'Create & start',
+  'persona.cancel': 'Cancel',
+  'persona.oneActivePerWorld':
+    'You already have an active journey in this world. Continue that one instead of starting a new one.',
+  'persona.startFailed': 'The journey could not be created. Try again shortly.',
+
+  'storage.persistent': 'Your reading position is saved on this device.',
+  'storage.memoryOnly':
+    'Your reading position only lasts while the app is open. Permanent storage comes in a later stage.',
+  'storage.profileMemoryOnly':
+    'Your profile only lasts while the app is open on this device. Permanent storage comes in a later stage.',
+};

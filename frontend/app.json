@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "fayLN",
+    "slug": "fayln",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "scheme": "fayln",
+    "userInterfaceStyle": "automatic",
+    "newArchEnabled": true,
+    "android": {
+      "package": "id.fayln.app",
+      "edgeToEdgeEnabled": true,
+      "adaptiveIcon": {
+        "backgroundColor": "#F6F3EC"
+      }
+    },
+    "ios": {
+      "bundleIdentifier": "id.fayln.app",
+      "supportsTablet": false
+    },
+    "web": {
+      "bundler": "metro",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-secure-store",
+        {
+          "configureAndroidBackup": true
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}
