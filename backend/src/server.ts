@@ -12,6 +12,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { AppError } from './contracts/errors';
 import type { AppConfig } from './config';
 import type { Database } from './db/pool';
+import { defaultAssetsRoot, registerAssetRoutes } from './routes/assets';
 import { registerCatalogRoutes } from './routes/catalog';
 import { registerHealthRoutes } from './routes/health';
 import { registerJourneyRoutes } from './routes/journeys';
@@ -27,6 +28,8 @@ export const SERVICE_VERSION = '0.1.0';
 export type AppDeps = {
   config: AppConfig;
   db: Database;
+  /** Folder aset gambar. Bawaan: folder `assets/` di sebelah hasil kompilasi. */
+  assetsRoot?: string;
   catalog: CatalogRepository;
   usage: UsageRepository;
   reports: ReportRepository;
@@ -128,6 +131,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     startedAt: Date.now(),
     version: SERVICE_VERSION,
   });
+
+  // Aset disajikan sebelum route lain yang memakai pola alamat.
+  registerAssetRoutes(app, {
+    assetsRoot: deps.assetsRoot ?? defaultAssetsRoot(),
+    // Sehari. Aset bersifat publik dan tidak berubah untuk satu versi aplikasi.
+    maxAgeSec: 86_400,
+  });
+
   registerCatalogRoutes(app, { catalog: deps.catalog });
   registerJourneyRoutes(app, { journeys: deps.journeys });
   registerUsageAndReportRoutes(app, { usage: deps.usage, reports: deps.reports });

@@ -24,14 +24,39 @@ describe('migrasi', () => {
     const { rows } = await ctx.db.query<{ name: string }>(
       'SELECT name FROM schema_migrations ORDER BY name ASC',
     );
-    expect(rows.map((row) => row.name)).toEqual(['001_init.sql', '002_seed_reference.sql']);
+    expect(rows.map((row) => row.name)).toEqual([
+      '001_init.sql',
+      '002_seed_reference.sql',
+      '003_asset_paths.sql',
+    ]);
   });
 
   it('aman dijalankan ulang tanpa menerapkan apa pun lagi', async () => {
     const { runMigrations } = await import('../src/db/migrate');
     const result = await runMigrations(ctx.db);
     expect(result.applied).toEqual([]);
-    expect(result.skipped).toHaveLength(2);
+    expect(result.skipped).toHaveLength(3);
+  });
+});
+
+describe('jalur aset', () => {
+  it('mengubah penanda asset:// menjadi jalur yang disajikan', async () => {
+    const { rows } = await ctx.db.query<{ uri: string }>(
+      'SELECT uri FROM world_assets ORDER BY asset_id ASC',
+    );
+    expect(rows.every((row) => row.uri.startsWith('/assets/'))).toBe(true);
+    expect(rows.some((row) => row.uri.startsWith('asset://'))).toBe(false);
+  });
+
+  it('menempatkan setiap aset pada folder yang sesuai jenisnya', async () => {
+    const { rows } = await ctx.db.query<{ kind: string; uri: string }>(
+      'SELECT kind, uri FROM world_assets ORDER BY asset_id ASC',
+    );
+    expect(rows.length).toBeGreaterThan(0);
+    for (const row of rows) {
+      expect(row.uri.startsWith(`/assets/${row.kind}/`)).toBe(true);
+      expect(row.uri.endsWith('.png')).toBe(true);
+    }
   });
 });
 

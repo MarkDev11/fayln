@@ -67,7 +67,16 @@ const LATEST_PUBLISHED_JOIN = `
 `;
 
 export class CatalogRepository {
-  constructor(private readonly db: Database) {}
+  /**
+   * @param db Koneksi database.
+   * @param resolveAssetUri Mengubah jalur aset tersimpan menjadi URL yang dapat
+   *   dimuat klien. Database menyimpan jalur relatif saja supaya satu baris data
+   *   dapat dipakai di lokal maupun produksi tanpa menyimpan nama host.
+   */
+  constructor(
+    private readonly db: Database,
+    private readonly resolveAssetUri: (path: string) => string = (path) => path,
+  ) {}
 
   async listWorlds(query: CatalogQuery): Promise<CatalogPage> {
     const conditions: string[] = [`wv.status <> 'draft'`];
@@ -247,19 +256,27 @@ export class CatalogRepository {
 
     const coverRow = assets.rows.find((asset) => asset.kind === 'cover');
     const cover: AssetRef = coverRow
-      ? { assetId: coverRow.asset_id, label: coverRow.label, uri: coverRow.uri }
-      : { assetId: versionRow.cover_asset_id, label: versionRow.title, uri: `asset://${versionRow.cover_asset_id}` };
+      ? { assetId: coverRow.asset_id, label: coverRow.label, uri: this.resolveAssetUri(coverRow.uri) }
+      : {
+          assetId: versionRow.cover_asset_id,
+          label: versionRow.title,
+          uri: this.resolveAssetUri(`/assets/cover/${versionRow.cover_asset_id}.png`),
+        };
 
     const backgrounds: AssetRef[] = assets.rows
       .filter((asset) => asset.kind === 'background')
-      .map((asset) => ({ assetId: asset.asset_id, label: asset.label, uri: asset.uri }));
+      .map((asset) => ({
+        assetId: asset.asset_id,
+        label: asset.label,
+        uri: this.resolveAssetUri(asset.uri),
+      }));
 
     const portraits: PortraitRef[] = assets.rows
       .filter((asset) => asset.kind === 'portrait' && asset.npc_id && asset.expression)
       .map((asset) => ({
         assetId: asset.asset_id,
         label: asset.label,
-        uri: asset.uri,
+        uri: this.resolveAssetUri(asset.uri),
         npcId: asset.npc_id as string,
         expression: asset.expression as string,
       }));

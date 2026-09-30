@@ -1,8 +1,27 @@
 # 15 — Panduan Deploy ke blitz.cloud
 
-> Versi 1.0 · 30 September 2026.
+> Versi 1.1 · 30 September 2026.
 > Seluruh fakta platform di dokumen ini berasal dari dokumentasi resmi blitz.cloud
 > yang diakses 30 September 2026. Yang belum diuji ditandai **BELUM DIUJI**.
+
+## 0. Keadaan saat ini — SUDAH LIVE
+
+| | |
+|---|---|
+| **Alamat produksi** | **https://fayln-api.marky.blitz.cloud** |
+| Sumber | GitHub `MarkDev11/fayln`, cabang `main`, folder `backend` |
+| Build pertama | Berhasil, commit `a9e8ff9`, selesai dalam ~4,5 menit |
+| Database | PostgreSQL 17 terkelola, nama `fayln-db`, tersambung |
+| `DATABASE_URL` | Diisi otomatis oleh platform saat database disambungkan |
+| Deploy ulang | Otomatis pada setiap push ke `main` (`followsPushes: true`) |
+
+Yang terbukti bekerja di produksi (30 September 2026):
+
+- `/health` → 200 · `/health/ready` → 200, `database: "ok"`
+- `/v1/worlds` → katalog dari PostgreSQL sungguhan
+- Buat perjalanan → 6 beat pembuka, 18.880 token, sisa 81.120
+- Aksi kabedon → Elysia menjadi `waspada` dengan alasan publik
+- Kuota → 37.760 terpakai, sisa 62.240, reset `2026-10-01T00:00:00.000Z`
 
 ## 1. Ringkasan
 

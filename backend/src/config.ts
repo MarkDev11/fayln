@@ -40,6 +40,15 @@ const envSchema = z.object({
 
   CORS_ORIGINS: optionalString,
 
+  /**
+   * Alamat publik aplikasi, mis. `https://fayln-api.marky.blitz.cloud`.
+   *
+   * Dipakai mengubah jalur aset menjadi URL absolut yang dapat dimuat klien.
+   * Kosong berarti alamat diturunkan dari permintaan yang sedang dilayani —
+   * cukup untuk pengembangan, tetapi sebaiknya diisi di produksi.
+   */
+  PUBLIC_BASE_URL: optionalString,
+
   RUN_MIGRATIONS_ON_START: booleanish.default(true),
 
   FREE_DAILY_TOKENS: positiveInt(100_000),
@@ -58,6 +67,7 @@ export type AppConfig = {
   port: number;
   logLevel: string;
   corsOrigins: string[];
+  publicBaseUrl: string | undefined;
   runMigrationsOnStart: boolean;
   plan: {
     free: { dailyTokens: number; contextTokens: number };
@@ -88,6 +98,8 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       .split(',')
       .map((origin) => origin.trim())
       .filter((origin) => origin.length > 0),
+    // Buang garis miring di akhir agar tidak menjadi alamat ganda.
+    publicBaseUrl: value.PUBLIC_BASE_URL?.replace(/\/+$/, ''),
     runMigrationsOnStart: value.RUN_MIGRATIONS_ON_START,
     plan: {
       free: { dailyTokens: value.FREE_DAILY_TOKENS, contextTokens: value.FREE_CONTEXT_TOKENS },

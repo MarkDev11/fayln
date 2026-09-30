@@ -52,7 +52,18 @@ async function main(): Promise<void> {
   }
 
   const usage = new UsageRepository(db, config.plan);
-  const catalog = new CatalogRepository(db);
+
+  /**
+   * Mengubah jalur aset tersimpan menjadi URL yang dapat dimuat klien.
+   *
+   * Database menyimpan jalur relatif saja (`/assets/portrait/...`) supaya baris
+   * yang sama dapat dipakai di lokal maupun produksi. Alamat dasar dibaca dari
+   * `PUBLIC_BASE_URL`; bila kosong, jalur dikirim apa adanya dan klien akan
+   * memakai placeholder-nya.
+   */
+  const catalog = new CatalogRepository(db, (path) =>
+    config.publicBaseUrl ? `${config.publicBaseUrl}${path}` : path,
+  );
   const journeys = new JourneyRepository(db);
   const operations = new OperationRepository(db);
   const reports = new ReportRepository(db);

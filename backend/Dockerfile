@@ -22,6 +22,10 @@ RUN if [ -f package-lock.json ]; then npm ci --include=dev; else npm install --i
 COPY tsconfig.json ./
 COPY src ./src
 
+# Berkas aset gambar ikut ke dalam image: gambar berversi bersama kode, disajikan
+# pada /assets/*, dan tidak memerlukan folder persisten maupun mekanisme unggah.
+COPY assets ./assets
+
 RUN npm run build
 
 # Buang dependensi pengembangan dari node_modules sebelum disalin ke tahap akhir.
@@ -46,6 +50,9 @@ COPY --from=build --chown=node:node /app/package.json ./package.json
 
 # Migrasi SQL ikut dibawa karena tidak dikompilasi oleh tsc.
 COPY --from=build --chown=node:node /app/src/db/migrations ./dist/db/migrations
+
+# Aset gambar. `defaultAssetsRoot()` mencari folder ini di /app/assets.
+COPY --from=build --chown=node:node /app/assets ./assets
 
 USER node
 
