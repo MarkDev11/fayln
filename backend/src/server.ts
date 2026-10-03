@@ -21,7 +21,7 @@ import type { CatalogRepository } from './repositories/catalogRepository';
 import type { ReportRepository } from './repositories/reportRepository';
 import type { UsageRepository } from './repositories/usageRepository';
 import type { JourneyService } from './services/journeyService';
-import { CURRENT_IDENTITY_MODE } from './http/identity';
+import { CURRENT_IDENTITY_MODE, registerIdentityHook } from './http/identity';
 
 export const SERVICE_VERSION = '0.1.0';
 
@@ -30,6 +30,11 @@ export type AppDeps = {
   db: Database;
   /** Folder aset gambar. Bawaan: folder `assets/` di sebelah hasil kompilasi. */
   assetsRoot?: string;
+  /**
+   * Penyedia akun. Dipakai hook identitas untuk memastikan akun dari header
+   * benar-benar ada sebelum route menyentuh tabel yang berkias-asing padanya.
+   */
+  accounts: { ensure: (accountId: string) => Promise<void> };
   catalog: CatalogRepository;
   usage: UsageRepository;
   reports: ReportRepository;
@@ -138,6 +143,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // Sehari. Aset bersifat publik dan tidak berubah untuk satu versi aplikasi.
     maxAgeSec: 86_400,
   });
+
+  // Akun diadakan sebelum route mana pun berjalan. Tanpa ini, perangkat baru
+  // yang mengirim ID buatannya sendiri akan ditolak kunci asing saat membuat
+  // perjalanan pertama (terlihat sebagai HTTP 500).
+  registerIdentityHook(app, deps.accounts);
 
   registerCatalogRoutes(app, { catalog: deps.catalog });
   registerJourneyRoutes(app, { journeys: deps.journeys });

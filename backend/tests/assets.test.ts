@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
 import { parseConfig, type AppConfig } from '../src/config';
+import { AccountRepository } from '../src/repositories/accountRepository';
 import { CatalogRepository } from '../src/repositories/catalogRepository';
 import { JourneyRepository } from '../src/repositories/journeyRepository';
 import { OperationRepository } from '../src/repositories/operationRepository';
@@ -47,6 +48,7 @@ beforeEach(async () => {
     config,
     db: ctx.db,
     assetsRoot: REAL_ASSETS,
+    accounts: new AccountRepository(ctx.db),
     catalog: new CatalogRepository(ctx.db, (path) => `https://api.test${path}`),
     usage: new UsageRepository(ctx.db, config.plan),
     reports: new ReportRepository(ctx.db),

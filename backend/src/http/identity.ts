@@ -11,7 +11,7 @@
  * - Route yang memakainya diberi tanda `identityMode: 'placeholder'`.
  */
 
-import type { FastifyRequest } from 'fastify';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 export const ACCOUNT_HEADER = 'x-account-id';
 
@@ -36,4 +36,32 @@ export function resolveAccountId(request: FastifyRequest): string {
   }
 
   return DEMO_ACCOUNT_ID;
+}
+
+/**
+ * Memastikan akun dari header benar-benar ada sebelum route memakainya.
+ *
+ * Mengapa ini perlu: banyak tabel (operations, journeys, usage_entries) memiliki
+ * kunci asing ke accounts. Klien membuat ID perangkat sendiri, sehingga perangkat
+ * baru mengirim ID yang belum pernah terdaftar. Tanpa langkah ini, permintaan
+ * pertama setiap pengguna baru gagal dengan galat kunci asing tingkat database —
+ * yang muncul sebagai HTTP 500 dan bukan pesan yang dapat dimengerti pemain.
+ *
+ * Dipasang sebagai hook `onRequest`, bukan di dalam resolveAccountId, supaya
+ * fungsi pembaca header tetap sinkron dan tidak perlu diubah di setiap route.
+ * `ON CONFLICT DO NOTHING` membuatnya aman dipanggil berulang dan bersamaan.
+ */
+export function registerIdentityHook(
+  app: FastifyInstance,
+  accounts: { ensure: (accountId: string) => Promise<void> },
+): void {
+  app.addHook('onRequest', async (request) => {
+    // Hanya permintaan API yang butuh akun; berkas aset dan pemeriksaan kesehatan
+    // tidak boleh menyentuh database sama sekali.
+    if (!request.url.startsWith('/v1/')) {
+      return;
+    }
+
+    await accounts.ensure(resolveAccountId(request));
+  });
 }

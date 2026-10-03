@@ -11,6 +11,7 @@ import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { parseConfig, type AppConfig } from '../src/config';
+import { AccountRepository } from '../src/repositories/accountRepository';
 import { CatalogRepository } from '../src/repositories/catalogRepository';
 import { JourneyRepository } from '../src/repositories/journeyRepository';
 import { OperationRepository } from '../src/repositories/operationRepository';
@@ -60,7 +61,15 @@ async function buildTestApp(config: AppConfig = testConfig()): Promise<FastifyIn
     now: () => new Date(),
   });
 
-  return buildApp({ config, db: ctx.db, catalog, usage, reports, journeys: journeyService });
+  return buildApp({
+    config,
+    db: ctx.db,
+    accounts: new AccountRepository(ctx.db),
+    catalog,
+    usage,
+    reports,
+    journeys: journeyService,
+  });
 }
 
 beforeEach(async () => {
@@ -181,6 +190,49 @@ describe('pembuatan perjalanan', () => {
     expect(result.worldVersion).toBe(7);
     expect(result.opening.beats.length).toBeGreaterThan(0);
     expect(result.opening.simulator).toBe(true);
+  });
+
+  /**
+   * Regresi produksi: perangkat baru mengirim ID buatannya sendiri, dan baris
+   * `accounts`-nya belum ada. Sebelum perbaikan, pembuatan perjalanan pertama
+   * gagal di kunci asing `operations_account_fk` dan muncul sebagai HTTP 500 —
+   * tepat pada langkah pertama setiap pengguna baru.
+   *
+   * Pengujian lain tidak menangkap ini karena semuanya memakai akun demo yang
+   * sudah dibuat oleh migrasi seed.
+   */
+  it('menerima perangkat baru yang belum pernah terdaftar', async () => {
+    const deviceId = `acc_perangkat_baru_${Math.random().toString(36).slice(2, 10)}`;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      headers: { 'x-account-id': deviceId },
+      payload: body('perangkat-baru'),
+    });
+
+    expect(response.statusCode).toBe(201);
+    expect((response.json() as { journeyId: string }).journeyId).toMatch(/^j_/);
+
+    // Akunnya benar-benar tercatat, bukan sekadar dilewatkan.
+    const { rows } = await ctx.db.query<{ account_id: string }>(
+      'SELECT account_id FROM accounts WHERE account_id = $1',
+      [deviceId],
+    );
+    expect(rows).toHaveLength(1);
+  });
+
+  it('menerima perangkat baru pada route yang hanya membaca', async () => {
+    const deviceId = `acc_baca_${Math.random().toString(36).slice(2, 10)}`;
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/usage',
+      headers: { 'x-account-id': deviceId },
+    });
+
+    // Sebelumnya route ini juga menyentuh tabel berkias-asing dan gagal.
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as { available: number }).available).toBeGreaterThan(0);
   });
 
   it('bersifat idempotent untuk operation id yang sama (FR-52)', async () => {

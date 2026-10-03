@@ -19,6 +19,7 @@ import { runMigrations } from './db/migrate';
 import { createDatabase, createPool } from './db/pool';
 import { createLogger } from './logging';
 import { CatalogRepository } from './repositories/catalogRepository';
+import { AccountRepository } from './repositories/accountRepository';
 import { JourneyRepository } from './repositories/journeyRepository';
 import { OperationRepository } from './repositories/operationRepository';
 import { ReportRepository } from './repositories/reportRepository';
@@ -53,6 +54,10 @@ async function main(): Promise<void> {
 
   const usage = new UsageRepository(db, config.plan);
 
+  // Akun diadakan saat pertama kali terlihat. Klien membuat ID perangkat sendiri,
+  // jadi baris `accounts`-nya belum ada sampai hook identitas membuatkannya.
+  const accounts = new AccountRepository(db);
+
   /**
    * Mengubah jalur aset tersimpan menjadi URL yang dapat dimuat klien.
    *
@@ -81,6 +86,7 @@ async function main(): Promise<void> {
   const app = await buildApp({
     config,
     db,
+    accounts,
     catalog,
     usage,
     reports,
