@@ -39,6 +39,98 @@ describe('migrasi', () => {
   });
 });
 
+/**
+ * Database dapat belum siap tepat saat aplikasi bangun — di blitz.cloud keduanya
+ * kadang bangun bersamaan, dan sesaat muncul `ECONNREFUSED`. Sebelum perbaikan ini,
+ * satu galat seperti itu membuat proses keluar dan platform menandai aplikasi
+ * rusak. Pengujian berikut menjaga agar perilaku itu tidak kembali.
+ */
+describe('percobaan ulang migrasi saat database belum siap', () => {
+  it('berhasil setelah beberapa kali ECONNREFUSED', async () => {
+    const { runMigrations } = await import('../src/db/migrate');
+    const { db } = ctx;
+
+    let calls = 0;
+    const flaky = {
+      kind: 'injected' as const,
+      async query<T>(text: string, values?: readonly unknown[]) {
+        calls += 1;
+        if (calls <= 3) {
+          const error = new Error('connect ECONNREFUSED 10.43.45.100:5432') as Error & {
+            code: string;
+          };
+          error.code = 'ECONNREFUSED';
+          throw error;
+        }
+        return db.query<T>(text, values);
+      },
+      transaction: db.transaction,
+      close: db.close,
+    };
+
+    // Jeda disuntikkan sebagai nol: yang diuji adalah logika percobaan ulang,
+    // bukan lamanya penantian.
+    const result = await runMigrations(flaky, undefined, {
+      attempts: 6,
+      backoffMs: () => 0,
+    });
+    expect(result.applied).toEqual([]);
+    expect(calls).toBeGreaterThan(3);
+  });
+
+  it('menyerah setelah percobaan habis, bukan menggantung', async () => {
+    const { runMigrations } = await import('../src/db/migrate');
+
+    const alwaysDown = {
+      kind: 'injected' as const,
+      async query(): Promise<never> {
+        const error = new Error('connect ECONNREFUSED') as Error & { code: string };
+        error.code = 'ECONNREFUSED';
+        throw error;
+      },
+      async transaction(): Promise<never> {
+        throw new Error('tidak dipakai');
+      },
+      async close(): Promise<void> {
+        return undefined;
+      },
+    };
+
+    // attempts = 1 supaya tidak ada penantian sama sekali.
+    await expect(
+      runMigrations(alwaysDown, undefined, { attempts: 1, backoffMs: () => 0 }),
+    ).rejects.toThrow(/ECONNREFUSED/);
+  });
+
+  it('tidak mencoba ulang galat SQL yang sebenarnya', async () => {
+    const { runMigrations } = await import('../src/db/migrate');
+
+    let calls = 0;
+    const brokenSql = {
+      kind: 'injected' as const,
+      async query(): Promise<never> {
+        calls += 1;
+        const error = new Error('syntax error at or near "SELEC"') as Error & { code: string };
+        // Kode galat sintaks PostgreSQL: bukan masalah koneksi.
+        error.code = '42601';
+        throw error;
+      },
+      async transaction(): Promise<never> {
+        throw new Error('tidak dipakai');
+      },
+      async close(): Promise<void> {
+        return undefined;
+      },
+    };
+
+    await expect(
+      runMigrations(brokenSql, undefined, { attempts: 5, backoffMs: () => 0 }),
+    ).rejects.toThrow(/syntax error/);
+    // Percobaan ulang akan menyamarkan kesalahan; pastikan hanya dipanggil sekali.
+    expect(calls).toBe(1);
+  });
+});
+
 describe('jalur aset', () => {
   it('mengubah penanda asset:// menjadi jalur yang disajikan', async () => {
     const { rows } = await ctx.db.query<{ uri: string }>(

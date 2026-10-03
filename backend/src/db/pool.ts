@@ -33,10 +33,15 @@ export function createPool(databaseUrl: string, isProduction: boolean): Pool {
     // Platform gratis membatasi memori; pool kecil sudah cukup untuk satu instance.
     max: isProduction ? 5 : 2,
     idleTimeoutMillis: 30_000,
-    // Jangan menunggu selamanya bila database tidak menjawab.
-    connectionTimeoutMillis: 10_000,
+    // Jangan menunggu selamanya bila database tidak menjawab. Nilainya pendek
+    // supaya koneksi mati cepat ketahuan dan dapat dicoba ulang, bukan menggantung
+    // sampai platform menganggap aplikasi tidak sehat.
+    connectionTimeoutMillis: 5_000,
     // Buang koneksi mati yang tertinggal setelah aplikasi tidur.
     allowExitOnIdle: false,
+    // Kirim TCP keepalive supaya koneksi yang diputus diam-diam oleh jaringan
+    // terdeteksi lebih cepat.
+    keepAlive: true,
   });
 }
 

@@ -19,6 +19,51 @@ export type MigrationResult = {
   skipped: string[];
 };
 
+export type MigrationOptions = {
+  /** Batas percobaan, termasuk percobaan pertama. */
+  attempts?: number;
+  /** Jeda sebelum percobaan ke-`attempt` (berbasis nol). Disuntikkan pengujian. */
+  backoffMs?: (attempt: number) => number;
+};
+
+/**
+ * Galat koneksi yang layak dicoba ulang.
+ *
+ * Di blitz.cloud, aplikasi dan databasenya dapat bangun bersamaan. Sesaat setelah
+ * bangun, port database belum menerima koneksi sehingga muncul `ECONNREFUSED`.
+ * Itu keadaan sementara, bukan skema yang salah — mencoba ulang menyelesaikannya.
+ */
+const RETRYABLE_CODES = new Set([
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'ETIMEDOUT',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'EPIPE',
+  // PostgreSQL memakai kode ini saat belum siap menerima koneksi.
+  '57P03',
+  // Koneksi diputus oleh server, mis. setelah idle panjang.
+  '57P01',
+  '08006',
+  '08003',
+]);
+
+function isRetryable(error: unknown): boolean {
+  if (!error || typeof error !== 'object') {
+    return false;
+  }
+  const code = (error as { code?: unknown }).code;
+  return typeof code === 'string' && RETRYABLE_CODES.has(code);
+}
+
+/** Menunggu tanpa menahan proses lain. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+
 /** Direktori migrasi di samping berkas ini, baik saat dev maupun hasil kompilasi. */
 export function migrationsDirectory(): string {
   return join(__dirname, 'migrations');
@@ -59,15 +104,49 @@ async function appliedMigrations(db: Database): Promise<Set<string>> {
 }
 
 /**
- * Menjalankan seluruh migrasi yang belum diterapkan.
+ * Menjalankan seluruh migrasi yang belum diterapkan, dengan percobaan ulang.
  *
- * Aman dijalankan berulang: migrasi yang sudah tercatat dilewati. Aman dijalankan
- * bersamaan oleh dua instance karena `CREATE TABLE IF NOT EXISTS` dan kunci
- * primer `schema_migrations` membuat penerapan ganda gagal, bukan merusak.
+ * Percobaan ulang diperlukan karena database dapat belum siap tepat saat aplikasi
+ * bangun. Tanpa ini, satu `ECONNREFUSED` sesaat membuat proses keluar dan
+ * platform menganggap aplikasi rusak — padahal hanya perlu menunggu sebentar.
+ *
+ * Backoff-nya 1s, 2s, 4s, 8s, 8s (total ± 23 detik). Hanya galat koneksi yang
+ * dicoba ulang; galat SQL yang sebenarnya langsung dilempar supaya kesalahan
+ * migrasi tetap terlihat, bukan tersamarkan sebagai masalah koneksi.
  */
 export async function runMigrations(
   db: Database,
   directory = migrationsDirectory(),
+  options: MigrationOptions = {},
+): Promise<MigrationResult> {
+  const attempts = options.attempts ?? 5;
+  const backoffMs = options.backoffMs ?? ((attempt: number) => Math.min(1_000 * 2 ** attempt, 8_000));
+
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return await runMigrationsOnce(db, directory);
+    } catch (error) {
+      lastError = error;
+
+      // Galat yang bukan masalah koneksi tidak akan membaik dengan menunggu.
+      if (!isRetryable(error) || attempt === attempts - 1) {
+        throw error;
+      }
+
+      await delay(backoffMs(attempt));
+    }
+  }
+
+  // Tidak tercapai: perulangan di atas selalu mengembalikan atau melempar.
+  throw lastError;
+}
+
+/** Satu percobaan penuh. Dipisah agar logika percobaan ulang tetap sederhana. */
+async function runMigrationsOnce(
+  db: Database,
+  directory: string,
 ): Promise<MigrationResult> {
   await ensureMigrationsTable(db);
   const applied = await appliedMigrations(db);
