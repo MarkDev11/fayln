@@ -259,6 +259,30 @@ export class JourneyService {
     await this.deps.journeys.syncReadProgress(journeyId, input);
   }
 
+  /**
+   * Keadaan satu operasi.
+   *
+   * Dipakai klien untuk menanyakan hasil operasi yang tertunda, misalnya setelah
+   * permintaan pertama terputus sebelum balasannya diterima (FR-52).
+   */
+  async operationStatus(operationId: string): Promise<{
+    operationId: string;
+    state: 'running' | 'succeeded' | 'failed';
+    result: TurnResultEnvelope | null;
+    errorCode: string | null;
+  }> {
+    const operation = await this.deps.operations.find(operationId);
+    if (!operation) {
+      throw notFound('Operasi tidak ditemukan.');
+    }
+    return {
+      operationId: operation.operationId,
+      state: operation.state,
+      result: operation.result,
+      errorCode: operation.errorCode,
+    };
+  }
+
   async deleteJourney(journeyId: string, accountId: string): Promise<void> {
     const journey = await this.deps.journeys.findById(journeyId);
     this.assertOwnership(journey, accountId);

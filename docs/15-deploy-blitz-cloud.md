@@ -142,6 +142,38 @@ Diuji pada Docker Desktop 29.2.1 (Windows, x86_64, 8 CPU, 16 GB) memakai
 Butir 15 penting: membuktikan bahwa keputusan "seluruh keadaan di PostgreSQL, tanpa
 pekerjaan terjadwal" benar-benar berfungsi ketika aplikasi berhenti lalu hidup lagi.
 
+### Aset gambar — disajikan backend
+
+Sejak commit `aeeb0ba`, backend menyajikan berkas gambar pada `/assets/*`.
+
+| | |
+|---|---|
+| Lokasi berkas | `backend/assets/` — ikut ke dalam image Docker |
+| Alamat | `https://fayln-api.marky.blitz.cloud/assets/<jenis>/<nama>.png` |
+| Jenis | `cover/` 768×1024 · `background/` 1024×576 · `portrait/` 512×768 |
+| Cara menambah | Commit lalu dorong; build ulang otomatis menyajikannya |
+| Penamaan | Nama berkas **harus sama dengan `asset_id`** di `world_assets` |
+
+Tiga keputusan di baliknya:
+
+1. **Tidak ada mekanisme unggah.** Gambar berversi bersama kode, tidak memerlukan
+   folder persisten (yang **tidak ikut dicadangkan** di paket gratis), dan terlacak
+   di riwayat git.
+2. **`world_assets.uri` menyimpan jalur relatif**, bukan alamat lengkap. Alamat dasar
+   digabung saat respons dibuat dari `PUBLIC_BASE_URL`, sehingga baris data yang sama
+   dapat dipakai di lokal, uji, dan produksi tanpa menyimpan nama host di database.
+3. **Keamanan dua lapis** di `src/routes/assets.ts`: nama berkas dibatasi karakter
+   aman, lalu jalur akhir diverifikasi masih berada di dalam folder aset. Lapisan
+   kedua ini yang mencegah pelintasan jalur (`../`).
+
+Terbukti di produksi: portrait, latar, dan sampul masing-masing **HTTP 200
+`image/png`**; percobaan `/assets/../../../package.json` **ditolak**.
+
+**Keadaan gambar saat ini: placeholder, bukan karya akhir.** 18 berkas yang ada
+adalah bidang warna datar buatan otomatis supaya alur dapat dibuktikan. Mereka
+sengaja netral dan tidak memuat wajah atau identitas karakter mana pun (R-06).
+Ganti satu per satu tanpa mengubah kode apa pun.
+
 ### Yang MASIH belum diuji
 
 | # | Hal | Cara membuktikan |

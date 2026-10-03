@@ -12,6 +12,7 @@ import { resolveAccountId } from '../http/identity';
 import {
   createJourneyBodySchema,
   journeyParamsSchema,
+  operationParamsSchema,
   submitTurnBodySchema,
   syncProgressBodySchema,
 } from '../http/schemas';
@@ -53,6 +54,12 @@ export function registerJourneyRoutes(
     const { journeyId } = journeyParamsSchema.parse(request.params);
     await deps.journeys.deleteJourney(journeyId, accountId);
     return reply.status(204).send();
+  });
+
+  /** Keadaan operasi yang tertunda (FR-52). */
+  app.get('/v1/operations/:operationId', async (request) => {
+    const { operationId } = operationParamsSchema.parse(request.params);
+    return deps.journeys.operationStatus(operationId);
   });
 
   /** Sesi bermain: beat, baseline hubungan, dan dunia yang dikunci. */

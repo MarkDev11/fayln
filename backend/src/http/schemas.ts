@@ -34,6 +34,10 @@ export const journeyParamsSchema = z.object({
   journeyId: z.string().min(1).max(80),
 });
 
+export const operationParamsSchema = z.object({
+  operationId: z.string().min(1).max(120),
+});
+
 export const createJourneyBodySchema = z.object({
   clientOperationId: z.string().min(8).max(120),
   worldId: z.string().min(1).max(80),
