@@ -106,6 +106,22 @@ function choiceOptions(): [ChoiceOption, ChoiceOption, ChoiceOption] {
 }
 
 /**
+ * Label opsi berdasarkan ID-nya.
+ *
+ * ID opsi hanya bermakna di dalam satu giliran, jadi labelnya tidak disimpan di
+ * database. Saat pemain memilih, narasinya perlu menyebut tindakan yang dipilih —
+ * karena itu label dicari di sini. ID yang tidak dikenal dikembalikan apa adanya
+ * supaya masalahnya terlihat, bukan tersamarkan menjadi kutipan kosong.
+ */
+function optionLabel(optionId: string | undefined): string {
+  if (!optionId) {
+    return 'pilihan yang tidak dikenal';
+  }
+  const match = choiceOptions().find((option) => option.optionId === optionId);
+  return match ? match.label : optionId;
+}
+
+/**
  * Mengubah aksi bebas menjadi respons.
  *
  * Aksi pemain adalah UPAYA, bukan perintah yang pasti berhasil (FR-57). Aksi yang
@@ -165,9 +181,17 @@ function customActionBeats(
       });
     }
   } else if (primary) {
+    // Dua jenis masukan harus dibedakan. Sebelumnya keduanya memakai
+    // `context.customText`, sehingga pemain yang MEMILIH OPSI menghasilkan
+    // narasi dengan kutipan kosong: `Kamu memilih bertindak: ""`.
+    const narration =
+      context.customText !== undefined
+        ? `Kamu memilih bertindak: "${context.customText}". Ia memperhatikanmu sebentar sebelum menanggapi.`
+        : `Kamu memilih: "${optionLabel(context.optionId)}". Ia memperhatikanmu sebentar sebelum menanggapi.`;
+
     events.push({
       type: 'narrate',
-      text: `Kamu memilih bertindak: "${context.customText ?? ''}". Ia memperhatikanmu sebentar sebelum menanggapi.`,
+      text: narration,
     });
     events.push({
       type: 'showCharacter',

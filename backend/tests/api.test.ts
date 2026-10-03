@@ -413,6 +413,33 @@ describe('giliran dan hubungan', () => {
     expect(delta?.event.reasonPublic).toBeTruthy();
   });
 
+  /**
+   * Regresi: pemain yang MEMILIH OPSI semula menghasilkan narasi dengan kutipan
+   * kosong — `Kamu memilih bertindak: ""` — karena mesin selalu membaca
+   * `customText`, padahal masukan datang lewat `selection.optionId`.
+   */
+  it('menyebut label opsi yang dipilih, bukan kutipan kosong', async () => {
+    const { journeyId, decisionId } = await playToDecision();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('label-opsi'),
+        decisionId,
+        selection: { optionId: 'opt1' },
+        responseLocale: 'id-ID',
+      },
+    });
+
+    expect(response.statusCode).toBe(201);
+    const envelope = response.json() as { beats: { event: { type: string; text?: string } }[] };
+    const narration = envelope.beats.find((beat) => beat.event.type === 'narrate')?.event.text ?? '';
+
+    expect(narration).toContain('Minta maaf secara profesional');
+    expect(narration).not.toContain('""');
+  });
+
   it('menolak keputusan yang sudah dijawab', async () => {
     const { journeyId, decisionId } = await playToDecision();
 
