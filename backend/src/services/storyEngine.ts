@@ -28,6 +28,18 @@ export type StoryContext = {
   optionId?: string;
   /** Nomor turn, dipakai membuat ID yang stabil. */
   turnOrdinal: number;
+  /**
+   * Awalan ID beat yang dijamin unik secara global.
+   *
+   * WAJIB diisi pemanggil yang menyimpan hasilnya. `beats.beat_id` adalah kunci
+   * utama tabel, bukan kunci gabungan, sehingga ID yang hanya berbasis nomor turn
+   * akan bertabrakan antar perjalanan — pembukaan setiap perjalanan sama-sama
+   * menghasilkan `t001-b001`, dan perjalanan kedua gagal disimpan.
+   *
+   * Bila kosong, awalan diturunkan dari `turnOrdinal`. Itu hanya aman untuk
+   * pemakaian sekali jalan (mis. pengujian mesin), bukan untuk penyimpanan.
+   */
+  beatIdPrefix?: string;
 };
 
 export type StoryEngineResult = {
@@ -56,6 +68,22 @@ const SIMULATOR_MODEL_VERSION = '1.0.0';
 /** Perkiraan biaya satu giliran pada simulator; bukan tokenisasi model nyata. */
 const SIM_PROMPT_TOKENS = 18_240;
 const SIM_COMPLETION_TOKENS = 640;
+
+/**
+ * Awalan ID beat untuk satu giliran.
+ *
+ * `beats.beat_id` adalah kunci utama tabel, jadi awalan ini harus unik secara
+ * global. Pemanggil yang menyimpan hasilnya memberi `beatIdPrefix` (biasanya ID
+ * turn yang sesungguhnya). Tanpa itu, dipakai nomor turn — cukup untuk pengujian
+ * mesin, tetapi akan bertabrakan bila hasilnya disimpan lebih dari sekali.
+ */
+function beatIdScope(context: StoryContext): string {
+  const prefix = context.beatIdPrefix?.trim();
+  if (prefix && prefix.length > 0) {
+    return prefix;
+  }
+  return `t${String(context.turnOrdinal).padStart(3, '0')}`;
+}
 
 function choiceOptions(): [ChoiceOption, ChoiceOption, ChoiceOption] {
   return [
@@ -179,7 +207,7 @@ export class DeterministicStoryEngine implements StoryEngine {
   readonly estimatedTurnCost = SIM_PROMPT_TOKENS + SIM_COMPLETION_TOKENS;
 
   async generateOpening(context: StoryContext): Promise<StoryEngineResult> {
-    const turnId = `t${String(context.turnOrdinal).padStart(3, '0')}`;
+    const turnId = beatIdScope(context);
     const firstBackground = context.manifest.backgrounds[0]?.assetId;
     const primary = context.characters[0];
 
@@ -232,7 +260,7 @@ export class DeterministicStoryEngine implements StoryEngine {
   }
 
   async generateTurn(context: StoryContext): Promise<StoryEngineResult> {
-    const turnId = `t${String(context.turnOrdinal).padStart(3, '0')}`;
+    const turnId = beatIdScope(context);
     const beats = customActionBeats(turnId, context);
 
     return {

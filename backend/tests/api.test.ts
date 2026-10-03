@@ -235,6 +235,48 @@ describe('pembuatan perjalanan', () => {
     expect((response.json() as { available: number }).available).toBeGreaterThan(0);
   });
 
+  /**
+   * Regresi produksi kedua: `beats.beat_id` adalah kunci utama tabel, tetapi ID
+   * beat semula diturunkan hanya dari nomor turn. Pembukaan setiap perjalanan
+   * menghasilkan `t001-b001` yang sama, sehingga perjalanan KEDUA selalu gagal
+   * dengan `duplicate key value violates unique constraint "beats_pkey"`.
+   *
+   * Bug ini semula tersembunyi di balik galat kunci asing `accounts`, jadi baru
+   * terlihat setelah perbaikan sebelumnya masuk. Sekarang diuji langsung.
+   */
+  it('mengizinkan perjalanan pada dunia berbeda tanpa tabrakan ID beat', async () => {
+    const first = await app.inject({ method: 'POST', url: '/v1/journeys', payload: body('dua-a') });
+    expect(first.statusCode).toBe(201);
+
+    // Dunia berbeda supaya aturan "satu perjalanan aktif per dunia" (D-12) tidak
+    // menutupi masalahnya dengan balasan 409.
+    const second = await app.inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: body('dua-b', 'w_lentera-terakhir'),
+    });
+    expect(second.statusCode).toBe(201);
+
+    const a = first.json() as { journeyId: string };
+    const b = second.json() as { journeyId: string };
+    expect(b.journeyId).not.toBe(a.journeyId);
+
+    // Tidak ada satu pun beat_id yang terpakai dua kali. Dihitung di sisi Node
+    // supaya tidak bergantung pada GROUP BY ... HAVING yang tidak didukung
+    // mesin database in-memory yang dipakai pengujian.
+    const { rows } = await ctx.db.query<{ beat_id: string }>('SELECT beat_id FROM beats');
+    const seen = new Set<string>();
+    const duplicates = rows.filter((row) => {
+      if (seen.has(row.beat_id)) {
+        return true;
+      }
+      seen.add(row.beat_id);
+      return false;
+    });
+    expect(duplicates).toHaveLength(0);
+    expect(rows.length).toBeGreaterThan(0);
+  });
+
   it('bersifat idempotent untuk operation id yang sama (FR-52)', async () => {
     const payload = body('idem');
     const first = await app.inject({ method: 'POST', url: '/v1/journeys', payload });

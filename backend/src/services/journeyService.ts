@@ -132,6 +132,10 @@ export class JourneyService {
     }
 
     const journeyId = `j_${randomUUID()}`;
+    // ID turn dibuat SEBELUM mesin dipanggil, lalu diberikan sebagai awalan ID beat.
+    // Dengan begitu ID beat unik secara global dan tidak bertabrakan dengan
+    // pembukaan perjalanan lain (beats.beat_id adalah kunci utama tabel).
+    const turnId = `t_${randomUUID()}`;
 
     try {
       const context: StoryContext = {
@@ -141,6 +145,7 @@ export class JourneyService {
         manifest: detail.assetManifest,
         personaName: command.persona.name,
         turnOrdinal: 1,
+        beatIdPrefix: turnId,
       };
 
       const generated = await this.deps.engine.generateOpening(context);
@@ -171,7 +176,6 @@ export class JourneyService {
         baseline,
       });
 
-      const turnId = `t_${randomUUID()}`;
       const revision = await this.deps.journeys.appendTurn({
         turnId,
         journeyId,
@@ -339,6 +343,8 @@ export class JourneyService {
         throw conflict('Keputusan ini sudah dijawab atau tidak lagi berlaku.');
       }
 
+      const turnId = `t_${randomUUID()}`;
+
       const context: StoryContext = {
         worldTitle: world.title,
         premise: world.premise,
@@ -346,6 +352,9 @@ export class JourneyService {
         manifest: world.assetManifest,
         personaName: journey.persona_name,
         turnOrdinal: countTurns(existingBeats) + 1,
+        // Awalan unik: tanpa ini, giliran pertama setiap perjalanan menghasilkan
+        // beat_id yang sama dan penyimpanan gagal pada kunci utama.
+        beatIdPrefix: turnId,
         ...(command.customText !== undefined ? { customText: command.customText } : null),
         ...(command.optionId !== undefined ? { optionId: command.optionId } : null),
       };
@@ -360,7 +369,6 @@ export class JourneyService {
         });
       }
 
-      const turnId = `t_${randomUUID()}`;
       const revision = await this.deps.journeys.appendTurn({
         turnId,
         journeyId: command.journeyId,
