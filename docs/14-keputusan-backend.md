@@ -82,6 +82,67 @@ in-memory.
 Semua waktu disimpan sebagai `timestamptz` dalam UTC. Perhitungan reset kuota memakai UTC;
 tampilan waktu lokal adalah tanggung jawab frontend (sesuai D-07).
 
+### ADR-B07 — Migrasi wajib tahan database yang belum siap
+
+`runMigrations` mencoba ulang dengan backoff (1s, 2s, 4s, 8s; maksimum 5 percobaan) untuk
+galat **koneksi** saja: `ECONNREFUSED`, `ECONNRESET`, `ETIMEDOUT`, dan kode SQL kelas
+koneksi (`08003`, `08006`, `57P01`, `57P03`).
+
+Alasan: di blitz.cloud aplikasi dan databasenya dapat bangun bersamaan. Sebelum ini,
+satu `ECONNREFUSED` sesaat membuat proses keluar dan platform menandai aplikasi rusak —
+padahal hanya perlu menunggu beberapa detik.
+
+**Galat SQL yang sebenarnya tidak boleh dicoba ulang.** Kesalahan migrasi harus tetap
+terlihat; mengulanginya hanya menyamarkan masalah. Pengujian menjaga kedua sisi aturan ini.
+
+### ADR-B08 — Akun diadakan saat pertama terlihat
+
+Setiap permintaan ke jalur `/v1/` melewati hook identitas yang memanggil `accounts.ensure()`.
+Akun dibuat lebih dahulu sebelum route mana pun menyentuh tabel yang berkias-asing padanya.
+
+Alasan: klien membuat ID perangkat sendiri, sehingga baris akunnya belum ada saat pertama
+kali dipakai. Tanpa langkah ini, permintaan pertama setiap pengguna baru gagal pada kunci
+asing `operations_account_fk` dan muncul sebagai HTTP 500 — bukan pesan yang dapat
+dimengerti pemain.
+
+Konsekuensi yang harus disadari: siapa pun dapat membuat akun sebanyak yang ia mau dengan
+mengirim ID baru. Ini **dapat diterima selama B-02 belum selesai** karena akun tanpa
+autentikasi memang tidak punya arti keamanan. Setelah B-02 selesai, pengadaan akun harus
+terikat pada identitas yang terautentikasi, dan hook ini menjadi tempat menegakkannya.
+
+Jalur `/assets/*` dan `/health*` **tidak boleh** menyentuh database lewat hook ini.
+
+### ADR-B09 — ID beat harus unik global, bukan per giliran
+
+`beats.beat_id` adalah kunci utama tabel, bukan kunci gabungan `(turn_id, sequence)`.
+Awalan ID beat karena itu WAJIB berasal dari ID turn yang sesungguhnya
+(`beatIdPrefix` pada `StoryContext`), bukan dari nomor turn.
+
+Alasan: ID yang hanya berbasis nomor turn membuat pembukaan **setiap** perjalanan
+menghasilkan `t001-b001` yang sama, sehingga perjalanan kedua selalu gagal disimpan
+dengan `duplicate key value violates unique constraint "beats_pkey"`. Perjalanan pertama
+kebetulan lolos, jadi masalahnya baru muncul pada yang berikutnya.
+
+Aturan tetap: **jangan pernah menurunkan kunci utama dari nomor urut lokal.** Nomor urut
+hanya bermakna di dalam induknya; kunci utama bermakna di seluruh tabel.
+
+### ADR-B10 — Perilaku yang hanya terbukti lewat produksi
+
+Tiga cacat pada ADR-B07, B08, dan B09 **tidak tertangkap oleh pengujian yang ada**, karena:
+
+1. Seluruh pengujian tidak mengirim header `x-account-id`, sehingga jatuh ke akun demo
+   yang sudah dibuat migrasi seed — jalur "perangkat baru" tidak pernah diuji.
+2. Setiap berkas pengujian memakai database baru, sehingga tabrakan antar perjalanan
+   tidak mungkin terlihat.
+
+Aturan yang berlaku mulai sekarang: **setiap kali sebuah jalur baru disambungkan,
+periksa juga jalur "pengguna baru" dan "pemakaian kedua"**, bukan hanya satu panggilan
+yang berhasil. Uji regresi untuk ketiganya sudah ada dan **terbukti gagal** bila
+perbaikannya dibatalkan.
+
+Berkas uji: `backend/tests/api.test.ts` (perangkat baru; dua perjalanan tanpa tabrakan;
+label opsi) dan `backend/tests/schema.test.ts` (percobaan ulang migrasi).
+
 ## 4. Bentuk layanan
 
 ```text

@@ -181,9 +181,17 @@ Ganti satu per satu tanpa mengubah kode apa pun.
 | 1 | Sandbox runtime blitz.cloud mengizinkan egress ke penyedia model | Panggil endpoint penyedia dari dalam aplikasi setelah model diputuskan |
 | 2 | Tidur sungguhan selama dua jam di platform mereka | Akses aplikasi setelah lebih dari dua jam tidak dipakai |
 | 3 | Rate limit di belakang reverse proxy platform | Kirim lebih dari `RATE_LIMIT_MAX` permintaan dan pastikan balasan 429 |
-| 4 | Waktu build pertama di server mereka | Lihat log build pertama |
 
 Butir 1 baru relevan setelah B-01 (penyedia model) diputuskan.
+
+**Waktu build sudah terukur** (butir 4 daftar lama): build di server mereka selesai
+dalam **2,5–3 menit** untuk commit yang mengubah berkas TypeScript. Build pertama
+(± 4,5 menit) lebih lama karena belum ada cache lapisan.
+
+**Catatan penting: push ke GitHub TIDAK otomatis memicu build.** Platform
+menjalankan versi terakhir yang dibangun sampai `builds_start` dipanggil. Setelah
+push, panggil `apps_deploy_github` atau `builds_start`, lalu pastikan kolom
+`commitSha` pada `apps_get` sudah berubah — jangan menganggap build berjalan sendiri.
 
 ### Catatan tentang image 355 MB
 
@@ -191,7 +199,53 @@ Ukuran ini berasal dari `node:22-bookworm-slim` ditambah dependensi produksi. Bi
 dikecilkan, urutan yang aman: pindah ke `node:22-alpine`, lalu buang berkas yang tidak
 terpakai. Jangan mengorbankan `USER node` atau `EXPOSE` demi ukuran.
 
-## 6. Risiko yang diketahui
+## 6. Koneksi frontend ke backend — SUDAH TERHUBUNG
+
+Frontend memakai backend produksi secara bawaan. Tidak ada langkah tambahan yang
+diperlukan untuk menjalankannya.
+
+| Hal | Nilai |
+|---|---|
+| Alamat backend | `https://fayln-api.marky.blitz.cloud` |
+| Berkas penentu | `frontend/src/data/http/apiConfig.ts` |
+| Gateway | `frontend/src/data/http/HttpStoryGateway.ts` |
+| Identitas perangkat | `frontend/src/data/http/deviceAccount.ts` |
+
+Cara kerja singkat:
+
+1. `GatewayProvider` memanggil `apiBaseUrl()`. Bila mengembalikan alamat, dipakai
+   `HttpStoryGateway`; bila `null`, dipakai `MockStoryGateway` tanpa jaringan.
+2. Untuk pengembangan lokal: `EXPO_PUBLIC_API_URL=http://localhost:8080`.
+3. Untuk kembali ke data contoh: `EXPO_PUBLIC_API_URL=mock`.
+4. Variabel `EXPO_PUBLIC_*` disisipkan saat build, bukan dibaca saat berjalan —
+   mengubahnya berarti build ulang.
+5. Identitas perangkat dibuat sekali lalu disimpan di penyimpanan aman. Backend
+   membuatkan baris akunnya saat pertama kali terlihat.
+
+Layar tidak berubah sama sekali: semuanya tetap berbicara lewat antarmuka
+`StoryGateway` (NFR-15). Mengganti gateway cukup di satu tempat.
+
+### Tiga cacat produksi yang ditemukan saat menyambungkan frontend
+
+Ketiganya hanya muncul pada pemakaian sungguhan, bukan pada pengujian yang ada.
+Semuanya sudah diperbaiki, diuji, dan terpasang.
+
+| # | Gejala | Sebab | Perbaikan |
+|---|---|---|---|
+| 1 | Aplikasi berhenti sendiri berulang kali; `connect ECONNREFUSED ...:5432` | `runMigrations` dicoba tepat sekali; database belum siap saat aplikasi bangun | Percobaan ulang dengan backoff 1s/2s/4s/8s |
+| 2 | Perjalanan PERTAMA setiap pengguna baru menjawab HTTP 500 | Tidak ada yang membuat baris `accounts` untuk ID perangkat buatan klien, padahal `operations` berkias-asing ke sana | Hook identitas memanggil `accounts.ensure()` untuk jalur `/v1/` |
+| 3 | Perjalanan KEDUA selalu HTTP 500 (`beats_pkey`) | ID beat hanya dari nomor turn (`t001-b001`), padahal `beats.beat_id` kunci utama tabel | ID turn dibuat lebih dahulu dan dipakai sebagai awalan ID beat |
+
+Cacat 2 dan 3 tersembunyi karena seluruh pengujian memakai akun demo bawaan migrasi
+seed, dan setiap berkas pengujian memakai database baru — sehingga tabrakan antar
+perjalanan tidak pernah terlihat. Keduanya kini punya uji regresi yang terbukti
+gagal bila perbaikannya dibatalkan.
+
+Cacat 4 (kutipan kosong pada narasi pilihan opsi) ditemukan setelah ketiganya
+diperbaiki dan diperiksa langsung di produksi. Rinciannya di `docs/00` bagian
+keputusan.
+
+## 7. Risiko yang diketahui
 
 1. **Identitas masih placeholder.** Siapa pun yang mengetahui sebuah `account_id` dapat
    membaca perjalanan akun itu. **Jangan dipakai untuk data nyata sebelum B-02 selesai.**
@@ -204,7 +258,7 @@ terpakai. Jangan mengorbankan `USER node` atau `EXPOSE` demi ukuran.
 4. **Data rujukan demo ikut terpasang.** Empat dunia contoh dan satu akun demo dibuat oleh
    `002_seed_reference.sql`. Ganti sebelum rilis publik.
 
-## 7. Perintah yang berguna
+## 8. Perintah yang berguna
 
 ```bash
 npm run build        # kompilasi ke dist/
