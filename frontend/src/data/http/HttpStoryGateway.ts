@@ -17,6 +17,7 @@
 
 import type {
   Beat,
+  GenreOption,
   JourneyDetailDTO,
   JourneySummary,
   TurnResultEnvelope,
@@ -142,6 +143,19 @@ export class HttpStoryGateway implements StoryGateway {
 
     const suffix = params.toString();
     return this.request<CatalogPage>(`/v1/worlds${suffix ? `?${suffix}` : ''}`, { method: 'GET' });
+  }
+
+  /**
+   * Daftar genre dari server.
+   *
+   * Responsnya `{ items }`, sama seperti rail. Bila server mengembalikan bentuk
+   * lain (mis. larik telanjang), yang dikembalikan adalah larik kosong — bukan
+   * galat. Chip genre yang hilang jauh lebih ringan akibatnya daripada layar
+   * Beranda yang gagal tampil karena satu bidang pendamping.
+   */
+  async fetchGenres(): Promise<GenreOption[]> {
+    const body = await this.request<{ items?: GenreOption[] }>('/v1/genres', { method: 'GET' });
+    return Array.isArray(body.items) ? body.items : [];
   }
 
   async fetchWorld(worldId: string): Promise<WorldDetailDTO> {

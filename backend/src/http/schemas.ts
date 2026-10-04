@@ -7,21 +7,44 @@
 
 import { z } from 'zod';
 
-import { GENRES, REPORT_CATEGORIES, RESPONSE_LOCALES } from '../contracts/types';
+import { REPORT_CATEGORIES, RESPONSE_LOCALES } from '../contracts/types';
+
+/**
+ * Saringan genre pada katalog publik.
+ *
+ * Daftar genre adalah DATA (tabel `genres`), bukan konstanta. Versi sebelumnya
+ * menyaring masukan terhadap konstanta yang tertulis di kode — dan itu berarti
+ * genre yang baru dibuat admin dari panel DIBUANG diam-diam di sini, sebelum
+ * kueri sempat berjalan. Gejalanya membingungkan: genre tampil di formulir,
+ * tersimpan di basis data, tetapi menyaring katalog dengannya mengembalikan
+ * seluruh dunia seolah saringan tidak dipasang.
+ *
+ * Karena itu tidak ada lagi daftar yang dicocokkan. Yang tersisa hanya batas
+ * BENTUK — panjang, jumlah, dan duplikat — karena nilai ini masuk ke kueri.
+ * Keabsahan sebuah id diperiksa terhadap tabel, dan genre yang tidak ada cukup
+ * menghasilkan katalog kosong, bukan masukan yang dibuang tanpa jejak.
+ */
+const MAX_GENRE_FILTERS = 10;
+const MAX_GENRE_ID_LENGTH = 32;
 
 export const catalogQuerySchema = z.object({
   search: z.string().max(120).optional(),
   genres: z
     .string()
     .optional()
-    .transform((value) =>
-      value === undefined || value.trim().length === 0
-        ? []
-        : value
+    .transform((value) => {
+      if (value === undefined || value.trim().length === 0) {
+        return [];
+      }
+      return [
+        ...new Set(
+          value
             .split(',')
             .map((item) => item.trim())
-            .filter((item) => (GENRES as readonly string[]).includes(item)),
-    ),
+            .filter((item) => item.length > 0 && item.length <= MAX_GENRE_ID_LENGTH),
+        ),
+      ].slice(0, MAX_GENRE_FILTERS);
+    }),
   page: z.coerce.number().int().min(1).max(1000).default(1),
   pageSize: z.coerce.number().int().min(1).max(50).default(20),
 });

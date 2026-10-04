@@ -163,6 +163,7 @@ const NAV: { href: string; label: string; key: string }[] = [
   { href: '/admin/worlds', label: 'Dunia', key: 'worlds' },
   { href: '/admin/characters', label: 'Karakter', key: 'characters' },
   { href: '/admin/locations', label: 'Lokasi', key: 'locations' },
+  { href: '/admin/genres', label: 'Genre', key: 'genres' },
   { href: '/admin/assets', label: 'Aset', key: 'assets' },
   { href: '/admin/accounts', label: 'Akun', key: 'accounts' },
   { href: '/admin/models', label: 'Model', key: 'models' },
@@ -173,29 +174,54 @@ const NAV: { href: string; label: string; key: string }[] = [
 ];
 
 /**
+ * Tiga titik jendela macOS.
+ *
+ * Murni hiasan — tidak ada yang dapat diklik, dan itu memang benar: panel ini
+ * halaman web, bukan jendela aplikasi. Karena itu `aria-hidden` dipasang dan
+ * tidak ada satu pun elemen fokus di dalamnya; pembaca layar tidak perlu
+ * mendengar tiga lingkaran yang tidak melakukan apa-apa.
+ */
+const TRAFFIC_LIGHTS = safe(
+  `<span class="traffic" aria-hidden="true">` +
+    `<span class="traffic__dot traffic__dot--close"></span>` +
+    `<span class="traffic__dot traffic__dot--min"></span>` +
+    `<span class="traffic__dot traffic__dot--zoom"></span>` +
+    `</span>`,
+);
+
+/**
  * Tata letak halaman.
+ *
+ * Bentuknya meniru jendela macOS: bilah judul dengan tiga titik di kiri,
+ * bilah sisi tetap berisi menu, dan isi halaman sebagai "jendela" putih yang
+ * mengambang di atas kanvas kelabu.
  *
  * Sengaja mengembalikan `string` PRIMITIF, bukan `SafeHtml`. Halaman jadi sudah
  * final, jadi tidak perlu ditandai aman lagi — dan Fastify hanya menerima nilai
  * primitif pada `reply.send()`. Objek `String` turunan akan ditolak serializer.
  */
 export function layout(options: LayoutOptions): string {
-  const nav = options.admin
-    ? html`<nav class="nav">${NAV.map(
-        (item) =>
-          html`<a href="${item.href}"${item.key === options.active ? ' class="on"' : ''}>${item.label}</a>`,
-      )}</nav>`
+  const signedIn = options.admin !== null && options.admin !== undefined;
+
+  const header = signedIn
+    ? html`<header class="top">
+  ${TRAFFIC_LIGHTS}
+  <div class="brand">fayLN <span>admin</span></div>
+  <div class="who">
+    <span class="who__name">${options.admin!.displayName || options.admin!.username}</span>
+    <form method="post" action="/admin/logout"><button class="link" type="submit">Keluar</button></form>
+  </div>
+</header>`
     : html``;
 
-  const header = options.admin
-    ? html`<header class="top">
-        <div class="brand">fayLN <span>admin</span></div>
-        ${nav}
-        <div class="who">
-          <span>${options.admin.displayName || options.admin.username}</span>
-          <form method="post" action="/admin/logout"><button class="link" type="submit">Keluar</button></form>
-        </div>
-      </header>`
+  const nav = signedIn
+    ? html`<aside class="sidebar">
+  <div class="sidebar__label">Panel</div>
+  <nav class="nav">${NAV.map(
+    (item) =>
+      html`<a href="${item.href}"${item.key === options.active ? ' class="on"' : ''}>${item.label}</a>`,
+  )}</nav>
+</aside>`
     : html``;
 
   const notice = options.notice
@@ -214,86 +240,223 @@ export function layout(options: LayoutOptions): string {
 </head>
 <body>
 ${header}
+<div class="shell${signedIn ? '' : ' shell--bare'}">
+${nav}
 <main>
 ${notice}
 ${options.body}
 </main>
+</div>
 ${options.scripts ? safe(`<script>${options.scripts}</script>`) : safe('')}
 </body>
 </html>`.toString();
 }
 
 /**
- * Gaya panel.
+ * Gaya panel — ala macOS.
  *
- * Netral dingin dengan aksen yang sama dengan aplikasi pemain, supaya panel
- * terasa bagian dari produk yang sama. Tanpa gradien dan tanpa bayangan berat.
+ * TIGA ATURAN YANG MENGIKAT BERKAS INI:
+ *
+ * 1. **Tanpa resource luar.** Tanpa font web, tanpa CDN, tanpa ikon dari
+ *    jaringan. Panel ini harus tampil utuh di jaringan tertutup sekalipun.
+ *    Tumpukan font sistem dipakai apa adanya — `-apple-system` memberi SF Pro
+ *    di macOS, `Segoe UI Variable` di Windows, `Inter` di Linux.
+ *
+ * 2. **Tema terang dan gelap.** Tema gelap mengikuti `prefers-color-scheme`
+ *    perangkat, bukan sakelar di halaman: itu yang diharapkan dari aplikasi
+ *    macOS, dan tidak menambah keadaan yang harus disimpan.
+ *
+ * 3. **Nama kelas tidak berubah.** Seluruh halaman sudah memakai kelas seperti
+ *    `.card`, `.grid`, `.stat`, `.notice`, `.pill`, `.two`, `.between`, dan
+ *    seterusnya. Rombakan ini hanya mengubah TAMPILANNYA, bukan namanya —
+ *    mengganti nama berarti menyunting belasan halaman sekaligus, dan satu yang
+ *    terlewat tidak menghasilkan galat, hanya bagian yang tampil tanpa gaya.
+ *
+ * JANGAN MENULIS BACKTICK ATAU `${` DI DALAM STRING INI. Isinya template
+ * literal; satu backtick saja menutupnya lebih awal, dan sisa CSS-nya menjadi
+ * kode TypeScript yang tidak sah — `tsc` gagal dengan pesan yang menunjuk baris
+ * komentar CSS, bukan baris yang salah. Ini pernah terjadi pada komentar yang
+ * menulis nama properti CSS di antara backtick.
  */
 const STYLES = `
 :root{
-  --bg:#0f1416; --surface:#161d20; --surface2:#1d2629; --line:#2a3538;
-  --text:#e6edef; --muted:#8fa1a6; --accent:#2fb894; --danger:#e0574f; --warn:#d9a441;
+  color-scheme:light dark;
+
+  --canvas:#f2f2f7; --surface:#ffffff; --sidebar:#ececf0; --panel:#f7f7f9;
+  --field:#ffffff; --line:rgba(0,0,0,.10); --line-strong:rgba(0,0,0,.16);
+  --text:#1d1d1f; --muted:#6e6e73;
+  --accent:#007aff; --accent-ink:#ffffff; --accent-soft:rgba(0,122,255,.12);
+  --danger:#d70015; --danger-soft:rgba(215,0,21,.10);
+  --ok:#1c8b3a; --ok-soft:rgba(28,139,58,.12);
+  --warn:#9a6400; --warn-soft:rgba(154,100,0,.12);
+  --shadow:0 1px 2px rgba(0,0,0,.10), 0 10px 30px rgba(0,0,0,.07);
+  --radius:12px;
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --canvas:#131315; --surface:#2c2c2e; --sidebar:#232325; --panel:#232325;
+    --field:#1c1c1e; --line:rgba(255,255,255,.12); --line-strong:rgba(255,255,255,.22);
+    --text:#f5f5f7; --muted:#98989d;
+    --accent:#0a84ff; --accent-ink:#ffffff; --accent-soft:rgba(10,132,255,.20);
+    --danger:#ff6961; --danger-soft:rgba(255,105,97,.16);
+    --ok:#4cd964; --ok-soft:rgba(76,217,100,.16);
+    --warn:#ffb340; --warn-soft:rgba(255,179,64,.16);
+    --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 30px rgba(0,0,0,.4);
+  }
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--bg);color:var(--text);
-  font:14px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+body{margin:0;background:var(--canvas);color:var(--text);
+  font:13.5px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text",
+  "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+  -webkit-font-smoothing:antialiased}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
-.top{display:flex;align-items:center;gap:20px;padding:10px 20px;border-bottom:1px solid var(--line);
-  background:var(--surface);flex-wrap:wrap}
-.brand{font-weight:600;letter-spacing:.02em}
-.brand span{color:var(--muted);font-weight:400;font-size:12px;text-transform:uppercase;letter-spacing:.1em}
-.nav{display:flex;gap:2px;flex-wrap:wrap;flex:1}
-.nav a{padding:6px 11px;border-radius:6px;color:var(--muted);font-size:13px}
-.nav a:hover{background:var(--surface2);color:var(--text);text-decoration:none}
-.nav a.on{background:var(--accent);color:#06231c;font-weight:600}
-.who{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:13px}
-main{max-width:1120px;margin:0 auto;padding:24px 20px 64px}
-h1{font-size:22px;margin:0 0 4px;font-weight:600}
-h2{font-size:15px;margin:28px 0 10px;color:var(--muted);text-transform:uppercase;
-  letter-spacing:.08em;font-weight:600}
-.sub{color:var(--muted);margin:0 0 20px;font-size:13px}
-.card{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:18px;margin-bottom:18px}
-.grid{display:grid;gap:14px;grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}
-.stat{background:var(--surface);border:1px solid var(--line);border-radius:8px;padding:14px}
-.stat b{display:block;font-size:24px;font-weight:600;margin-bottom:2px}
-.stat span{color:var(--muted);font-size:12px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th,td{text-align:left;padding:9px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-th{color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.06em;font-weight:600}
-tbody tr:hover{background:var(--surface2)}
+
+/* ---------------- Bilah judul ---------------- */
+.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;
+  height:52px;padding:0 18px;border-bottom:1px solid var(--line);
+  background:var(--surface);background:color-mix(in srgb,var(--surface) 82%,transparent);
+  backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px)}
+.traffic{display:inline-flex;gap:8px;flex:none}
+.traffic__dot{width:12px;height:12px;border-radius:50%;display:block}
+.traffic__dot--close{background:#ff5f57}
+.traffic__dot--min{background:#febc2e}
+.traffic__dot--zoom{background:#28c840}
+@media (prefers-color-scheme:dark){
+  .traffic__dot{box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
+}
+.brand{font-weight:600;font-size:14px;letter-spacing:.01em}
+.brand span{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
+  letter-spacing:.08em;margin-left:2px}
+.who{display:flex;align-items:center;gap:12px;margin-left:auto;color:var(--muted);font-size:12.5px}
+.who__name{color:var(--text);font-weight:500}
+
+/* ---------------- Kerangka: satu jendela berisi bilah sisi + isi ---------------- */
+/*
+ * Bilah sisi berada DI DALAM jendela, bukan di sampingnya. Itu yang membuatnya
+ * terbaca sebagai jendela macOS — System Settings, Finder, dan Mail semuanya
+ * berbentuk satu kartu dengan kolom kiri yang diwarnai berbeda, bukan dua
+ * permukaan yang berdiri sendiri.
+ *
+ * "overflow:hidden" dipakai untuk memangkas sudut kolom kirinya; sudut itu tidak
+ * dapat dibulatkan sendiri karena tingginya mengikuti isi halaman.
+ */
+.shell{max-width:1240px;margin:22px auto 72px;display:flex;align-items:stretch;
+  background:var(--surface);border:1px solid var(--line);border-radius:14px;
+  box-shadow:var(--shadow);overflow:hidden}
+.shell--bare{display:block;max-width:400px;margin:12vh auto;padding:26px}
+.shell--bare main{padding:0}
+.sidebar{width:236px;flex:none;padding:16px 12px 24px;background:var(--sidebar);
+  border-right:1px solid var(--line)}
+.sidebar__label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
+  color:var(--muted);padding:0 10px 8px}
+.nav{display:flex;flex-direction:column;gap:1px}
+.nav a{display:block;padding:6px 10px;border-radius:7px;color:var(--text);font-size:13px;
+  line-height:1.4}
+.nav a:hover{background:var(--accent-soft);text-decoration:none}
+.nav a.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+
+main{flex:1;min-width:0;padding:24px 26px 32px}
+@media(max-width:860px){
+  .shell{display:block;margin:12px 12px 48px}
+  .sidebar{width:auto;padding:10px;border-right:0;border-bottom:1px solid var(--line)}
+  .nav{flex-direction:row;flex-wrap:wrap;gap:4px}
+  .sidebar__label{display:none}
+  main{padding:18px}
+}
+
+/* ---------------- Tipografi ---------------- */
+h1{font-size:21px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
+h2{font-size:13px;margin:26px 0 10px;color:var(--muted);text-transform:uppercase;
+  letter-spacing:.06em;font-weight:600}
+h2 span{text-transform:none;letter-spacing:normal}
+.sub{color:var(--muted);margin:0 0 18px;font-size:12.5px}
+.sub strong{color:var(--text);font-weight:600}
+.muted{color:var(--muted)}
+.mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:11.5px}
+.right{text-align:right}
+
+/* ---------------- Permukaan ---------------- */
+.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+  padding:16px;margin-bottom:16px}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 14px}
+.stat b{display:block;font-size:22px;font-weight:600;margin-bottom:1px;letter-spacing:-.01em}
+.stat span{color:var(--muted);font-size:11.5px}
+.empty{color:var(--muted);padding:22px;text-align:center;border:1px dashed var(--line-strong);
+  border-radius:10px;font-size:12.5px}
+
+/* ---------------- Tabel ---------------- */
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:var(--panel);color:var(--muted);font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.05em;font-weight:600;white-space:nowrap}
+thead th:first-child{border-top-left-radius:8px}
+thead th:last-child{border-top-right-radius:8px}
+tbody tr:last-child td{border-bottom:0}
+tbody tr:hover td{background:var(--accent-soft)}
+
+/* ---------------- Formulir ---------------- */
 label{display:block;margin-bottom:12px}
-label span{display:block;color:var(--muted);font-size:12px;margin-bottom:4px}
-input,select,textarea{width:100%;padding:8px 10px;background:var(--bg);color:var(--text);
-  border:1px solid var(--line);border-radius:6px;font:inherit}
-input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent)}
+label span{display:block;color:var(--muted);font-size:11.5px;margin-bottom:4px}
+input,select,textarea{width:100%;padding:6px 10px;background:var(--field);color:var(--text);
+  border:1px solid var(--line-strong);border-radius:7px;font:inherit;font-size:13px}
+input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
+  box-shadow:0 0 0 3px var(--accent-soft)}
+input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--accent)}
+input[type=range]{padding:0;background:none;border:none;box-shadow:none}
 textarea{min-height:80px;resize:vertical}
-button{padding:8px 15px;border-radius:6px;border:1px solid var(--accent);background:var(--accent);
-  color:#06231c;font:inherit;font-weight:600;cursor:pointer}
-button:hover{filter:brightness(1.08)}
-button.ghost{background:transparent;color:var(--muted);border-color:var(--line);font-weight:400}
-button.ghost:hover{color:var(--text);border-color:var(--muted)}
-button.danger{background:transparent;color:var(--danger);border-color:var(--danger);font-weight:400}
-button.link{background:none;border:none;color:var(--accent);padding:0;font-weight:400;cursor:pointer}
+select{appearance:none;-webkit-appearance:none;
+  background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),
+    linear-gradient(135deg,var(--muted) 50%,transparent 50%);
+  background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;
+  background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:28px}
+
+/* ---------------- Tombol ---------------- */
+button{padding:5px 13px;border-radius:7px;border:1px solid transparent;background:var(--accent);
+  color:var(--accent-ink);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
+  box-shadow:0 1px 2px rgba(0,0,0,.12)}
+button:hover{filter:brightness(1.06)}
+button:active{filter:brightness(.94)}
+button:disabled{opacity:.4;cursor:default;filter:none}
+button.ghost{background:var(--surface);color:var(--text);border-color:var(--line-strong);
+  font-weight:500;box-shadow:0 1px 1px rgba(0,0,0,.06)}
+button.ghost:hover{background:var(--panel);filter:none}
+button.danger{background:var(--danger-soft);color:var(--danger);
+  border-color:color-mix(in srgb,var(--danger) 35%,transparent);font-weight:500;box-shadow:none}
+button.danger:hover{background:var(--danger);color:#fff;filter:none}
+button.link{background:none;border:none;color:var(--accent);padding:0;font-weight:500;
+  box-shadow:none;font-size:12.5px}
+button.link:hover{text-decoration:underline;filter:none}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .between{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
-.notice{padding:10px 13px;border-radius:6px;margin-bottom:16px;font-size:13px}
-.notice.ok{background:#12332a;border:1px solid #1d6b52;color:#8fe0c4}
-.notice.err{background:#3a1f1d;border:1px solid #7d3733;color:#f0a8a3}
-.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;
-  border:1px solid var(--line);color:var(--muted)}
-.pill.ok{border-color:#1d6b52;color:#8fe0c4}
-.pill.off{border-color:#5a4340;color:#c99}
-.pill.draft{border-color:#6b5a1d;color:#e0cf8f}
-.muted{color:var(--muted)}
-.mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px}
-.right{text-align:right}
-.empty{color:var(--muted);padding:22px;text-align:center;border:1px dashed var(--line);border-radius:8px}
-.login{max-width:340px;margin:12vh auto}
 .inline{display:inline}
 .two{display:grid;gap:14px;grid-template-columns:1fr 1fr}
 @media(max-width:680px){.two{grid-template-columns:1fr}}
+
+/* ---------------- Pemberitahuan dan pil ---------------- */
+.notice{padding:10px 13px;border-radius:9px;margin-bottom:16px;font-size:12.5px;
+  border:1px solid transparent}
+.notice.ok{background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);
+  color:var(--ok)}
+.notice.err{background:var(--danger-soft);
+  border-color:color-mix(in srgb,var(--danger) 30%,transparent);color:var(--danger)}
+.notice.info{background:var(--accent-soft);
+  border-color:color-mix(in srgb,var(--accent) 30%,transparent);color:var(--text)}
+.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;
+  border:1px solid var(--line-strong);color:var(--muted);white-space:nowrap}
+.pill.ok{border-color:color-mix(in srgb,var(--ok) 40%,transparent);color:var(--ok);
+  background:var(--ok-soft)}
+.pill.off{border-color:color-mix(in srgb,var(--danger) 40%,transparent);color:var(--danger);
+  background:var(--danger-soft)}
+.pill.draft{border-color:color-mix(in srgb,var(--warn) 40%,transparent);color:var(--warn);
+  background:var(--warn-soft)}
+
+/* ---------------- Halaman masuk ---------------- */
+.login{max-width:340px;margin:0 auto}
+.login .brand{margin-bottom:4px}
 `;
+
 
 /* ---------------------------------------------------------------- */
 /* Potongan yang sering dipakai                                      */

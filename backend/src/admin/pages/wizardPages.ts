@@ -15,7 +15,7 @@
 
 import type { SafeHtml } from '../html';
 import { esc, escOr, formatTime, html, inputValue, safe, statusPill, table } from '../html';
-import { GENRES, RESPONSE_LOCALES, type GenreId, type ResponseLocale } from '../../contracts/types';
+import { RESPONSE_LOCALES, type ResponseLocale } from '../../contracts/types';
 import { BASE_EXPRESSION, MAX_BACKGROUNDS, type BackgroundRow, type DraftWorld, type NpcRow, type WizardStep } from '../worldDraftRepository';
 import type { AdminPageContext } from './context';
 
@@ -68,8 +68,16 @@ function wizardSteps(current: WizardStep, worldId: string | null, unlocked: Wiza
   return html`<ol class="wizard-steps">${items}</ol>`;
 }
 
-/** Tombol bawah: "Simpan & keluar" selalu ada, aksi utama berbeda per langkah. */
-function actions(primaryLabel: string, withBack: string | null): SafeHtml {
+/**
+ * Tombol bawah: "Simpan & keluar" selalu ada, aksi utama berbeda per langkah.
+ *
+ * `primaryLabel` bertipe `SafeHtml`, bukan `string`. Sebabnya konkret dan pernah
+ * salah: label dikirim sebagai string, lalu `html()` meng-escape-nya, sehingga
+ * entitas seperti `&rarr;` tampil apa adanya sebagai teks "&rarr;" di tombol.
+ * Dengan markup, pemanggil menulis persis apa yang ia maksud, dan tanggung jawab
+ * meng-escape ada di tempat yang terlihat.
+ */
+function actions(primaryLabel: SafeHtml, withBack: string | null): SafeHtml {
   return html`<div class="wizard-actions">
   ${
     withBack
@@ -101,11 +109,17 @@ export async function wizardStep1(
   const genres = new Set(draft?.genres ?? []);
   const locales = new Set(draft?.locales ?? []);
 
-  const genreBoxes = GENRES.map(
+  // Genre dibaca dari TABEL, bukan dari konstanta — lihat `worldsForm` di
+  // `catalogPages`. Dua formulir yang menawarkan daftar berbeda adalah cacat
+  // yang tidak terlihat sampai ada yang membandingkan keduanya.
+  const genreOptions = await ctx.genres.listOfferable(draft?.genres ?? []);
+  const genreBoxes = genreOptions.map(
     (genre) =>
       html`<label class="inline" style="margin-right:14px">
-  <input type="checkbox" name="genres" value="${genre}"${genres.has(genre as GenreId) ? ' checked' : ''}
-         style="width:auto"> ${esc(genre)}
+  <input type="checkbox" name="genres" value="${genre.genreId}"${
+    genres.has(genre.genreId) ? ' checked' : ''
+  } style="width:auto"> ${esc(genre.labelId)}
+  ${genre.active ? '' : html`<span class="muted" style="font-size:11px">(tidak ditawarkan)</span>`}
 </label>`,
   );
 
@@ -184,7 +198,7 @@ ${
     <div style="padding-top:6px">${genreBoxes}</div>
   </label>
 
-  ${actions('Lanjut ke latar belakang &rarr;', null)}
+  ${actions(html`Lanjut ke latar belakang &rarr;`, null)}
 </form>`;
 }
 
@@ -252,7 +266,7 @@ ${
 
 <form method="post" action="/admin/worlds-wizard/2" class="card">
   <input type="hidden" name="worldId" value="${inputValue(worldId)}">
-  ${actions('Lanjut ke karakter &rarr;', `/admin/worlds/${esc(worldId)}/wizard/1`)}
+  ${actions(html`Lanjut ke karakter &rarr;`, `/admin/worlds/${esc(worldId)}/wizard/1`)}
 </form>`;
 }
 
@@ -481,7 +495,7 @@ ${
 
 <form method="post" action="/admin/worlds-wizard/3" class="card">
   <input type="hidden" name="worldId" value="${inputValue(worldId)}">
-  ${actions('Simpan &amp; terbitkan', `/admin/worlds/${esc(worldId)}/wizard/2`)}
+  ${actions(html`Simpan &amp; terbitkan`, `/admin/worlds/${esc(worldId)}/wizard/2`)}
   <p class="sub" style="margin:12px 0 0">
     <strong>Simpan &amp; terbitkan</strong> membuat dunia langsung tampil di katalog
     pemain. Bila belum yakin, pakai <strong>Simpan &amp; keluar</strong> — draf dapat

@@ -39,6 +39,8 @@ import {
 
 import type {
   Beat,
+  GenreId,
+  GenreOption,
   JourneyDetailDTO,
   JourneySummary,
   RelationEntry,
@@ -65,6 +67,24 @@ const SIM_PROMPT_TOKENS = 18_240;
 const SIM_COMPLETION_TOKENS = 640;
 
 const SLOW_DELAY_MS = 10_000;
+
+/**
+ * Label genre contoh, dengan nama yang sama seperti yang di-seed server.
+ *
+ * Disimpan di sini karena gateway contoh harus dapat menjawab `/v1/genres`
+ * tanpa server. Isinya SENGAJA sama dengan `009_genres.sql` — bila keduanya
+ * berselisih, uji akan lulus dengan label yang tidak pernah dilihat pemain.
+ */
+const MOCK_GENRE_LABELS: Record<string, { labelId: string; labelEn: string }> = {
+  romance: { labelId: 'Romansa', labelEn: 'Romance' },
+  drama: { labelId: 'Drama', labelEn: 'Drama' },
+  office: { labelId: 'Kehidupan Kantor', labelEn: 'Office Life' },
+  fantasy: { labelId: 'Fantasi', labelEn: 'Fantasy' },
+  mystery: { labelId: 'Misteri', labelEn: 'Mystery' },
+};
+
+/** Urutan tampil chip. Sama dengan urutan `position` di tabel genre. */
+const MOCK_GENRE_ORDER: GenreId[] = ['romance', 'drama', 'office', 'fantasy', 'mystery'];
 
 /** Bentuk laporan yang dicatat simulator. */
 export type RecordedReport = ReportInput & { reportId: string };
@@ -505,6 +525,39 @@ export class MockStoryGateway implements StoryGateway {
   }
 
   /* ---------------- Katalog ---------------- */
+
+  /**
+   * Genre yang ditawarkan, diturunkan dari katalog contoh.
+   *
+   * Diturunkan, bukan ditulis sebagai daftar tetap — justru itu yang sedang
+   * dibuktikan di sini. Di produksi daftarnya datang dari tabel `genres`; bila
+   * gateway contoh memakai daftar sendiri, uji akan lulus sementara aplikasi
+   * sungguhan tidak pernah menyebut `/v1/genres` sama sekali.
+   *
+   * Hanya genre dari dunia TERBIT yang ikut, supaya chip yang ditawarkan selalu
+   * punya isi. Dunia `retired` sengaja tidak menyumbang genre: pemain tidak dapat
+   * melihatnya, jadi menawarkan genrenya hanya menyesatkan.
+   */
+  async fetchGenres(): Promise<GenreOption[]> {
+    await this.delay(20);
+    this.throwIfFault();
+
+    const used = new Set<string>();
+    for (const world of allWorlds) {
+      if (world.status !== 'published') {
+        continue;
+      }
+      for (const genre of world.genres) {
+        used.add(genre);
+      }
+    }
+
+    return MOCK_GENRE_ORDER.filter((genreId) => used.has(genreId)).map((genreId) => ({
+      genreId,
+      labelId: MOCK_GENRE_LABELS[genreId]!.labelId,
+      labelEn: MOCK_GENRE_LABELS[genreId]!.labelEn,
+    }));
+  }
 
   async fetchCatalog(query: CatalogQuery): Promise<CatalogPage> {
     await this.delay(60);

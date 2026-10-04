@@ -12,6 +12,7 @@ import type { AccountsAdminRepository } from '../accountsAdminRepository';
 import type { PromotionsRepository } from '../promotionsRepository';
 import type { ModelsRepository } from '../modelsRepository';
 import type { WorldDraftRepository } from '../worldDraftRepository';
+import type { GenresRepository } from '../genresRepository';
 import type { MediaRepository } from '../../repositories/mediaRepository';
 
 export type AdminPageContext = {
@@ -23,6 +24,15 @@ export type AdminPageContext = {
   models: ModelsRepository;
   /** Draf wizard "Dunia baru". */
   drafts: WorldDraftRepository;
+  /**
+   * Master genre.
+   *
+   * Berada di sini — bukan di dalam `catalog` — karena genre adalah data yang
+   * berdiri sendiri: ia tidak hidup di dalam satu versi dunia, sehingga
+   * mengubahnya tidak membuat versi baru. Formulir dunia dan wizard hanya
+   * MEMBACA daftarnya; yang menulis adalah halaman Genre.
+   */
+  genres: GenresRepository;
   /** Berkas gambar unggahan; dipakai halaman Aset untuk menghitung pemakaian. */
   media: MediaRepository;
 };

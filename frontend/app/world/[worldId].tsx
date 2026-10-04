@@ -16,11 +16,12 @@ import { Text } from '@/components/Text';
 import { useGateway } from '@/data/GatewayProvider';
 import { StoryGatewayError } from '@/data/gateway';
 import { useWorldDetail } from '@/data/queries';
-import { contentRatingLabelKey, genreLabelKey, worldStatusLabelKey } from '@/domain/labels';
+import { contentRatingLabelKey, worldStatusLabelKey } from '@/domain/labels';
 import { MEDIA_ASPECT } from '@/domain/media';
 import type { NPCPublicDTO } from '@/domain/types';
 import { StartJourneySheet, type PersonaDraft } from '@/features/catalog/StartJourneySheet';
 import { useProfile } from '@/features/profile/ProfileProvider';
+import { useGenreLabel } from '@/hooks/useGenreLabel';
 import { useI18n } from '@/i18n';
 import { telemetry } from '@/telemetry/analytics';
 import { useTheme } from '@/theme/ThemeProvider';
@@ -42,6 +43,7 @@ export default function WorldDetailScreen() {
   const gateway = useGateway();
   const { colors } = useTheme();
   const { t } = useI18n();
+  const genreLabelOf = useGenreLabel();
   const insets = useSafeAreaInsets();
 
   const world = useWorldDetail(worldId);
@@ -238,7 +240,7 @@ export default function WorldDetailScreen() {
         <Section title={t('detail.genresTitle')}>
           <View style={styles.chipRow}>
             {data.genres.map((genre) => (
-              <Chip key={genre} label={t(genreLabelKey(genre))} readOnly />
+              <Chip key={genre} label={genreLabelOf(genre)} readOnly />
             ))}
           </View>
         </Section>

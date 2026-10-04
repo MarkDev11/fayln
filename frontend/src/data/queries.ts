@@ -4,6 +4,7 @@ import { useGateway } from './GatewayProvider';
 import type { CatalogPage, CatalogQuery, ReadProgressInput, TopWorldsPage, UpdatedWorldItem } from './gateway';
 
 import type {
+  GenreOption,
   JourneyDetailDTO,
   JourneySummary,
   UsageDTO,
@@ -13,6 +14,7 @@ import type {
 
 export const queryKeys = {
   catalog: (query: CatalogQuery) => ['catalog', query] as const,
+  genres: () => ['genres'] as const,
   world: (worldId: string) => ['world', worldId] as const,
   journeys: () => ['journeys'] as const,
   journey: (journeyId: string) => ['journey', journeyId] as const,
@@ -33,6 +35,24 @@ export function useCatalog(query: CatalogQuery): UseQueryResult<CatalogPage, Err
     queryFn: () => gateway.fetchCatalog(query),
     placeholderData: (previous) => previous,
     staleTime: 60_000,
+  });
+}
+
+/**
+ * Genre yang ditawarkan server, beserta labelnya.
+ *
+ * `staleTime` panjang karena daftarnya hanya berubah ketika admin menyuntingnya
+ * dari panel — bukan sesuatu yang perlu diperiksa ulang setiap kali Beranda
+ * dibuka. Kuncinya TIDAK bergantung pada kueri katalog: chip genre tidak boleh
+ * ikut berubah ketika pemain mengetik pencarian, karena chip yang berkedip
+ * hilang saat mengetik terbaca sebagai kerusakan.
+ */
+export function useGenres(): UseQueryResult<GenreOption[], Error> {
+  const gateway = useGateway();
+  return useQuery({
+    queryKey: queryKeys.genres(),
+    queryFn: () => gateway.fetchGenres(),
+    staleTime: 5 * 60_000,
   });
 }
 

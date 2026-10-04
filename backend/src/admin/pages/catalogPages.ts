@@ -11,7 +11,7 @@
 
 import type { SafeHtml } from '../html';
 import { esc, escOr, formatTime, html, inputValue, safe, selected, statusPill, table } from '../html';
-import { GENRES, RELATION_STATUSES } from '../../contracts/types';
+import { RELATION_STATUSES } from '../../contracts/types';
 import { worldStatusLabel, type WorldStatus } from '../catalogAdminRepository';
 import type { AdminPageContext } from './context';
 
@@ -52,6 +52,12 @@ const LOCALE_OPTIONS = ['id-ID', 'en-US'] as const;
 export async function worldsList(ctx: AdminPageContext): Promise<SafeHtml> {
   const worlds = await ctx.catalog.listWorlds();
 
+  // Label, bukan id. Kolom ini dibaca manusia, dan "Romansa" adalah nama yang
+  // dipakai admin di formulir — menampilkan `romance` di sini memaksa admin
+  // menerjemahkan sendiri antara apa yang ia centang dan apa yang ia lihat.
+  // Id mentahnya tetap ada di formulir dunia bagi yang memerlukannya.
+  const labelOf = new Map((await ctx.genres.list()).map((genre) => [genre.genreId, genre.labelId]));
+
   const rows = worlds.map(
     (world) =>
       html`<tr>
@@ -63,7 +69,7 @@ export async function worldsList(ctx: AdminPageContext): Promise<SafeHtml> {
     ${worldStatusPill(world.status)}
     <div class="muted mono" style="font-size:11px">${esc(world.status)}</div>
   </td>
-  <td class="muted">${world.genres.join(', ') || '—'}</td>
+  <td class="muted">${world.genres.map((genre) => labelOf.get(genre) ?? genre).join(', ') || '—'}</td>
   <td class="right mono">${String(world.characterCount)}</td>
   <td class="right mono">${String(world.journeyCount)}</td>
   <td class="right muted mono">${formatTime(world.createdAt)}</td>
@@ -106,13 +112,20 @@ export async function worldsForm(ctx: AdminPageContext, worldId: string | null):
       )} — ${esc(asset.assetId)}</option>`,
   );
 
-  const genreBoxes = GENRES.map(
+  // Genre dibaca dari TABEL, bukan dari konstanta. Daftar tetap akan menyembunyikan
+  // genre yang baru dibuat admin — dan menyembunyikannya tepat pada formulir yang
+  // seharusnya menawarkannya. Genre nonaktif tetap muncul bila dunia ini sudah
+  // memakainya, supaya menyimpan formulir tidak membuang genre diam-diam.
+  const genreOptions = await ctx.genres.listOfferable(world?.genres ?? []);
+  const genreBoxes = genreOptions.map(
     (genre) =>
-      `<label class="inline" style="display:inline-block;margin-right:16px">
-        <input type="checkbox" name="genres" value="${esc(genre)}" style="width:auto"
-          ${world?.genres.includes(genre) ? 'checked' : ''}>
-        <span style="display:inline;margin-left:6px">${esc(genre)}</span>
-      </label>`,
+      html`<label class="inline" style="margin-right:16px">
+  <input type="checkbox" name="genres" value="${genre.genreId}"${
+    world?.genres.includes(genre.genreId) ? ' checked' : ''
+  } style="width:auto">
+  <span style="display:inline;margin-left:6px">${esc(genre.labelId)}</span>
+  ${genre.active ? '' : html` <span class="muted" style="font-size:11px">(tidak ditawarkan)</span>`}
+</label>`,
   );
 
   const localeBoxes = LOCALE_OPTIONS.map(
@@ -124,8 +137,11 @@ export async function worldsForm(ctx: AdminPageContext, worldId: string | null):
       </label>`,
   );
 
+  // Warna tidak lagi ditulis di sini. Sebelumnya kotak ini memakai warna gelap
+  // tetap yang hanya cocok untuk satu tema; sejak tema mengikuti perangkat,
+  // nilai tetap itu membuat teksnya tidak terbaca di tema terang.
   const versionNotice = world
-    ? html`<div class="notice ok" style="background:#1a2b33;border-color:#2a5563;color:#a8d8e6">
+    ? html`<div class="notice info">
     Menyimpan akan membuat <strong>versi ${String(world.worldVersion + 1)}</strong>.
     Versi ${String(world.worldVersion)} tetap ada dan tetap dipakai
     ${String(world.journeyCount)} perjalanan yang sedang berjalan.

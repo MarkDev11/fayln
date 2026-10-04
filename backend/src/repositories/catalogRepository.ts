@@ -11,6 +11,7 @@ import type {
   AssetRef,
   ContentRating,
   GenreId,
+  GenreOption,
   NPCPublicDTO,
   PortraitRef,
   RelationStatus,
@@ -165,6 +166,49 @@ export class CatalogRepository {
       total,
       hasMore: offset + items.length < total,
     };
+  }
+
+  /**
+   * Genre yang layak ditawarkan ke pemain.
+   *
+   * DUA syarat, dan keduanya disengaja:
+   *
+   * 1. `genres.active` — admin dapat menonaktifkan genre yang tidak lagi
+   *    diinginkan tanpa menghapusnya. Dunia lama yang memakainya tetap utuh,
+   *    tetapi genre itu tidak lagi ditawarkan.
+   * 2. Ada MINIMAL SATU versi terbit yang memakainya. Inilah yang diminta
+   *    pemilik produk: chip genre muncul di aplikasi pemain hanya bila ada
+   *    cerita di baliknya. Genre tanpa cerita tampil sebagai saringan yang
+   *    selalu mengembalikan daftar kosong — dan itu terasa seperti kerusakan.
+   *
+   * Genre yang dipakai hanya oleh versi `draft` sengaja TIDAK ikut: pemain
+   * tidak dapat melihat dunia itu, jadi menawarkan genrenya hanya akan
+   * menyesatkan.
+   *
+   * Dihitung dengan JOIN + GROUP BY, bukan sub-kueri berkorelasi — pg-mem yang
+   * menjalankan seluruh uji tidak mendukung sub-kueri yang merujuk tabel induk.
+   */
+  async listGenres(): Promise<GenreOption[]> {
+    const { rows } = await this.db.query<{
+      genre_id: string;
+      label_id: string;
+      label_en: string;
+    }>(
+      `SELECT g.genre_id, g.label_id, g.label_en
+       FROM genres g
+       JOIN world_genres wg ON wg.genre = g.genre_id
+       JOIN world_versions wv
+         ON wv.world_id = wg.world_id AND wv.world_version = wg.world_version
+       WHERE g.active = true AND wv.status = 'published'
+       GROUP BY g.genre_id, g.label_id, g.label_en, g.position
+       ORDER BY g.position ASC, g.genre_id ASC`,
+    );
+
+    return rows.map((row) => ({
+      genreId: row.genre_id,
+      labelId: row.label_id,
+      labelEn: row.label_en,
+    }));
   }
 
   /**

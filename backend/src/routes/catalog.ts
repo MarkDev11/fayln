@@ -62,6 +62,22 @@ export function registerCatalogRoutes(app: FastifyInstance, deps: { catalog: Cat
     return { items };
   });
 
+  /**
+   * Genre yang ditawarkan ke pemain.
+   *
+   * Terpisah dari `/v1/worlds` dengan sengaja. Sebelumnya daftar chip genre
+   * hidup sebagai konstanta di aplikasi pemain — artinya genre yang baru dibuat
+   * admin tidak akan pernah muncul di layar, meski dunianya sudah terbit.
+   *
+   * Endpoint ini hanya mengembalikan genre yang MEMANG DIPAKAI versi terbit
+   * (lihat `CatalogRepository.listGenres`), sehingga saringan yang ditawarkan
+   * selalu punya isi.
+   */
+  app.get('/v1/genres', async () => {
+    const items = await deps.catalog.listGenres();
+    return { items };
+  });
+
   app.get('/v1/worlds/:worldId', async (request) => {
     const { worldId } = worldParamsSchema.parse(request.params);
 

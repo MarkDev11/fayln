@@ -5,10 +5,11 @@
  * dan memusatkan satu tempat untuk memperbarui label ketika admin menambah nilai baru.
  */
 
-import type { TranslationKey } from '@/i18n';
+import type { TranslateFn, TranslationKey, UiLocale } from '@/i18n';
 import type {
   ContentRating,
   GenreId,
+  GenreOption,
   RelationStatus,
   WorldStatus,
 } from './types';
@@ -57,7 +58,15 @@ export function relationTone(
   }
 }
 
-const genreKeys: Record<GenreId, TranslationKey> = {
+/**
+ * Terjemahan untuk genre bawaan.
+ *
+ * Peta ini SENGAJA tidak lengkap dan tidak boleh dianggap lengkap: admin dapat
+ * membuat genre baru dari panel, dan genre seperti itu tidak akan pernah punya
+ * kunci di sini. Karena itu `genreLabelKey` mengembalikan `null` alih-alih
+ * memaksakan pengganti — lihat `genreLabel`.
+ */
+const genreKeys: Record<string, TranslationKey> = {
   romance: 'genre.romance',
   drama: 'genre.drama',
   office: 'genre.office',
@@ -65,8 +74,43 @@ const genreKeys: Record<GenreId, TranslationKey> = {
   mystery: 'genre.mystery',
 };
 
-export function genreLabelKey(genre: GenreId): TranslationKey {
-  return genreKeys[genre] ?? 'genre.drama';
+/**
+ * Kunci terjemahan sebuah genre, atau `null` bila tidak ada.
+ *
+ * Sebelumnya fungsi ini mengembalikan `'genre.drama'` sebagai pengganti. Itu
+ * berarti genre buatan admin tampil dengan NAMA GENRE LAIN — bukan tanpa label,
+ * melainkan salah label, dan itu jauh lebih buruk karena tampak benar.
+ */
+export function genreLabelKey(genre: GenreId): TranslationKey | null {
+  return genreKeys[genre] ?? null;
+}
+
+/**
+ * Label yang ditampilkan untuk sebuah genre.
+ *
+ * Tiga lapis, berurutan dari yang paling dipercaya:
+ *
+ * 1. Kunci terjemahan — untuk genre bawaan, sehingga labelnya ikut berganti saat
+ *    bahasa antarmuka diganti.
+ * 2. Label dari server — untuk genre buatan admin. Bahasa dipilih menurut locale
+ *    antarmuka, bukan menurut pengaturan server.
+ * 3. Id apa adanya — hanya bila server belum sempat menjawab. Menampilkan id
+ *    mentah untuk sesaat masih lebih baik daripada menampilkan genre yang salah.
+ */
+export function genreLabel(
+  genre: GenreId,
+  translate: TranslateFn,
+  locale: UiLocale,
+  option?: GenreOption,
+): string {
+  const key = genreLabelKey(genre);
+  if (key) {
+    return translate(key);
+  }
+  if (option) {
+    return locale === 'en-US' ? option.labelEn : option.labelId;
+  }
+  return genre;
 }
 
 const statusKeys: Record<WorldStatus, TranslationKey> = {

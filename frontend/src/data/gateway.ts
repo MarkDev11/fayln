@@ -8,6 +8,7 @@
 import type {
   Beat,
   GenreId,
+  GenreOption,
   JourneyDetailDTO,
   JourneySummary,
   MemorySnapshot,
@@ -176,6 +177,20 @@ export interface StoryGateway {
   readonly isSimulator: boolean;
 
   fetchCatalog(query: CatalogQuery): Promise<CatalogPage>;
+  /**
+   * Genre yang ditawarkan, beserta labelnya.
+   *
+   * Daftar ini DATANG DARI SERVER, bukan dari konstanta di aplikasi. Dua alasan,
+   * dan keduanya pernah menjadi cacat:
+   *
+   * 1. Admin dapat membuat genre baru dari panel. Daftar yang tertulis di kode
+   *    akan menyembunyikannya dari chip saringan — pemain tidak akan pernah bisa
+   *    menyaring dengan genre yang jelas-jelas dipakai cerita.
+   * 2. Server hanya mengirim genre yang MEMANG dipakai cerita terbit, sehingga
+   *    saringan yang ditawarkan selalu punya isi. Chip yang selalu mengembalikan
+   *    daftar kosong terasa seperti kerusakan, bukan seperti saringan.
+   */
+  fetchGenres(): Promise<GenreOption[]>;
   fetchWorld(worldId: string): Promise<WorldDetailDTO>;
   /**
    * Dunia terbit yang paling banyak dimulai dalam jendela mingguan.

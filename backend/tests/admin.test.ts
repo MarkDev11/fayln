@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
+import { GenresRepository } from '../src/admin/genresRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { hashPassword, verifyPassword } from '../src/admin/password';
@@ -86,6 +87,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     promotions,
     models: new ModelsRepository(ctx.db),
     drafts: new WorldDraftRepository(ctx.db),
+    genres: new GenresRepository(ctx.db),
     media: new MediaRepository(ctx.db),
   };
 
@@ -281,6 +283,7 @@ describe('perlindungan halaman admin', () => {
     '/admin/characters',
     '/admin/characters-form',
     '/admin/locations',
+    '/admin/genres',
     '/admin/assets',
     '/admin/accounts',
     '/admin/models',
@@ -309,6 +312,10 @@ describe('perlindungan halaman admin', () => {
       { url: '/admin/characters/delete', payload: { worldId: 'x', npcId: 'y' } },
       { url: '/admin/locations', payload: { worldId: 'x', label: 'y' } },
       { url: '/admin/locations/delete', payload: { worldId: 'x', locationId: 'y' } },
+      { url: '/admin/genres', payload: { genreId: 'x_y' } },
+      { url: '/admin/genres/update', payload: { genreId: 'x_y' } },
+      { url: '/admin/genres/delete', payload: { genreId: 'x_y' } },
+      { url: '/admin/genres/move', payload: { genreId: 'x_y', direction: 'up' } },
       { url: '/admin/admins', payload: { username: 'x', password: 'y' } },
       { url: '/admin/admins/toggle', payload: { adminId: 'x' } },
       { url: '/admin/settings', payload: { key: 'a.b', value: '1' } },

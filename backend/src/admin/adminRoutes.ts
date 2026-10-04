@@ -20,6 +20,7 @@ import { assetsList } from './pages/assetPages';
 import { charactersForm, charactersList, worldsForm, worldsList } from './pages/catalogPages';
 import { auditList, dashboard, settingsList } from './pages/dashboardPages';
 import { locationsList } from './pages/locationPages';
+import { genresList } from './pages/genrePages';
 import { draftResumePanel, wizardStep1, wizardStep2, wizardStep3 } from './pages/wizardPages';
 import { WIZARD_CSS, WIZARD_JS } from './wizardClient';
 import { modelForm, modelsList } from './pages/modelPages';
@@ -71,6 +72,7 @@ type AdminPages = {
     filter: { username: string; action: string },
   ) => Promise<SafeHtml>;
   locationsList: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
+  genresList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   assetsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   wizardStep1: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
   wizardStep2: (ctx: AdminPageContext, worldId: string) => Promise<SafeHtml>;
@@ -93,6 +95,7 @@ const DEFAULT_PAGES: AdminPages = {
   adminsList,
   auditList,
   locationsList,
+  genresList,
   assetsList,
   wizardStep1,
   wizardStep2,
@@ -206,6 +209,22 @@ const locationBody = z.object({
   worldId: z.string().trim().min(1).max(120),
   locationId: z.string().optional().default(''),
   label: z.string().trim().min(1).max(120),
+});
+
+/**
+ * Isian genre.
+ *
+ * `genreId` diperiksa panjangnya di sini, tetapi BENTUKNYA (huruf kecil,
+ * diawali huruf) diperiksa di repositori. Sebabnya: repositori dapat
+ * mengembalikan alasan yang dapat dibaca admin — "id harus diawali huruf" —
+ * sedangkan penolakan Zod berakhir sebagai `notice=invalid-input` yang tidak
+ * menyebutkan apa pun tentang id.
+ */
+const genreBody = z.object({
+  genreId: z.string().trim().min(2).max(32),
+  labelId: z.string().trim().max(60).optional().default(''),
+  labelEn: z.string().trim().max(60).optional().default(''),
+  active: z.enum(['true', 'false']).optional().default('true'),
 });
 
 const modelBody = z.object({
@@ -488,6 +507,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     ),
   );
 
+  app.get('/admin/genres', async (request, reply) =>
+    send(reply, request, 'Genre', await pages.genresList(ctx), 'genres'),
+  );
+
   app.get('/admin/assets', async (request, reply) =>
     send(reply, request, 'Aset', await pages.assetsList(ctx), 'assets'),
   );
@@ -554,7 +577,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       return reply.redirect('/admin/worlds-wizard?notice=invalid-input', 302);
     }
 
-    const genres = toArray(parsed.data.genres).filter(isGenre);
+    // Genre diperiksa terhadap TABEL, bukan terhadap konstanta di kode. Dulu
+    // daftarnya tetap, dan genre yang baru dibuat admin dibuang diam-diam di
+    // sini — dunia tersimpan tanpa genre, tanpa satu pun pesan galat.
+    const genres = await ctx.genres.existingIds(toArray(parsed.data.genres));
     const locales = toArray(parsed.data.locales).filter(isLocale);
     if (genres.length === 0 || locales.length === 0) {
       return reply.redirect('/admin/worlds-wizard?notice=invalid-input', 302);
@@ -751,6 +777,130 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   });
 
   /* ---------------------------------------------------------------- */
+  /* Perubahan: master genre                                           */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Menambah genre.
+   *
+   * Terpisah dari `POST /admin/genres/update` dengan sengaja. Satu route yang
+   * menebak sendiri apakah ini penambahan atau perubahan akan menebak salah
+   * pada satu kasus: genre yang baru saja dihapus lalu dibuat ulang dengan id
+   * yang sama. Dengan dua alamat, niatnya tertulis di formulirnya sendiri.
+   */
+  app.post('/admin/genres', async (request, reply) => {
+    const session = request.adminSession;
+    const parsed = genreBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.redirect('/admin/genres?notice=genre-invalid', 302);
+    }
+
+    const result = await ctx.genres.create({
+      genreId: parsed.data.genreId,
+      labelId: parsed.data.labelId,
+      labelEn: parsed.data.labelEn,
+      active: parsed.data.active === 'true',
+    });
+
+    if (!result.ok) {
+      const notice = result.reason === 'invalid-id' ? 'genre-invalid' : 'genre-exists';
+      return reply.redirect(`/admin/genres?notice=${notice}`, 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'genre.create',
+      targetKind: 'genre',
+      targetId: parsed.data.genreId.trim().toLowerCase(),
+      detail: { labelId: parsed.data.labelId, labelEn: parsed.data.labelEn },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/genres?notice=created', 302);
+  });
+
+  /** Mengubah label dan keaktifan. Id TIDAK diubah — lihat catatan di halaman. */
+  app.post('/admin/genres/update', async (request, reply) => {
+    const session = request.adminSession;
+    const parsed = genreBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.redirect('/admin/genres?notice=genre-invalid', 302);
+    }
+
+    const result = await ctx.genres.update(parsed.data.genreId, {
+      labelId: parsed.data.labelId,
+      labelEn: parsed.data.labelEn,
+      active: parsed.data.active === 'true',
+    });
+
+    if (!result.ok) {
+      return reply.redirect('/admin/genres?notice=not-found', 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'genre.update',
+      targetKind: 'genre',
+      targetId: parsed.data.genreId,
+      detail: {
+        labelId: parsed.data.labelId,
+        labelEn: parsed.data.labelEn,
+        active: parsed.data.active === 'true',
+      },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/genres?notice=saved', 302);
+  });
+
+  /**
+   * Menghapus genre.
+   *
+   * Genre yang masih dipakai ditolak, dan pesannya menyebut jalan keluarnya
+   * (nonaktifkan) — bukan sekadar "tidak dapat dihapus". Foreign key di basis
+   * data tetap menjadi jaring pengaman bila ada penyisipan di antara
+   * pemeriksaan dan penghapusan.
+   */
+  app.post('/admin/genres/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z.object({ genreId: z.string().trim().min(1) }).safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/genres?notice=genre-invalid', 302);
+    }
+
+    const result = await ctx.genres.remove(body.data.genreId);
+    if (!result.ok) {
+      const notice = result.reason === 'in-use' ? 'genre-in-use' : 'not-found';
+      return reply.redirect(`/admin/genres?notice=${notice}`, 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'genre.delete',
+      targetKind: 'genre',
+      targetId: body.data.genreId,
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/genres?notice=deleted', 302);
+  });
+
+  app.post('/admin/genres/move', async (request, reply) => {
+    const body = z
+      .object({ genreId: z.string().trim().min(1), direction: z.enum(['up', 'down']) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/genres?notice=genre-invalid', 302);
+    }
+
+    await ctx.genres.move(body.data.genreId, body.data.direction);
+    return reply.redirect('/admin/genres?notice=saved', 302);
+  });
+
+  /* ---------------------------------------------------------------- */
   /* Wizard "Dunia baru"                                               */
   /* ---------------------------------------------------------------- */
 
@@ -828,7 +978,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       synopsis: data.synopsis,
       premise: data.premise,
       contentRating: data.contentRating,
-      genres: toArray(data.genres).filter(isGenre),
+      genres: await ctx.genres.existingIds(toArray(data.genres)),
       locales: toArray(data.locales).filter(isLocale),
       coverMediaId,
     });
@@ -1829,6 +1979,22 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
         'Isian Anda sudah tersimpan sebagai draf.',
     },
     limit: { kind: 'error', text: 'Batas jumlah tercapai. Hapus salah satu sebelum menambah.' },
+    'genre-invalid': {
+      kind: 'error',
+      text:
+        'ID genre harus diawali huruf, dan hanya boleh berisi huruf kecil, angka, ' +
+        'atau garis bawah (2–32 karakter).',
+    },
+    'genre-exists': { kind: 'error', text: 'ID genre itu sudah dipakai.' },
+    'genre-in-use': {
+      kind: 'error',
+      // Menyebutkan jalan keluarnya, bukan hanya penolakannya: admin yang
+      // membaca "tidak dapat dihapus" tanpa alternatif akan mencoba lagi.
+      text:
+        'Genre ini masih dipakai dunia, jadi tidak dihapus — dunia yang memakainya ' +
+        'akan kehilangan genrenya. Ubah keadaannya menjadi "tidak ditawarkan": ' +
+        'genre hilang dari formulir, tetapi dunia lama tetap utuh.',
+    },
     'not-draft': {
       kind: 'error',
       text: 'Dunia ini sudah pernah diterbitkan, jadi tidak dapat disunting lewat wizard.',
@@ -1874,10 +2040,19 @@ function toArray(value: string | string[] | undefined): string[] {
   return Array.isArray(value) ? value : [value];
 }
 
-const GENRE_SET = new Set(['romance', 'drama', 'office', 'fantasy', 'mystery']);
-function isGenre(value: string): value is 'romance' | 'drama' | 'office' | 'fantasy' | 'mystery' {
-  return GENRE_SET.has(value);
-}
+/*
+ * Tidak ada lagi `isGenre()` di sini.
+ *
+ * Fungsi itu memeriksa keanggotaan pada daftar tetap yang ditulis di kode.
+ * Sejak genre menjadi tabel (migrasi 009), pemeriksaan seperti itu justru
+ * MERUSAK: genre yang baru dibuat admin akan ditolak oleh daftar yang basi, dan
+ * penolakannya senyap — dunianya tersimpan, genrenya hilang. Penggantinya
+ * `ctx.genres.existingIds()`, yang memeriksa ke tabel yang sama dengan yang
+ * dipakai formulir untuk menawarkan pilihan.
+ *
+ * `isLocale` tetap ada: bahasa respons memang daftar tertutup, karena klien
+ * harus tahu cara menerjemahkannya dan itu ditentukan saat aplikasi dibangun.
+ */
 
 const LOCALE_SET = new Set(['id-ID', 'en-US']);
 function isLocale(value: string): value is 'id-ID' | 'en-US' {

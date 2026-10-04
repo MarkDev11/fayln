@@ -7,7 +7,7 @@ import { Text } from './Text';
 
 import { assetUri } from '@/domain/assets';
 import { MEDIA_ASPECT } from '@/domain/media';
-import { genreLabelKey } from '@/domain/labels';
+import { useGenreLabel } from '@/hooks/useGenreLabel';
 import type { WorldCatalogItem } from '@/domain/types';
 import { useI18n } from '@/i18n';
 import { withAlpha } from '@/theme/gradient';
@@ -56,9 +56,13 @@ export function HeroCard({
 }: HeroCardProps) {
   const { colors } = useTheme();
   const { t } = useI18n();
+  const genreLabelOf = useGenreLabel();
 
   // Satu baris, maksimal dua genre; sisanya dielipsis (docs/05 §8.2).
-  const genreText = item.genres.slice(0, 2).map((genre) => t(genreLabelKey(genre))).join(' • ');
+  const genreText = item.genres
+    .slice(0, 2)
+    .map((genre) => genreLabelOf(genre))
+    .join(' • ');
   const dotsLabel = t('home.heroDotsLabel', { index: index + 1, total });
   const baseTestID = testID ?? `hero-${item.worldId}`;
   const hasJourney = Boolean(journeyId);

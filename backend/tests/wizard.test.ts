@@ -23,6 +23,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
+import { GenresRepository } from '../src/admin/genresRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { stepOfDraft } from '../src/admin/pages/wizardPages';
@@ -104,6 +105,7 @@ async function build(): Promise<FastifyInstance> {
     promotions: new PromotionsRepository(ctx.db),
     models: new ModelsRepository(ctx.db),
     drafts,
+    genres: new GenresRepository(ctx.db),
     media: new MediaRepository(ctx.db),
   };
 
@@ -1160,6 +1162,49 @@ describe('perlindungan dan render halaman wizard', () => {
     }
     expect(body).toContain('Latar belakang');
     expect(body).toContain('type="file"');
+  });
+
+  /**
+   * Entitas HTML pada label tombol.
+   *
+   * Cacat yang dijaga di sini konkret dan pernah terjadi: label tombol dikirim
+   * sebagai `string` biasa, lalu `html()` meng-escape-nya — sehingga tombolnya
+   * berbunyi "Lanjut ke latar belakang &rarr;" apa adanya, bukan dengan tanda
+   * panah. Tidak ada galat apa pun; hanya teks yang salah.
+   *
+   * Karena itu pemeriksaannya HARUS melihat kedua arah: entitasnya tidak muncul
+   * sebagai teks, DAN panahnya benar-benar tergambar. Memeriksa salah satu saja
+   * akan lolos pada salah satu dari dua kesalahan yang berlawanan — entitas yang
+   * tidak ter-escape (panah tampil sebagai `&rarr;` di dalam atribut) dan markup
+   * yang ter-escape ganda (`&amp;rarr;`).
+   */
+  it('menggambar panah pada tombol aksi, bukan menuliskan entitasnya', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    for (const [step, expected] of [
+      [1, 'Lanjut ke latar belakang'],
+      [2, 'Lanjut ke karakter'],
+      [3, 'Simpan &amp; terbitkan'],
+    ] as [number, string][]) {
+      const page = await app.inject({
+        method: 'GET',
+        url: `/admin/worlds/${worldId}/wizard/${String(step)}`,
+        headers: { cookie },
+      });
+      expect(page.statusCode, `langkah ${String(step)}`).toBe(200);
+
+      const body = page.body;
+      expect(body, `langkah ${String(step)} kehilangan labelnya`).toContain(expected);
+
+      if (step !== 3) {
+        // Panahnya benar-benar ada sebagai karakter, bukan sebagai entitas.
+        expect(body, `langkah ${String(step)} tidak menggambar panah`).toContain('&rarr;');
+        expect(body, `langkah ${String(step)} menuliskan entitas sebagai teks`).not.toContain(
+          '&amp;rarr;',
+        );
+      }
+    }
   });
 
   it('meng-escape judul draf sehingga tidak dapat menyuntikkan skrip', async () => {

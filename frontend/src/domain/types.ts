@@ -15,9 +15,41 @@ export type WorldStatus = (typeof WORLD_STATUSES)[number];
 export const CONTENT_RATINGS = ['all', '13_plus', '18_plus'] as const;
 export type ContentRating = (typeof CONTENT_RATINGS)[number];
 
-/** Genre dipakai untuk filter katalog; label tampilan berasal dari i18n. */
-export const GENRES = ['romance', 'drama', 'office', 'fantasy', 'mystery'] as const;
-export type GenreId = (typeof GENRES)[number];
+/**
+ * Genre bawaan — BUKAN daftar seluruh genre.
+ *
+ * Daftar yang sah hidup di server (tabel `genres`), karena admin dapat menambah,
+ * menonaktifkan, dan menghapus genre dari panel. Nilai di sini hanya mencatat
+ * genre yang ikut dipasang bersama aplikasi.
+ *
+ * Nama `SEEDED_` disengaja: nilai ini pernah bernama `GENRES` dan diperlakukan
+ * sebagai daftar lengkap. Menyimpan nama lama akan mengundang layar baru untuk
+ * memakainya sebagai daftar chip — dan chip dari daftar yang basi akan
+ * menyembunyikan genre yang baru dibuat admin, tanpa galat apa pun.
+ */
+export const SEEDED_GENRES = ['romance', 'drama', 'office', 'fantasy', 'mystery'] as const;
+
+/**
+ * Id genre.
+ *
+ * Sengaja `string`, bukan gabungan nilai tetap. Daftar genre adalah data, dan
+ * tipe yang tertutup akan menolak genre buatan admin tepat di tempat yang
+ * seharusnya menampilkannya.
+ */
+export type GenreId = string;
+
+/**
+ * Satu genre yang ditawarkan server.
+ *
+ * Membawa labelnya sendiri, karena genre buatan admin tidak punya kunci
+ * terjemahan di aplikasi. Tanpa label dari server, genre seperti itu akan tampil
+ * sebagai `slice_of_life` di layar pemain.
+ */
+export type GenreOption = {
+  genreId: GenreId;
+  labelId: string;
+  labelEn: string;
+};
 
 export type ResponseLocale = 'id-ID' | 'en-US';
 

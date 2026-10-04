@@ -24,10 +24,10 @@ import { ERROR_CODES } from '../src/contracts/errors';
 import {
   CONTENT_RATINGS,
   EVENT_TYPES,
-  GENRES,
   RELATION_STATUSES,
   REPORT_CATEGORIES,
   RESPONSE_LOCALES,
+  SEEDED_GENRES,
   TIERS,
   WORLD_STATUSES,
 } from '../src/contracts/types';
@@ -60,10 +60,23 @@ function readUnion(source: string, name: string, origin: string): string[] {
 }
 
 describe('penyimpangan kontrak dengan frontend', () => {
+  /**
+   * Daftar yang dibandingkan.
+   *
+   * `SEEDED_GENRES` — bukan `GENRES` — karena genre sekarang DATA (tabel
+   * `genres`), dan admin dapat menambah atau menghapusnya. Yang dijaga di sini
+   * bukan lagi "daftar genre harus sama", melainkan "genre BAWAAN harus sama".
+   *
+   * Perbedaan itu penting: genre yang hanya ada di satu sisi tidak lagi menjadi
+   * cacat dengan sendirinya, karena daftar yang sah ada di basis data. Yang
+   * tetap menjadi cacat adalah genre bawaan yang punya label di server tetapi
+   * tidak punya kunci terjemahan di aplikasi pemain — pemain akan melihat id
+   * mentahnya, dan itu terjadi pada lima genre yang paling sering dipakai.
+   */
   const fromTypes: [string, readonly string[]][] = [
     ['WORLD_STATUSES', WORLD_STATUSES],
     ['CONTENT_RATINGS', CONTENT_RATINGS],
-    ['GENRES', GENRES],
+    ['SEEDED_GENRES', SEEDED_GENRES],
     ['RELATION_STATUSES', RELATION_STATUSES],
     ['EVENT_TYPES', EVENT_TYPES],
     ['TIERS', TIERS],

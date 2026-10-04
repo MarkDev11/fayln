@@ -29,6 +29,7 @@ import { useGateway } from '@/data/GatewayProvider';
 import { StoryGatewayError } from '@/data/gateway';
 import {
   useCatalog,
+  useGenres,
   useJourneys,
   useNewWorlds,
   useTopWorlds,
@@ -38,14 +39,10 @@ import {
 import { QuotaSheet } from '@/features/home/QuotaSheet';
 import { JourneyCard } from '@/features/journeys/JourneyCard';
 import { formatCount } from '@/domain/format';
-import { genreLabelKey, worldStatusLabelKey } from '@/domain/labels';
-import {
-  GENRES,
-  type GenreId,
-  type WorldCatalogItem,
-  type WorldStatus,
-} from '@/domain/types';
+import { worldStatusLabelKey } from '@/domain/labels';
+import { type GenreId, type WorldCatalogItem, type WorldStatus } from '@/domain/types';
 import { useDebouncedValue } from '@/hooks/useDebouncedValue';
+import { useGenreLabel } from '@/hooks/useGenreLabel';
 import { formatRelativeDay, useI18n } from '@/i18n';
 import { telemetry } from '@/telemetry/analytics';
 import { useTheme } from '@/theme/ThemeProvider';
@@ -201,6 +198,22 @@ export default function HomeScreen() {
   const catalog = useCatalog(query);
   const journeys = useJourneys();
   const usage = useUsage();
+
+  /**
+   * Chip genre berasal dari server, bukan dari daftar tetap di kode.
+   *
+   * Server hanya mengirim genre yang dipakai cerita terbit, sehingga setiap chip
+   * yang ditawarkan pasti menghasilkan sesuatu. Genre yang baru dibuat admin
+   * muncul di sini tanpa perlu merilis ulang aplikasi.
+   *
+   * Daftar kosong — saat memuat atau saat server belum menjawab — berarti chip
+   * genre tidak dirender, sementara chip "Semua genre" tetap ada. Itu keadaan
+   * yang benar: menampilkan chip dari daftar cadangan akan menawarkan saringan
+   * yang mungkin tidak punya isi.
+   */
+  const genresQuery = useGenres();
+  const genreOptions = genresQuery.data ?? [];
+  const genreLabelOf = useGenreLabel();
 
   /**
    * Dua rail tetap: peringkat mingguan dan rilis terbaru.
@@ -912,7 +925,12 @@ export default function HomeScreen() {
           </View>
         ) : null}
 
-        {/* Chip adalah kontrolnya; tetap tampil di mode hasil (SC-01.1). */}
+        {/*
+          Chip genre datang dari SERVER, bukan dari konstanta di kode.
+          Server hanya mengirim genre yang dipakai cerita terbit, jadi saringan
+          yang ditawarkan selalu punya isi — dan genre yang baru dibuat admin
+          langsung muncul tanpa perlu merilis ulang aplikasi.
+        */}
         <ScrollView
           testID="home-chips"
           horizontal
@@ -928,16 +946,16 @@ export default function HomeScreen() {
             hitSlop={CHIP_HIT_SLOP}
             testID="home-chip-any"
           />
-          {GENRES.map((genre) => (
+          {genreOptions.map((option) => (
             <Chip
-              key={genre}
-              label={t(genreLabelKey(genre))}
-              selected={selectedGenres.includes(genre)}
-              onPress={() => toggleGenre(genre)}
+              key={option.genreId}
+              label={genreLabelOf(option.genreId)}
+              selected={selectedGenres.includes(option.genreId)}
+              onPress={() => toggleGenre(option.genreId)}
               tile
               check
               hitSlop={CHIP_HIT_SLOP}
-              testID={`home-chip-${genre}`}
+              testID={`home-chip-${option.genreId}`}
             />
           ))}
         </ScrollView>

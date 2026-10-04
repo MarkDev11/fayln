@@ -129,9 +129,44 @@ describe('katalog', () => {
     expect((combined.json() as { total: number }).total).toBe(2);
   });
 
-  it('mengabaikan genre yang tidak dikenal', async () => {
+  /**
+   * Perilaku ini BERUBAH dengan sengaja.
+   *
+   * Dulu saringan terhadap daftar tetap membuat genre tak dikenal dibuang, dan
+   * permintaannya mengembalikan SELURUH katalog. Itu jawaban yang menyesatkan:
+   * pemain memilih saringan lalu melihat katalog tanpa saringan, tanpa tanda
+   * apa pun bahwa saringannya tidak dipakai.
+   *
+   * Sekarang genre yang tidak ada menghasilkan daftar kosong — jawaban yang
+   * jujur ("tidak ada cerita bergenre itu"). Cacat lama yang ikut hilang: genre
+   * yang baru dibuat admin dulu ikut dibuang di sini, sehingga dunianya
+   * tersimpan tanpa genre tanpa satu pun pesan galat.
+   */
+  it('mengembalikan hasil kosong untuk genre yang tidak ada, bukan seluruh katalog', async () => {
     const response = await app.inject({ method: 'GET', url: '/v1/worlds?genres=horor' });
-    expect((response.json() as { total: number }).total).toBe(4);
+    expect(response.statusCode).toBe(200);
+    expect((response.json() as { total: number }).total).toBe(0);
+  });
+
+  it('menyaring dengan genre yang dibuat admin, bukan hanya genre bawaan', async () => {
+    await ctx.db.query(
+      `INSERT INTO genres (genre_id, label_id, label_en, position, active)
+       VALUES ('slice_of_life', 'Keseharian', 'Slice of Life', 90, true)`,
+    );
+    // Versi diambil dari basis data, bukan ditulis di sini: nomor versi seed
+    // berubah setiap kali migrasi menambah versi baru, dan uji yang menulisnya
+    // tetap akan lulus sampai tiba-tiba tidak — tanpa hubungan dengan genre.
+    await ctx.db.query(
+      `INSERT INTO world_genres (world_id, world_version, genre)
+       SELECT 'w_bosku-mantan', MAX(world_version), 'slice_of_life'
+       FROM world_versions WHERE world_id = 'w_bosku-mantan'`,
+    );
+
+    const response = await app.inject({ method: 'GET', url: '/v1/worlds?genres=slice_of_life' });
+    expect(response.statusCode).toBe(200);
+    expect(
+      (response.json() as { items: { worldId: string }[] }).items.map((item) => item.worldId),
+    ).toEqual(['w_bosku-mantan']);
   });
 
   it('mengembalikan hasil kosong tanpa gagal', async () => {

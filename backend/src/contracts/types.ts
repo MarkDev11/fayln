@@ -20,8 +20,51 @@ export type WorldStatus = (typeof WORLD_STATUSES)[number];
 export const CONTENT_RATINGS = ['all', '13_plus', '18_plus'] as const;
 export type ContentRating = (typeof CONTENT_RATINGS)[number];
 
-export const GENRES = ['romance', 'drama', 'office', 'fantasy', 'mystery'] as const;
-export type GenreId = (typeof GENRES)[number];
+/**
+ * Genre bawaan — BUKAN daftar seluruh genre.
+ *
+ * Daftar yang sah sekarang hidup di tabel `genres` (migrasi 009), karena admin
+ * dapat menambah, mengubah, menonaktifkan, dan menghapusnya dari panel. Daftar
+ * ini hanya mencatat genre yang ikut dipasang bersama aplikasi.
+ *
+ * Nama `SEEDED_` disengaja: nilai ini pernah bernama `GENRES` dan diperlakukan
+ * sebagai daftar lengkap. Menyimpan nama lama akan mengundang kode baru untuk
+ * memakainya sebagai penyaring — dan penyaring dari daftar yang basi akan
+ * membuang genre yang baru dibuat admin tanpa pesan apa pun.
+ *
+ * Uji `contract-drift` memakai daftar ini untuk memastikan setiap genre bawaan
+ * punya terjemahan di aplikasi pemain. Genre buatan admin tidak punya kunci
+ * terjemahan, jadi ia ditampilkan dari label yang disimpan server.
+ */
+export const SEEDED_GENRES = ['romance', 'drama', 'office', 'fantasy', 'mystery'] as const;
+
+/**
+ * Id genre.
+ *
+ * Sengaja `string`, bukan gabungan nilai tetap: daftarnya adalah data, dan tipe
+ * yang tertutup akan menolak genre yang baru saja dibuat admin. Keabsahan
+ * sebuah id diperiksa terhadap tabel `genres`, bukan terhadap tipe.
+ */
+export type GenreId = string;
+
+/**
+ * Satu genre sebagaimana ditawarkan ke aplikasi pemain.
+ *
+ * Label dibawa SERTA id-nya, bukan hanya id. Sebelum genre menjadi data, klien
+ * menerjemahkan id menjadi teks lewat kunci i18n — dan itu hanya bekerja untuk
+ * genre yang ditulis di kode. Genre buatan admin tidak akan pernah punya kunci
+ * terjemahan, jadi tanpa label dari server ia akan tampil sebagai
+ * `slice_of_life` di layar pemain.
+ *
+ * Kedua bahasa dikirim sekaligus, bukan satu yang dipilih server: klien sudah
+ * tahu bahasa antarmukanya, dan pengalihan bahasa di aplikasi tidak boleh
+ * menuntut perjalanan bolak-balik ke server.
+ */
+export type GenreOption = {
+  genreId: GenreId;
+  labelId: string;
+  labelEn: string;
+};
 
 export const RESPONSE_LOCALES = ['id-ID', 'en-US'] as const;
 export type ResponseLocale = (typeof RESPONSE_LOCALES)[number];

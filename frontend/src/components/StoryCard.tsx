@@ -6,7 +6,8 @@ import { Text } from './Text';
 
 import { assetUri } from '@/domain/assets';
 import { MEDIA_ASPECT } from '@/domain/media';
-import { genreLabelKey, worldStatusLabelKey } from '@/domain/labels';
+import { worldStatusLabelKey } from '@/domain/labels';
+import { useGenreLabel } from '@/hooks/useGenreLabel';
 import type { WorldCatalogItem } from '@/domain/types';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/theme/ThemeProvider';
@@ -41,6 +42,7 @@ export type StoryCardProps = {
 export function StoryCard({ item, onPress, note, coverRadius, playing, testID }: StoryCardProps) {
   const { colors } = useTheme();
   const { t } = useI18n();
+  const genreLabelOf = useGenreLabel();
 
   /**
    * Daftar genre lengkap — dipakai HANYA untuk pembaca layar.
@@ -49,7 +51,7 @@ export function StoryCard({ item, onPress, note, coverRadius, playing, testID }:
    * mendapat daftar utuhnya. Memakai versi padat di sana akan menghilangkan
    * informasi yang justru paling berguna tanpa penglihatan.
    */
-  const fullGenreText = item.genres.map((genre) => t(genreLabelKey(genre))).join(', ');
+  const fullGenreText = item.genres.map((genre) => genreLabelOf(genre)).join(', ');
 
   /**
    * Genre pertama + penanda sisa, bukan dua genre yang digabung lalu dipotong.
@@ -61,7 +63,7 @@ export function StoryCard({ item, onPress, note, coverRadius, playing, testID }:
   const firstGenre = item.genres[0];
   const remainingGenres = item.genres.length - 1;
   const genreText = firstGenre
-    ? `${t(genreLabelKey(firstGenre))}${remainingGenres > 0 ? ` +${String(remainingGenres)}` : ''}`
+    ? `${genreLabelOf(firstGenre)}${remainingGenres > 0 ? ` +${String(remainingGenres)}` : ''}`
     : '';
 
   return (
