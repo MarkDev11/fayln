@@ -1,4 +1,4 @@
-import { act, fireEvent, render, waitFor } from '@testing-library/react-native';
+import { act, fireEvent, render, waitFor, within } from '@testing-library/react-native';
 import React from 'react';
 
 import HomeScreen from '../app/(tabs)/index';
@@ -683,6 +683,43 @@ describe('SC-01.14 — "Baru Diperbarui" berbeda dari "Terbaru Dirilis"', () => 
     await view.findByTestId('home-updated');
 
     expect(view.queryByTestId('updated-card-w_arsip-lama')).toBeNull();
+  });
+
+  /*
+   * Kata di kartu harus cocok dengan railnya. "Terbaru Dirilis" pernah memakai
+   * kunci `home.updatedAt` yang berbunyi "Diperbarui", sehingga rail soal tanggal
+   * TERBIT dilabeli "diperbarui" — salah, dan tidak ada uji yang menangkapnya.
+   *
+   * Yang diperiksa katanya, bukan tanggalnya: `formatRelativeDay` dipanggil tanpa
+   * `now` di layar, jadi hasilnya bergantung pada jam berjalan dan uji akan rapuh
+   * bila mengunci tanggal.
+   */
+  it('memberi label "Dirilis" pada rail Terbaru Dirilis, bukan "Diperbarui"', async () => {
+    const view = await render(
+      <TestProviders gateway={instant()}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-new');
+    const rail = within(view.getByTestId('home-new'));
+
+    expect(rail.getAllByText(/^Dirilis /).length).toBeGreaterThan(0);
+    expect(rail.queryByText(/^Diperbarui /)).toBeNull();
+  });
+
+  it('memberi label "Diperbarui" pada rail Baru Diperbarui', async () => {
+    const view = await render(
+      <TestProviders gateway={instant()}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-updated');
+    const rail = within(view.getByTestId('home-updated'));
+
+    expect(rail.getAllByText(/^Diperbarui /).length).toBeGreaterThan(0);
+    expect(rail.queryByText(/^Dirilis /)).toBeNull();
   });
 });
 

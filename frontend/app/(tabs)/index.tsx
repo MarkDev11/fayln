@@ -1002,7 +1002,13 @@ export default function HomeScreen() {
                         <StoryCard
                           item={item}
                           onPress={openWorld}
-                          note={t('home.updatedAt', {
+                          /*
+                           * "Dirilis", bukan "Diperbarui". Rail ini soal kapan
+                           * cerita pertama terbit, jadi labelnya harus mengikuti
+                           * `publishedAt` — bukan `home.updatedAt`, yang berbunyi
+                           * "Diperbarui" dan milik rail satunya.
+                           */
+                          note={t('home.publishedAt', {
                             when: formatRelativeDay(item.publishedAt, locale),
                           })}
                           coverRadius={radius.tile}

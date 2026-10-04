@@ -47,6 +47,7 @@ export const id = {
   'home.heroSwipeHint': 'Geser untuk melihat dunia unggulan lain',
   'home.openWorldHint': 'Membuka halaman dunia',
   'home.updatedAt': 'Diperbarui {when}',
+  'home.publishedAt': 'Dirilis {when}',
   'home.sectionErrorTitle': 'Gagal memuat bagian ini',
   'home.sectionErrorBody': 'Bagian lain di halaman ini tetap bisa dipakai.',
   // Cadangan: hanya dipakai bila titik hero dijadikan kontrol (SC-01.9 keputusan #3).

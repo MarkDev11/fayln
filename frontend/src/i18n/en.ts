@@ -41,6 +41,7 @@ export const en: Dictionary = {
   'home.heroSwipeHint': 'Swipe to see other featured worlds',
   'home.openWorldHint': 'Opens the world page',
   'home.updatedAt': 'Updated {when}',
+  'home.publishedAt': 'Released {when}',
   'home.sectionErrorTitle': 'Could not load this section',
   'home.sectionErrorBody': 'The rest of this page still works.',
   // Reserve: only used if hero dots become controls (SC-01.9 decision #3).
