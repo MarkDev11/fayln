@@ -330,6 +330,16 @@ export function statusPill(status: string, label?: string): SafeHtml {
     draft: 'draft',
     retired: 'off',
     revoked: 'off',
+    /**
+     * Nama kelas itu sendiri diterima.
+     *
+     * Sebagian pil tidak menyebut status, melainkan kemajuan atau penanda
+     * ("langkah 2 dari 3", "bawaan"). Memaksa pemanggilnya mengarang status
+     * palsu yang kebetulan berwarna sama adalah cara paling cepat membuat
+     * warnanya salah tanpa ada yang menyadari.
+     */
+    ok: 'ok',
+    off: 'off',
   };
   const cls = known[status] ?? '';
   return html`<span class="pill ${cls}">${label ?? status}</span>`;

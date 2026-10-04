@@ -1035,6 +1035,70 @@ describe('penerbitan', () => {
 });
 
 /* ------------------------------------------------------------------ */
+/* Panel "lanjutkan draf" di daftar dunia                              */
+/* ------------------------------------------------------------------ */
+
+describe('panel draf di halaman daftar dunia', () => {
+  it('tidak menampilkan panel saat belum ada draf', async () => {
+    const cookie = await login();
+    const page = await app.inject({ method: 'GET', url: '/admin/worlds', headers: { cookie } });
+
+    // Judul bagian kosong lebih buruk daripada tidak ada bagian sama sekali.
+    expect(page.body).not.toContain('Draf belum selesai');
+  });
+
+  it('menampilkan draf sebagai tabel sungguhan dengan langkah yang diturunkan', async () => {
+    const cookie = await login();
+    const cover = await upload(cookie, png(600, 800, 'panel-cover'));
+
+    // Identitas lengkap, belum ada latar belakang -> langkah yang pantas = 2.
+    await post(cookie, '/admin/worlds-wizard/1', {
+      worldId: '',
+      title: 'Draf Panel',
+      synopsis: 'Sinopsis',
+      premise: 'Premis',
+      coverMediaId: cover,
+      genres: ['drama'],
+      locales: ['id-ID'],
+      intent: 'draft',
+    });
+    const worldId = (await drafts.listDrafts())[0]!.worldId;
+
+    const page = await app.inject({ method: 'GET', url: '/admin/worlds', headers: { cookie } });
+
+    // `table()` menerima larik `SafeHtml`. Kalau barisnya di-`join` lebih dulu,
+    // tabelnya tampil sebagai `&lt;td&gt;` — tanpa galat, dan tanpa tag hidup.
+    for (const broken of ['&lt;td&gt;', '&lt;table', '&lt;tr&gt;', '&lt;button']) {
+      expect(page.body, `markup tampil sebagai teks: ${broken}`).not.toContain(broken);
+    }
+
+    expect(page.body).toContain('Draf belum selesai');
+    expect(page.body).toContain('Draf Panel');
+    // Langkahnya DITURUNKAN dari isi draf, bukan dari kolom yang disimpan.
+    expect(page.body).toContain('langkah 2 dari 3');
+    expect(page.body).toContain('belum ada latar');
+    expect(page.body).toContain(`/admin/worlds/${worldId}/wizard/2`);
+  });
+
+  it('menaikkan langkah panel begitu latar belakang ditambahkan', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const before = await app.inject({ method: 'GET', url: '/admin/worlds', headers: { cookie } });
+    expect(before.body).toContain('langkah 2 dari 3');
+
+    const bg = await upload(cookie, png(1280, 720, 'panel-bg'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId: bg });
+
+    const after = await app.inject({ method: 'GET', url: '/admin/worlds', headers: { cookie } });
+    // Isi draf berubah -> langkahnya ikut berubah tanpa ada yang menulisinya.
+    expect(after.body).toContain('langkah 3 dari 3');
+    expect(after.body).toContain(`/admin/worlds/${worldId}/wizard/3`);
+    expect(after.body).toContain('1 latar');
+  });
+});
+
+/* ------------------------------------------------------------------ */
 /* Perlindungan dan render                                             */
 /* ------------------------------------------------------------------ */
 

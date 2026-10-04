@@ -283,7 +283,7 @@ function backgroundItem(
   <div class="bg-item__body">
     <div>
       <strong>${missing ? html`<span class="muted">belum diberi keterangan</span>` : esc(background.description)}</strong>
-      ${missing ? statusPill('perlu dilengkapi', 'draft') : ''}
+      ${missing ? statusPill('draft', 'perlu dilengkapi') : ''}
     </div>
     <div class="bg-item__meta">
       ${String(background.width ?? 0)}&times;${String(background.height ?? 0)} ·
@@ -498,7 +498,7 @@ function npcCard(npc: NpcRow, draft: DraftWorld): SafeHtml {
        src="${expression.mediaId ? esc(`/v1/media/${expression.mediaId}`) : ''}">
   <div class="bg-item__body">
     <strong>${esc(expression.expression)}</strong>
-    ${expression.assetId === portraitDefaultId(npc) ? html` ${statusPill('bawaan', 'ok')}` : ''}
+    ${expression.assetId === portraitDefaultId(npc) ? html` ${statusPill('ok', 'bawaan')}` : ''}
     <div class="bg-item__meta">${escOr(expression.usageNote, 'belum ada catatan pemakaian')}</div>
   </div>
 </div>`,
@@ -512,7 +512,7 @@ function npcCard(npc: NpcRow, draft: DraftWorld): SafeHtml {
          src="${npc.baseUri ? esc(npc.baseUri) : ''}">
     <div style="flex:1;min-width:0">
       <strong>${esc(npc.name)}</strong>
-      ${missing ? html` ${statusPill('belum punya ekspresi', 'draft')}` : ''}
+      ${missing ? html` ${statusPill('draft', 'belum punya ekspresi')}` : ''}
       <div class="muted" style="font-size:12px">${escOr(npc.role, 'tanpa peran')}</div>
       <div class="muted" style="font-size:12px">
         relasi awal: ${esc(npc.initialRelation)} · sifat: ${escOr(npc.traits.join(', '), '—')}
@@ -560,7 +560,7 @@ export function draftResumePanel(drafts: DraftWorld[]): SafeHtml {
     <strong>${draft.title.trim().length > 0 ? esc(draft.title) : html`<span class="muted">tanpa judul</span>`}</strong>
     <div class="muted mono" style="font-size:11px">${esc(draft.worldId)} · v${String(draft.worldVersion)}</div>
   </td>
-  <td>${statusPill(`langkah ${String(step)} dari 3`, 'draft')}</td>
+  <td>${statusPill('draft', `langkah ${String(step)} dari 3`)}</td>
   <td class="muted">${progressText(draft)}</td>
   <td class="muted">${missing.length > 0 ? esc(missing.join(', ')) : html`<span class="pill ok">siap diterbitkan</span>`}</td>
   <td class="muted mono">${esc(formatTime(draft.updatedAt, 'minute'))}</td>
