@@ -141,6 +141,21 @@ export type LayoutOptions = {
   active?: string;
   /** Pesan singkat untuk ditampilkan di atas isi. */
   notice?: { kind: 'ok' | 'error'; text: string } | null;
+  /**
+   * Gaya tambahan untuk halaman ini, disisipkan MENTAH ke `<head>`.
+   *
+   * Hanya untuk konstanta yang ditulis di kode (mis. `WIZARD_CSS`). Jangan
+   * pernah mengisinya dengan nilai dari basis data atau masukan pengguna —
+   * isinya tidak melewati `esc()`.
+   */
+  styles?: string;
+  /**
+   * Skrip tambahan, disisipkan MENTAH sebelum `</body>`.
+   *
+   * Batasan yang sama: hanya konstanta internal. Isi skrip juga tidak boleh
+   * memuat `</script>` — teks itu akan menutup tag lebih awal.
+   */
+  scripts?: string;
 };
 
 const NAV: { href: string; label: string; key: string }[] = [
@@ -195,7 +210,7 @@ export function layout(options: LayoutOptions): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${options.title} — fayLN admin</title>
-<style>${safe(STYLES)}</style>
+<style>${safe(STYLES)}${options.styles ? safe(options.styles) : safe('')}</style>
 </head>
 <body>
 ${header}
@@ -203,6 +218,7 @@ ${header}
 ${notice}
 ${options.body}
 </main>
+${options.scripts ? safe(`<script>${options.scripts}</script>`) : safe('')}
 </body>
 </html>`.toString();
 }

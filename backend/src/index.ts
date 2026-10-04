@@ -22,6 +22,7 @@ import { CatalogAdminRepository } from './admin/catalogAdminRepository';
 import { ModelsRepository } from './admin/modelsRepository';
 import { PromotionsRepository } from './admin/promotionsRepository';
 import { SettingsRepository } from './admin/settingsRepository';
+import { WorldDraftRepository } from './admin/worldDraftRepository';
 import { validatePassword } from './admin/password';
 import type { AdminPageContext } from './admin/pages/context';
 import { parseConfig } from './config';
@@ -31,6 +32,7 @@ import { createLogger } from './logging';
 import { CatalogRepository } from './repositories/catalogRepository';
 import { AccountRepository } from './repositories/accountRepository';
 import { JourneyRepository } from './repositories/journeyRepository';
+import { MediaRepository } from './repositories/mediaRepository';
 import { OperationRepository } from './repositories/operationRepository';
 import { ReportRepository } from './repositories/reportRepository';
 import { UsageRepository } from './repositories/usageRepository';
@@ -95,6 +97,7 @@ async function main(): Promise<void> {
 
   /* ---------------- Panel admin ---------------- */
   const adminRepository = new AdminRepository(db);
+  const mediaRepository = new MediaRepository(db);
   const adminPages: AdminPageContext = {
     admins: adminRepository,
     settings: new SettingsRepository(db),
@@ -105,6 +108,8 @@ async function main(): Promise<void> {
     accounts: new AccountsAdminRepository(db),
     promotions: new PromotionsRepository(db),
     models: new ModelsRepository(db),
+    drafts: new WorldDraftRepository(db),
+    media: mediaRepository,
   };
 
   await bootstrapAdmin(adminRepository, logger);

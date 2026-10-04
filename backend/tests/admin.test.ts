@@ -29,11 +29,13 @@ import type { AdminPageContext } from '../src/admin/pages/context';
 import { hashPassword, verifyPassword } from '../src/admin/password';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
 import { SettingsRepository } from '../src/admin/settingsRepository';
+import { WorldDraftRepository } from '../src/admin/worldDraftRepository';
 import { resetLoginAttempts, SESSION_COOKIE } from '../src/admin/session';
 import { parseConfig, type AppConfig } from '../src/config';
 import { AccountRepository } from '../src/repositories/accountRepository';
 import { CatalogRepository } from '../src/repositories/catalogRepository';
 import { JourneyRepository } from '../src/repositories/journeyRepository';
+import { MediaRepository } from '../src/repositories/mediaRepository';
 import { OperationRepository } from '../src/repositories/operationRepository';
 import { ReportRepository } from '../src/repositories/reportRepository';
 import { UsageRepository } from '../src/repositories/usageRepository';
@@ -83,6 +85,8 @@ async function buildTestApp(): Promise<FastifyInstance> {
     accounts: new AccountsAdminRepository(ctx.db),
     promotions,
     models: new ModelsRepository(ctx.db),
+    drafts: new WorldDraftRepository(ctx.db),
+    media: new MediaRepository(ctx.db),
   };
 
   const journeyService = new JourneyService({
@@ -273,6 +277,7 @@ describe('perlindungan halaman admin', () => {
     '/admin',
     '/admin/worlds',
     '/admin/worlds-new',
+    '/admin/worlds-wizard',
     '/admin/characters',
     '/admin/characters-form',
     '/admin/locations',

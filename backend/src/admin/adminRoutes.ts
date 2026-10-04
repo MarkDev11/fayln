@@ -20,9 +20,14 @@ import { assetsList } from './pages/assetPages';
 import { charactersForm, charactersList, worldsForm, worldsList } from './pages/catalogPages';
 import { auditList, dashboard, settingsList } from './pages/dashboardPages';
 import { locationsList } from './pages/locationPages';
+import { draftResumePanel, wizardStep1, wizardStep2, wizardStep3 } from './pages/wizardPages';
+import { WIZARD_CSS, WIZARD_JS } from './wizardClient';
 import { modelForm, modelsList } from './pages/modelPages';
 import { promotionForm, promotionsList } from './pages/promotionPages';
 import type { SafeHtml } from './html';
+import { ACCEPTED_IMAGE_TYPES, inspectImage } from '../media/imageFile';
+import { isMediaId, type MediaRepository } from '../repositories/mediaRepository';
+import { BASE_EXPRESSION, isRelationStatus } from './worldDraftRepository';
 import { esc, html, inputValue, layout, safe } from './html';
 import { validatePassword, verifyPassword } from './password';
 import {
@@ -39,6 +44,8 @@ export type AdminRouteDeps = {
   admins: AdminRepository;
   /** Konteks yang diteruskan ke setiap halaman. */
   pages: AdminPageContext;
+  /** Penyimpanan berkas gambar unggahan. */
+  media: MediaRepository;
   isProduction: boolean;
   /** Nama pengguna yang boleh masuk. Dipakai untuk membuat admin pertama. */
   bootstrapUsername?: string;
@@ -65,6 +72,9 @@ type AdminPages = {
   ) => Promise<SafeHtml>;
   locationsList: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
   assetsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
+  wizardStep1: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
+  wizardStep2: (ctx: AdminPageContext, worldId: string) => Promise<SafeHtml>;
+  wizardStep3: (ctx: AdminPageContext, worldId: string) => Promise<SafeHtml>;
 };
 
 const DEFAULT_PAGES: AdminPages = {
@@ -84,6 +94,9 @@ const DEFAULT_PAGES: AdminPages = {
   auditList,
   locationsList,
   assetsList,
+  wizardStep1,
+  wizardStep2,
+  wizardStep3,
 };
 
 /* ------------------------------------------------------------------ */
@@ -99,6 +112,53 @@ const loginBody = z.object({
 const passwordBody = z.object({
   currentPassword: z.string().min(1).max(200),
   newPassword: z.string().min(1).max(200),
+});
+
+/**
+ * Batas ukuran satu berkas unggahan: 1 MiB.
+ *
+ * Nilai ini muncul di tiga tempat yang harus sepakat — batas badan route,
+ * pemeriksaan di sini, dan `media_blobs_size_check` di basis data. Klien sudah
+ * memperkecil gambar sebelum mengirim, jadi batas ini bukan batas yang wajar
+ * untuk sebuah gambar melainkan jaring terakhir terhadap klien yang tidak
+ * mengikuti aturan.
+ */
+const MAX_UPLOAD_BYTES = 1024 * 1024;
+
+/**
+ * Isian langkah 1 wizard.
+ *
+ * Judul, sinopsis, dan premis sengaja TIDAK wajib di sini. "Simpan & keluar"
+ * harus dapat ditekan bahkan pada formulir yang masih kosong — kalau tidak,
+ * permintaan pemilik proyek bahwa "draf dapat dilanjutkan sewaktu-waktu" tidak
+ * terpenuhi untuk draf yang paling awal. Kelengkapan diperiksa di route, dan
+ * hanya ketika tombolnya "Lanjut".
+ */
+const wizardIdentityBody = z.object({
+  worldId: z.string().optional().default(''),
+  title: z.string().trim().max(120).optional().default(''),
+  synopsis: z.string().trim().max(240).optional().default(''),
+  premise: z.string().trim().max(2000).optional().default(''),
+  coverMediaId: z.string().optional().default(''),
+  contentRating: z.enum(['all', '13_plus', '18_plus']).optional().default('all'),
+  genres: z.union([z.string(), z.array(z.string())]).optional(),
+  locales: z.union([z.string(), z.array(z.string())]).optional(),
+  intent: z.enum(['next', 'draft']),
+});
+
+/** Isian satu NPC beserta ekspresinya. Nama berulang menjadi larik. */
+const wizardNpcBody = z.object({
+  worldId: z.string().trim().min(1),
+  npcId: z.string().optional().default(''),
+  name: z.string().trim().min(1).max(120),
+  role: z.string().trim().max(120).optional().default(''),
+  traits: z.string().optional().default(''),
+  initialRelation: z.string().optional().default('normal'),
+  publicBackstory: z.string().max(2000).optional().default(''),
+  baseMediaId: z.string().optional().default(''),
+  expression: z.union([z.string(), z.array(z.string())]).optional(),
+  expressionUsage: z.union([z.string(), z.array(z.string())]).optional(),
+  expressionMedia: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 /**
@@ -196,9 +256,26 @@ const SETTING_KEY_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/;
 /* ------------------------------------------------------------------ */
 
 export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps): void {
-  const { admins, isProduction } = deps;
+  const { admins, media, isProduction } = deps;
   const pages: AdminPages = DEFAULT_PAGES;
   const ctx = deps.pages;
+
+  /*
+   * Badan permintaan berupa gambar mentah.
+   *
+   * Bawaannya Fastify hanya mengurai JSON dan teks, dan batas badan global
+   * aplikasi ini hanya 64 KB — jauh di bawah satu gambar. Karena itu jenis isi
+   * gambar didaftarkan di sini dengan `parseAs: 'buffer'`, dan route unggahnya
+   * memasang batas badan sendiri. Tanpa keduanya, unggahan ditolak sebelum
+   * sempat mencapai handler, dengan galat yang membingungkan.
+   */
+  app.addContentTypeParser(
+    [...ACCEPTED_IMAGE_TYPES],
+    { parseAs: 'buffer' },
+    (_request, body, done) => {
+      done(null, body);
+    },
+  );
 
   /* ---------------------------------------------------------------- */
   /* Masuk dan keluar                                                  */
@@ -349,17 +426,27 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     return send(reply, request, 'Ringkasan', await pages.dashboard(ctx), 'dashboard');
   });
 
-  app.get('/admin/worlds', async (request, reply) =>
-    send(reply, request, 'Dunia', await pages.worldsList(ctx), 'worlds'),
-  );
+  app.get('/admin/worlds', async (request, reply) => {
+    // Draf yang belum selesai ditaruh DI ATAS daftar: pekerjaan yang belum
+    // selesai adalah hal pertama yang perlu dilihat penulisnya.
+    const drafts = await ctx.drafts.listDrafts();
+    return send(
+      reply,
+      request,
+      'Dunia',
+      html`${draftResumePanel(drafts)}${await pages.worldsList(ctx)}`,
+      'worlds',
+    );
+  });
 
   app.get<{ Params: { worldId: string } }>('/admin/worlds/:worldId', async (request, reply) =>
     send(reply, request, 'Ubah dunia', await pages.worldsForm(ctx, request.params.worldId), 'worlds'),
   );
 
-  app.get('/admin/worlds-new', async (request, reply) =>
-    send(reply, request, 'Dunia baru', await pages.worldsForm(ctx, null), 'worlds'),
-  );
+  // `GET /admin/worlds-new` sengaja TIDAK di sini: alamat itu kini dialihkan ke
+  // wizard dan didaftarkan bersama rute wizard di bawah, supaya hanya ada satu
+  // pemilik alamat. Mendaftarkannya dua kali membuat Fastify menolak seluruh
+  // aplikasi saat dibangun.
 
   app.get('/admin/characters', async (request, reply) =>
     send(reply, request, 'Karakter', await pages.charactersList(ctx), 'characters'),
@@ -464,13 +551,13 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     const session = request.adminSession;
     const parsed = worldBody.safeParse(request.body);
     if (!parsed.success) {
-      return reply.redirect('/admin/worlds-new?notice=invalid-input', 302);
+      return reply.redirect('/admin/worlds-wizard?notice=invalid-input', 302);
     }
 
     const genres = toArray(parsed.data.genres).filter(isGenre);
     const locales = toArray(parsed.data.locales).filter(isLocale);
     if (genres.length === 0 || locales.length === 0) {
-      return reply.redirect('/admin/worlds-new?notice=invalid-input', 302);
+      return reply.redirect('/admin/worlds-wizard?notice=invalid-input', 302);
     }
 
     const result = await ctx.catalog.saveWorld({
@@ -661,6 +748,585 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       `/admin/locations?world=${encodeURIComponent(body.data.worldId)}&notice=deleted`,
       302,
     );
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Wizard "Dunia baru"                                               */
+  /* ---------------------------------------------------------------- */
+
+  // Alamat lama diarahkan ke wizard, supaya tautan dan penanda buku yang sudah
+  // ada tidak mati. Dunia yang sudah terbit tetap disunting lewat jalur versi.
+  app.get('/admin/worlds-new', async (_request, reply) =>
+    reply.redirect('/admin/worlds-wizard', 302),
+  );
+
+  app.get('/admin/worlds-wizard', async (request, reply) =>
+    sendWizard(reply, request, 'Dunia baru', await pages.wizardStep1(ctx, null), 'worlds'),
+  );
+
+  app.get<{ Params: { worldId: string; step: string } }>(
+    '/admin/worlds/:worldId/wizard/:step',
+    async (request, reply) => {
+      const { worldId } = request.params;
+      const draft = await ctx.drafts.findDraft(worldId);
+      if (!draft) {
+        return reply.redirect(`/admin/worlds/${encodeURIComponent(worldId)}?notice=not-draft`, 302);
+      }
+
+      const step = Number(request.params.step);
+      if (step === 2) {
+        return sendWizard(reply, request, 'Latar belakang', await pages.wizardStep2(ctx, worldId), 'worlds');
+      }
+      if (step === 3) {
+        return sendWizard(reply, request, 'Karakter', await pages.wizardStep3(ctx, worldId), 'worlds');
+      }
+      return sendWizard(reply, request, 'Identitas dunia', await pages.wizardStep1(ctx, worldId), 'worlds');
+    },
+  );
+
+  app.post('/admin/worlds-wizard/1', async (request, reply) => {
+    const session = request.adminSession;
+    const parsed = wizardIdentityBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.redirect('/admin/worlds-wizard?notice=invalid-input', 302);
+    }
+    const data = parsed.data;
+
+    let worldId = data.worldId;
+    let worldVersion: number;
+
+    if (worldId.length > 0) {
+      // Draf dicari ulang dari basis data; `worldId` dari klien hanya dipakai
+      // untuk MENUNJUK, bukan untuk menentukan boleh atau tidak.
+      const draft = await ctx.drafts.findDraft(worldId);
+      if (!draft) {
+        return reply.redirect(`/admin/worlds/${encodeURIComponent(worldId)}?notice=not-draft`, 302);
+      }
+      worldVersion = draft.worldVersion;
+    } else {
+      const created = await ctx.drafts.createDraft();
+      worldId = created.worldId;
+      worldVersion = created.worldVersion;
+    }
+
+    // Sampul hanya diterima bila berkasnya benar-benar ada. Tanpa pemeriksaan
+    // ini, satu id yang salah ketik tersimpan dan katalog pemain menampilkan
+    // gambar rusak — kegagalan yang baru terlihat jauh dari tempat penyebabnya.
+    const coverMediaId =
+      data.coverMediaId.length > 0 &&
+      isMediaId(data.coverMediaId) &&
+      (await ctx.media.findById(data.coverMediaId)) !== null
+        ? data.coverMediaId
+        : null;
+
+    // Disimpan LEBIH DULU, baru diperiksa. Urutan ini disengaja: menolak
+    // "Lanjut" karena satu kolom kosong tidak boleh membuang seluruh isian yang
+    // sudah diketik. Pemilik proyek meminta draf yang dapat dilanjutkan
+    // sewaktu-waktu — dan isian yang hilang karena validasi adalah kebalikannya.
+    await ctx.drafts.saveIdentity(worldId, worldVersion, {
+      title: data.title,
+      synopsis: data.synopsis,
+      premise: data.premise,
+      contentRating: data.contentRating,
+      genres: toArray(data.genres).filter(isGenre),
+      locales: toArray(data.locales).filter(isLocale),
+      coverMediaId,
+    });
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'world.draft.save',
+      targetKind: 'world',
+      targetId: worldId,
+      detail: { step: 1, intent: data.intent },
+      ipAddress: request.ip,
+    });
+
+    if (data.intent === 'next') {
+      const missing =
+        data.title.length === 0 ||
+        data.synopsis.length === 0 ||
+        data.premise.length === 0 ||
+        coverMediaId === null;
+      if (missing) {
+        return reply.redirect(
+          `/admin/worlds/${encodeURIComponent(worldId)}/wizard/1?notice=incomplete`,
+          302,
+        );
+      }
+      return reply.redirect(`/admin/worlds/${encodeURIComponent(worldId)}/wizard/2?notice=saved`, 302);
+    }
+    return reply.redirect('/admin/worlds?notice=draft', 302);
+  });
+
+  app.post('/admin/worlds-wizard/2', async (request, reply) => {
+    const body = z
+      .object({ worldId: z.string().trim().min(1), intent: z.enum(['next', 'draft']) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.redirect(`/admin/worlds?notice=not-draft`, 302);
+    }
+
+    if (body.data.intent === 'next' && draft.backgroundCount === 0) {
+      return reply.redirect(
+        `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2?notice=incomplete`,
+        302,
+      );
+    }
+
+    return reply.redirect(
+      body.data.intent === 'next'
+        ? `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3?notice=saved`
+        : '/admin/worlds?notice=draft',
+      302,
+    );
+  });
+
+  /**
+   * Menambahkan sekumpulan latar belakang yang sudah diunggah.
+   *
+   * Dimensinya dibaca dari basis data, BUKAN dari angka yang dikirim klien.
+   * Server sudah menyimpannya saat unggahan, jadi tidak ada alasan memercayai
+   * salinan yang bisa saja salah — dan angka itu dipakai untuk menghitung titik
+   * fokus, sehingga kesalahannya akan terlihat sebagai gambar yang tidak pada
+   * tempatnya.
+   */
+  app.post('/admin/worlds-wizard/2/backgrounds', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({
+        worldId: z.string().trim().min(1),
+        mediaId: z.union([z.string(), z.array(z.string())]).optional(),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.redirect('/admin/worlds?notice=not-draft', 302);
+    }
+
+    let added = 0;
+    let refused = 0;
+
+    for (const mediaId of toArray(body.data.mediaId)) {
+      if (!isMediaId(mediaId)) {
+        continue;
+      }
+      const media = await ctx.media.findById(mediaId);
+      if (!media) {
+        continue;
+      }
+
+      const created = await ctx.drafts.addBackground(draft.worldId, draft.worldVersion, {
+        mediaId,
+        label: '',
+        description: '',
+        usageNote: '',
+        encounterLikelihood: null,
+        blurStrength: 0,
+        focalX: 0.5,
+        focalY: 0.5,
+        width: media.width,
+        height: media.height,
+      });
+
+      if (created) {
+        added += 1;
+      } else {
+        refused += 1;
+      }
+    }
+
+    if (added > 0) {
+      await admins.recordAudit({
+        adminId: session?.adminId ?? null,
+        username: session?.username ?? '',
+        action: 'world.background.add',
+        targetKind: 'world',
+        targetId: draft.worldId,
+        detail: { added, refused },
+        ipAddress: request.ip,
+      });
+    }
+
+    const notice = refused > 0 ? 'limit' : 'created';
+    return reply.redirect(
+      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2?notice=${notice}`,
+      302,
+    );
+  });
+
+  app.post('/admin/worlds-wizard/2/background', async (request, reply) => {
+    const body = z
+      .object({
+        worldId: z.string().trim().min(1),
+        assetId: z.string().trim().min(1),
+        description: z.string().max(200).optional().default(''),
+        usageNote: z.string().max(500).optional().default(''),
+        encounterLikelihood: z.string().optional().default(''),
+        blurStrength: z.string().optional().default('0'),
+        focalX: z.string().optional().default('0.5'),
+        focalY: z.string().optional().default('0.5'),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.redirect('/admin/worlds?notice=not-draft', 302);
+    }
+
+    const updated = await ctx.drafts.updateBackground(
+      draft.worldId,
+      draft.worldVersion,
+      body.data.assetId,
+      {
+        mediaId: null,
+        label: body.data.description,
+        description: body.data.description,
+        usageNote: body.data.usageNote,
+        encounterLikelihood: body.data.encounterLikelihood,
+        blurStrength: Number(body.data.blurStrength),
+        focalX: Number(body.data.focalX),
+        focalY: Number(body.data.focalY),
+        width: null,
+        height: null,
+      },
+    );
+
+    return reply.redirect(
+      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2?notice=${updated ? 'saved' : 'not-found'}`,
+      302,
+    );
+  });
+
+  app.post('/admin/worlds-wizard/2/background/move', async (request, reply) => {
+    const body = z
+      .object({
+        worldId: z.string().trim().min(1),
+        assetId: z.string().trim().min(1),
+        direction: z.enum(['up', 'down']),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.redirect('/admin/worlds?notice=not-draft', 302);
+    }
+
+    await ctx.drafts.moveBackground(
+      draft.worldId,
+      draft.worldVersion,
+      body.data.assetId,
+      body.data.direction,
+    );
+
+    return reply.redirect(`/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2`, 302);
+  });
+
+  app.post('/admin/worlds-wizard/2/background/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({ worldId: z.string().trim().min(1), assetId: z.string().trim().min(1) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.redirect('/admin/worlds?notice=not-draft', 302);
+    }
+
+    const deleted = await ctx.drafts.deleteBackground(
+      draft.worldId,
+      draft.worldVersion,
+      body.data.assetId,
+    );
+
+    if (deleted) {
+      await admins.recordAudit({
+        adminId: session?.adminId ?? null,
+        username: session?.username ?? '',
+        action: 'world.background.delete',
+        targetKind: 'world',
+        targetId: draft.worldId,
+        detail: { assetId: body.data.assetId },
+        ipAddress: request.ip,
+      });
+    }
+
+    return reply.redirect(
+      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2?notice=${deleted ? 'deleted' : 'not-found'}`,
+      302,
+    );
+  });
+
+  app.post('/admin/worlds-wizard/3', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({ worldId: z.string().trim().min(1), intent: z.enum(['next', 'draft']) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.redirect('/admin/worlds?notice=not-draft', 302);
+    }
+
+    if (body.data.intent === 'draft') {
+      return reply.redirect('/admin/worlds?notice=draft', 302);
+    }
+
+    // Penerbitan diperiksa terhadap ISI draf di basis data, bukan terhadap apa
+    // yang tampak di layar: halaman bisa saja sudah usang.
+    //
+    // NPC tanpa potret ikut menahan penerbitan. Tanpa pemeriksaan ini, dunia
+    // dapat terbit dengan karakter yang tidak punya satu pun gambar ekspresi —
+    // dan pemain akan melihat adegan dengan karakter tanpa wajah.
+    const faceless = await ctx.drafts.countNpcsWithoutPortrait(draft.worldId, draft.worldVersion);
+    if (draft.backgroundCount === 0 || draft.npcCount === 0 || faceless > 0) {
+      return reply.redirect(
+        `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3?notice=incomplete`,
+        302,
+      );
+    }
+
+    await ctx.drafts.publishDraft(draft.worldId, draft.worldVersion);
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'world.publish',
+      targetKind: 'world',
+      targetId: draft.worldId,
+      detail: { worldVersion: draft.worldVersion },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/worlds?notice=published', 302);
+  });
+
+  app.post('/admin/worlds-wizard/3/npc', async (request, reply) => {
+    const session = request.adminSession;
+    const parsed = wizardNpcBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+    const data = parsed.data;
+
+    const draft = await ctx.drafts.findDraft(data.worldId);
+    if (!draft) {
+      return reply.redirect('/admin/worlds?notice=not-draft', 302);
+    }
+
+    const names = toArray(data.expression);
+    const usages = toArray(data.expressionUsage);
+    const mediaIds = toArray(data.expressionMedia);
+
+    // Ekspresi tanpa gambar DIBUANG, bukan disimpan namanya saja.
+    //
+    // Tiga alasan, dan ketiganya saling menguatkan:
+    //   1. Halaman sudah menjanjikannya kepada pengguna: "yang belum diunggah
+    //      gambarnya tidak akan tersimpan".
+    //   2. `listNpcs` menurunkan daftar ekspresi dari BARIS ASET potret. Nama
+    //      tanpa gambar karena itu tidak akan pernah tampil di panel — lalu
+    //      hilang senyap pada penyimpanan berikutnya, karena formulir hanya
+    //      mengirim apa yang terlihat.
+    //   3. Kontrak katalog pemain menjanjikan setiap ekspresi punya gambar.
+    //      Nama tanpa gambar berarti AI boleh memilih ekspresi yang tidak dapat
+    //      dirender klien.
+    const expressions: { expression: string; usageNote: string; mediaId: string | null }[] = [];
+    for (const [index, name] of names.entries()) {
+      if (name.trim().length === 0) {
+        continue;
+      }
+      const candidate = mediaIds[index] ?? '';
+      const mediaId =
+        isMediaId(candidate) && (await ctx.media.findById(candidate)) !== null ? candidate : null;
+      if (mediaId === null) {
+        continue;
+      }
+      expressions.push({ expression: name, usageNote: usages[index] ?? '', mediaId });
+    }
+
+    const baseMediaId =
+      isMediaId(data.baseMediaId) && (await ctx.media.findById(data.baseMediaId)) !== null
+        ? data.baseMediaId
+        : null;
+
+    // Gambar dasar diletakkan PALING DEPAN sebagai ekspresi `dasar`, sehingga ia
+    // menjadi potret bawaan. Tanpa langkah ini, berkas yang diunggah pengguna
+    // diterima lalu dibuang tanpa jejak — kolom `default_portrait_asset_id`
+    // hanya menunjuk aset potret, dan tidak ada tempat lain untuk menyimpannya.
+    //
+    // Bila pengguna kebetulan menamai salah satu ekspresinya `dasar`, entri itu
+    // digantikan: dua aset dengan id yang sama tidak dapat hidup berdampingan.
+    const ordered =
+      baseMediaId === null
+        ? expressions
+        : [
+            { expression: BASE_EXPRESSION, usageNote: '', mediaId: baseMediaId },
+            ...expressions.filter(
+              (item) => item.expression.trim().toLowerCase() !== BASE_EXPRESSION,
+            ),
+          ];
+
+    const saved = await ctx.drafts.saveNpc(draft.worldId, draft.worldVersion, {
+      npcId: data.npcId.length > 0 ? data.npcId : null,
+      name: data.name,
+      role: data.role,
+      traits: data.traits
+        .split(',')
+        .map((trait) => trait.trim())
+        .filter((trait) => trait.length > 0),
+      publicBackstory: data.publicBackstory,
+      initialRelation: isRelationStatus(data.initialRelation) ? data.initialRelation : 'normal',
+      expressions: ordered,
+    });
+
+    if (saved) {
+      await admins.recordAudit({
+        adminId: session?.adminId ?? null,
+        username: session?.username ?? '',
+        action: data.npcId.length > 0 ? 'world.npc.update' : 'world.npc.create',
+        targetKind: 'character',
+        targetId: `${draft.worldId}/${saved.npcId}`,
+        detail: { expressions: ordered.length },
+        ipAddress: request.ip,
+      });
+    }
+
+    return reply.redirect(
+      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3?notice=created`,
+      302,
+    );
+  });
+
+  app.post('/admin/worlds-wizard/3/npc/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({ worldId: z.string().trim().min(1), npcId: z.string().trim().min(1) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.redirect('/admin/worlds?notice=not-draft', 302);
+    }
+
+    const deleted = await ctx.drafts.deleteNpc(draft.worldId, draft.worldVersion, body.data.npcId);
+
+    if (deleted) {
+      await admins.recordAudit({
+        adminId: session?.adminId ?? null,
+        username: session?.username ?? '',
+        action: 'world.npc.delete',
+        targetKind: 'character',
+        targetId: `${draft.worldId}/${body.data.npcId}`,
+        ipAddress: request.ip,
+      });
+    }
+
+    return reply.redirect(
+      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3?notice=${deleted ? 'deleted' : 'not-found'}`,
+      302,
+    );
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Unggahan gambar                                                   */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Menerima satu berkas gambar mentah.
+   *
+   * SATU berkas per permintaan, dengan sengaja. Mengunggah lima puluh latar
+   * belakang dalam satu permintaan berarti satu kegagalan membatalkan
+   * seluruhnya, dan kemajuannya tidak dapat ditampilkan. Dengan satu berkas per
+   * permintaan, klien dapat memperlihatkan kemajuan per gambar dan mengulang
+   * hanya yang gagal.
+   *
+   * Jenis berkas ditentukan dari ISINYA, bukan dari `content-type` yang dikirim
+   * klien — header itu dapat dikarang siapa saja. Yang tidak dikenali ditolak,
+   * termasuk SVG: SVG adalah dokumen yang dapat memuat skrip, dan menyajikannya
+   * dari domain yang sama sama dengan menyerahkan panel admin.
+   */
+  app.post('/admin/media', { bodyLimit: MAX_UPLOAD_BYTES }, async (request, reply) => {
+    const session = request.adminSession;
+    if (!session) {
+      return sendJson(reply, 401, 'UNAUTHORIZED', 'Sesi tidak berlaku.');
+    }
+
+    const body: unknown = request.body;
+    if (!Buffer.isBuffer(body) || body.length === 0) {
+      return sendJson(reply, 400, 'VALIDATION', 'Badan permintaan harus berupa berkas gambar.');
+    }
+
+    const inspection = inspectImage(body);
+    if (!inspection) {
+      return sendJson(
+        reply,
+        415,
+        'UNSUPPORTED_MEDIA_TYPE',
+        'Hanya berkas PNG, JPEG, atau WebP yang diterima.',
+      );
+    }
+
+    const { mediaId, isNew } = await media.put({
+      bytes: body,
+      inspection,
+      uploadedBy: session.username,
+    });
+
+    // Hanya unggahan yang benar-benar menyimpan berkas baru yang dicatat.
+    // Mengunggah ulang gambar yang sama tidak mengubah apa pun, jadi mencatatnya
+    // hanya akan mengaburkan catatan audit.
+    if (isNew) {
+      await admins.recordAudit({
+        adminId: session.adminId,
+        username: session.username,
+        action: 'media.upload',
+        targetKind: 'media',
+        targetId: mediaId,
+        detail: {
+          contentType: inspection.contentType,
+          byteSize: body.length,
+          width: inspection.width,
+          height: inspection.height,
+        },
+        ipAddress: request.ip,
+      });
+    }
+
+    return reply.send({
+      mediaId,
+      url: `/v1/media/${mediaId}`,
+      contentType: inspection.contentType,
+      byteSize: body.length,
+      width: inspection.width,
+      height: inspection.height,
+      hasAlpha: inspection.hasAlpha,
+      deduplicated: !isNew,
+    });
   });
 
   /* ---------------------------------------------------------------- */
@@ -1069,6 +1735,56 @@ function send(
 }
 
 /**
+ * Mengirim halaman wizard.
+ *
+ * Berbeda dari `send()` hanya pada dua hal: gaya dan skrip wizard ikut
+ * disisipkan. Keduanya konstanta yang ditulis di kode, bukan nilai dari basis
+ * data — `layout()` menyisipkannya mentah tanpa `esc()`.
+ */
+function sendWizard(
+  reply: FastifyReply,
+  request: FastifyRequest,
+  title: string,
+  body: SafeHtml,
+  active: string,
+): FastifyReply {
+  return reply.type('text/html; charset=utf-8').send(
+    layout({
+      title,
+      body,
+      admin: request.adminSession
+        ? {
+            displayName: request.adminSession.displayName,
+            username: request.adminSession.username,
+            role: request.adminSession.role,
+          }
+        : null,
+      active,
+      notice: readNotice(request),
+      styles: WIZARD_CSS,
+      scripts: WIZARD_JS,
+    }),
+  );
+}
+
+/**
+ * Galat untuk route yang berbicara JSON, bukan HTML.
+ *
+ * Halaman panel menjawab dengan HTML dan pengalihan; unggahan gambar dijawab
+ * klien lewat `fetch`, yang membaca kode status dan badan JSON. Karena itu
+ * galatnya memakai bentuk yang sama dengan API pemain — bukan halaman HTML yang
+ * akan membingungkan pemanggil `fetch`.
+ */
+function sendJson(
+  reply: FastifyReply,
+  status: number,
+  code: string,
+  message: string,
+): FastifyReply {
+  return reply.status(status).type('application/json').send({ code, message, retryable: false });
+}
+
+/**
  * Admin yang sedang masuk, untuk diserahkan ke halaman yang menerapkannya.
  *
  * Diperlukan karena halaman kelola admin harus menyembunyikan tombol
@@ -1100,6 +1816,23 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
     'not-found': { kind: 'error', text: 'Data yang diminta tidak ada.' },
     'invalid-input': { kind: 'error', text: 'Isian tidak sesuai. Periksa kembali.' },
     conflict: { kind: 'error', text: 'Perubahan tidak dapat diterapkan pada keadaan saat ini.' },
+    draft: { kind: 'ok', text: 'Draf disimpan. Dapat dilanjutkan kapan saja dari daftar dunia.' },
+    published: { kind: 'ok', text: 'Dunia diterbitkan dan sudah tampil di katalog pemain.' },
+    incomplete: {
+      kind: 'error',
+      // Pesan ini muncul di ketiga langkah, jadi ia menyebut syarat ketiganya —
+      // bukan hanya langkah 1. Isian yang sudah diketik tetap tersimpan.
+      text:
+        'Masih ada yang kurang. Langkah 1: judul, sinopsis, premis, dan sampul. ' +
+        'Langkah 2: minimal satu latar belakang. Langkah 3: minimal satu karakter, ' +
+        'dan setiap karakter harus punya minimal satu gambar ekspresi. ' +
+        'Isian Anda sudah tersimpan sebagai draf.',
+    },
+    limit: { kind: 'error', text: 'Batas jumlah tercapai. Hapus salah satu sebelum menambah.' },
+    'not-draft': {
+      kind: 'error',
+      text: 'Dunia ini sudah pernah diterbitkan, jadi tidak dapat disunting lewat wizard.',
+    },
   };
   return MAP[raw] ?? null;
 }

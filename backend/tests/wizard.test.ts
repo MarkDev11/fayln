@@ -1,0 +1,1125 @@
+/**
+ * Wizard "Dunia baru" — tiga langkah, draf yang dapat dilanjutkan, dan terbit.
+ *
+ * Yang dibuktikan di sini bukan "halamannya terbuka", melainkan aturan yang
+ * membuat wizard ini aman dipakai:
+ *
+ * 1. Draf dapat dimulai dari formulir KOSONG dan dilanjutkan kapan saja.
+ * 2. "Lanjut" menuntut kelengkapan; "Simpan & keluar" tidak.
+ * 3. Sampul hanya diterima bila berkasnya benar-benar ada di basis data.
+ * 4. Batas 50 latar belakang ditegakkan di SERVER, bukan oleh tampilan.
+ * 5. Dimensi latar belakang dibaca dari basis data, bukan dari kiriman klien.
+ * 6. Terbit menuntut isi, dan sesudah terbit draf tidak lagi dapat disunting
+ *    di tempat — aturan salin-saat-simpan kembali berlaku.
+ *
+ * Poin 4 dan 5 adalah dua tempat di mana "tampilan menyembunyikan tombolnya"
+ * mudah disalahartikan sebagai pengaman. Keduanya diuji lewat permintaan HTTP
+ * langsung, tanpa melewati halaman.
+ */
+
+import type { FastifyInstance } from 'fastify';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+
+import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
+import { AdminRepository } from '../src/admin/adminRepository';
+import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
+import { ModelsRepository } from '../src/admin/modelsRepository';
+import type { AdminPageContext } from '../src/admin/pages/context';
+import { stepOfDraft } from '../src/admin/pages/wizardPages';
+import { PromotionsRepository } from '../src/admin/promotionsRepository';
+import { SettingsRepository } from '../src/admin/settingsRepository';
+import { MAX_BACKGROUNDS, WorldDraftRepository } from '../src/admin/worldDraftRepository';
+import { resetLoginAttempts, SESSION_COOKIE } from '../src/admin/session';
+import { parseConfig, type AppConfig } from '../src/config';
+import { AccountRepository } from '../src/repositories/accountRepository';
+import { CatalogRepository } from '../src/repositories/catalogRepository';
+import { JourneyRepository } from '../src/repositories/journeyRepository';
+import { MediaRepository } from '../src/repositories/mediaRepository';
+import { OperationRepository } from '../src/repositories/operationRepository';
+import { ReportRepository } from '../src/repositories/reportRepository';
+import { UsageRepository } from '../src/repositories/usageRepository';
+import { buildApp } from '../src/server';
+import { JourneyService } from '../src/services/journeyService';
+import { DeterministicStoryEngine } from '../src/services/storyEngine';
+import { createTestDatabase, type TestDatabase } from './helpers/testDb';
+
+/* ------------------------------------------------------------------ */
+/* Contoh berkas                                                       */
+/* ------------------------------------------------------------------ */
+
+/**
+ * PNG dengan dimensi tertentu, ditambah penanda unik.
+ *
+ * Penanda unik dipakai supaya setiap berkas punya SHA-256 yang berbeda —
+ * penyimpanan bersifat content-addressed, jadi dua berkas identik akan
+ * berbagi satu baris dan uji batas 50 tidak akan pernah mencapai 50.
+ */
+function png(width: number, height: number, marker = ''): Buffer {
+  const head = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(head, 0);
+  head.writeUInt32BE(13, 8);
+  head.write('IHDR', 12, 'latin1');
+  head.writeUInt32BE(width, 16);
+  head.writeUInt32BE(height, 20);
+  head[24] = 8;
+  head[25] = 6; // RGBA
+  return marker.length > 0 ? Buffer.concat([head, Buffer.from(marker, 'latin1')]) : head;
+}
+
+/* ------------------------------------------------------------------ */
+/* Harness                                                             */
+/* ------------------------------------------------------------------ */
+
+let ctx: TestDatabase;
+let app: FastifyInstance;
+let admins: AdminRepository;
+let drafts: WorldDraftRepository;
+
+const ADMIN_USERNAME = 'operator';
+const ADMIN_PASSWORD = 'kata-sandi-uji-123';
+
+function testConfig(): AppConfig {
+  return parseConfig({
+    NODE_ENV: 'test',
+    DATABASE_URL: 'postgres://unused',
+    PORT: '8080',
+    LOG_LEVEL: 'error',
+    RUN_MIGRATIONS_ON_START: 'false',
+    FREE_DAILY_TOKENS: '100000',
+    RATE_LIMIT_MAX: '1000',
+  } as NodeJS.ProcessEnv);
+}
+
+async function build(): Promise<FastifyInstance> {
+  const config = testConfig();
+  const usage = new UsageRepository(ctx.db, config.plan);
+  admins = new AdminRepository(ctx.db);
+  drafts = new WorldDraftRepository(ctx.db);
+
+  const pages: AdminPageContext = {
+    admins,
+    settings: new SettingsRepository(ctx.db),
+    catalog: new CatalogAdminRepository(ctx.db),
+    accounts: new AccountsAdminRepository(ctx.db),
+    promotions: new PromotionsRepository(ctx.db),
+    models: new ModelsRepository(ctx.db),
+    drafts,
+    media: new MediaRepository(ctx.db),
+  };
+
+  const journeyService = new JourneyService({
+    catalog: new CatalogRepository(ctx.db),
+    journeys: new JourneyRepository(ctx.db),
+    operations: new OperationRepository(ctx.db),
+    usage,
+    engine: new DeterministicStoryEngine(),
+    newId: () => `id_${Math.random().toString(36).slice(2, 14)}`,
+    now: () => new Date(),
+  });
+
+  return buildApp({
+    config,
+    db: ctx.db,
+    accounts: new AccountRepository(ctx.db),
+    catalog: new CatalogRepository(ctx.db),
+    usage,
+    reports: new ReportRepository(ctx.db),
+    journeys: journeyService,
+    admin: { repository: admins, pages },
+  });
+}
+
+beforeEach(async () => {
+  ctx = await createTestDatabase();
+  resetLoginAttempts();
+  app = await build();
+  await admins.createAdmin({
+    username: ADMIN_USERNAME,
+    password: ADMIN_PASSWORD,
+    displayName: 'Operator',
+    role: 'owner',
+  });
+});
+
+afterEach(async () => {
+  await app.close();
+  await ctx.close();
+});
+
+function form(payload: Record<string, string | string[]>): string {
+  const parts: string[] = [];
+  for (const [key, value] of Object.entries(payload)) {
+    for (const item of Array.isArray(value) ? value : [value]) {
+      parts.push(`${encodeURIComponent(key)}=${encodeURIComponent(item)}`);
+    }
+  }
+  return parts.join('&');
+}
+
+async function login(): Promise<string> {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/admin/login',
+    payload: { username: ADMIN_USERNAME, password: ADMIN_PASSWORD },
+  });
+  expect(response.statusCode).toBe(302);
+  const match = /fayln_admin_session=([^;]+)/.exec(String(response.headers['set-cookie']));
+  return `${SESSION_COOKIE}=${match?.[1] ?? ''}`;
+}
+
+/** Mengunggah satu berkas dan mengembalikan id medianya. */
+async function upload(cookie: string, bytes: Buffer): Promise<string> {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/admin/media',
+    headers: { cookie, 'content-type': 'image/png' },
+    payload: bytes,
+  });
+  expect(response.statusCode).toBe(200);
+  return response.json().mediaId as string;
+}
+
+function post(cookie: string, url: string, payload: Record<string, string | string[]>) {
+  return app.inject({
+    method: 'POST',
+    url,
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    payload: form(payload),
+  });
+}
+
+/** Membuat draf lengkap sampai langkah 2 siap. */
+async function createDraftToStep2(cookie: string): Promise<string> {
+  const cover = await upload(cookie, png(600, 800, 'cover'));
+  const response = await post(cookie, '/admin/worlds-wizard/1', {
+    worldId: '',
+    title: 'Aula Kantor',
+    synopsis: 'Sinopsis uji.',
+    premise: 'Premis uji.',
+    coverMediaId: cover,
+    contentRating: 'all',
+    genres: ['drama'],
+    locales: ['id-ID'],
+    intent: 'next',
+  });
+  expect(response.statusCode).toBe(302);
+  const worldId = /\/admin\/worlds\/([^/]+)\/wizard\/2/.exec(String(response.headers.location))?.[1];
+  expect(worldId, `lokasi tidak seperti diharapkan: ${String(response.headers.location)}`).toBeTruthy();
+  return worldId!;
+}
+
+function location(response: { headers: Record<string, unknown> }): string {
+  return String(response.headers.location ?? '');
+}
+
+/* ------------------------------------------------------------------ */
+/* Langkah 1 — identitas dan sampul                                    */
+/* ------------------------------------------------------------------ */
+
+describe('langkah 1: identitas dan sampul', () => {
+  it('membuat draf dari formulir kosong dan menyimpannya sebagai draf', async () => {
+    const cookie = await login();
+
+    // Justru INI janji "draf dapat dilanjutkan sewaktu-waktu": formulir yang
+    // belum diisi apa pun tetap dapat ditinggalkan.
+    const response = await post(cookie, '/admin/worlds-wizard/1', {
+      worldId: '',
+      intent: 'draft',
+    });
+
+    expect(response.statusCode).toBe(302);
+    expect(location(response)).toContain('/admin/worlds?notice=draft');
+
+    const list = await drafts.listDrafts();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.worldVersion).toBe(1);
+    expect(list[0]?.title).toBe('');
+    expect(stepOfDraft(list[0]!)).toBe(1);
+  });
+
+  it('menolak "Lanjut" bila isian belum lengkap, tanpa memindahkan langkah', async () => {
+    const cookie = await login();
+    const cover = await upload(cookie, png(600, 800, 'cover-a'));
+
+    // Premis sengaja dikosongkan.
+    const response = await post(cookie, '/admin/worlds-wizard/1', {
+      worldId: '',
+      title: 'Judul',
+      synopsis: 'Sinopsis',
+      premise: '',
+      coverMediaId: cover,
+      genres: ['drama'],
+      locales: ['id-ID'],
+      intent: 'next',
+    });
+
+    expect(location(response)).toContain('/wizard/1?notice=incomplete');
+    const list = await drafts.listDrafts();
+    expect(list).toHaveLength(1);
+    // Isian yang sudah benar tetap tersimpan — menolak "Lanjut" bukan membuang.
+    // Ini janji "draf dapat dilanjutkan sewaktu-waktu", dan ia paling mudah
+    // dilanggar justru di jalur yang paling sering dilalui: validasi gagal.
+    expect(list[0]?.title).toBe('Judul');
+    expect(list[0]?.coverMediaId).toBe(cover);
+    expect(list[0]?.premise).toBe('');
+  });
+
+  it('menolak "Lanjut" bila sampul belum ada', async () => {
+    const cookie = await login();
+    const response = await post(cookie, '/admin/worlds-wizard/1', {
+      worldId: '',
+      title: 'Judul',
+      synopsis: 'Sinopsis',
+      premise: 'Premis',
+      coverMediaId: '',
+      genres: ['drama'],
+      locales: ['id-ID'],
+      intent: 'next',
+    });
+    expect(location(response)).toContain('/wizard/1?notice=incomplete');
+  });
+
+  it('mengabaikan id sampul yang tidak ada di basis data', async () => {
+    const cookie = await login();
+
+    // Berbentuk SHA-256 yang sah, tetapi tidak pernah diunggah. Kalau nilai ini
+    // lolos, katalog pemain menampilkan gambar rusak — kegagalan yang baru
+    // terlihat jauh dari tempat penyebabnya.
+    const ghost = 'a'.repeat(64);
+    const response = await post(cookie, '/admin/worlds-wizard/1', {
+      worldId: '',
+      title: 'Judul',
+      synopsis: 'Sinopsis',
+      premise: 'Premis',
+      coverMediaId: ghost,
+      genres: ['drama'],
+      locales: ['id-ID'],
+      intent: 'next',
+    });
+
+    expect(location(response)).toContain('/wizard/1?notice=incomplete');
+    const list = await drafts.listDrafts();
+    expect(list[0]?.coverMediaId).toBeNull();
+
+    const worldId = list[0]!.worldId;
+    const { rows } = await ctx.db.query<{ total: number }>(
+      `SELECT count(*)::int AS total FROM world_assets WHERE world_id = $1 AND kind = 'cover'`,
+      [worldId],
+    );
+    expect(rows[0]?.total).toBe(0);
+  });
+
+  it('menyimpan genre dan lokale yang sah saja', async () => {
+    const cookie = await login();
+    const cover = await upload(cookie, png(600, 800, 'cover-b'));
+
+    await post(cookie, '/admin/worlds-wizard/1', {
+      worldId: '',
+      title: 'Judul',
+      synopsis: 'Sinopsis',
+      premise: 'Premis',
+      coverMediaId: cover,
+      contentRating: '13_plus',
+      // `bukan-genre` tidak ada dalam daftar; ia harus hilang, bukan tersimpan.
+      genres: ['drama', 'bukan-genre'],
+      locales: ['id-ID'],
+      intent: 'next',
+    });
+
+    const draft = (await drafts.listDrafts())[0]!;
+    expect(draft.genres).toEqual(['drama']);
+    expect(draft.locales).toEqual(['id-ID']);
+    expect(draft.contentRating).toBe('13_plus');
+  });
+
+  it('melanjutkan draf yang sama, bukan membuat draf baru', async () => {
+    const cookie = await login();
+    const cover = await upload(cookie, png(600, 800, 'cover-c'));
+
+    const first = await post(cookie, '/admin/worlds-wizard/1', {
+      worldId: '',
+      intent: 'draft',
+    });
+    const worldId = (await drafts.listDrafts())[0]!.worldId;
+
+    const second = await post(cookie, '/admin/worlds-wizard/1', {
+      worldId,
+      title: 'Judul',
+      synopsis: 'Sinopsis',
+      premise: 'Premis',
+      coverMediaId: cover,
+      genres: ['drama'],
+      locales: ['id-ID'],
+      intent: 'next',
+    });
+
+    expect(first.statusCode).toBe(302);
+    expect(location(second)).toContain(`/admin/worlds/${worldId}/wizard/2`);
+    expect(await drafts.listDrafts()).toHaveLength(1);
+  });
+
+  it('menolak melanjutkan dunia yang versi terbarunya bukan draf', async () => {
+    const cookie = await login();
+
+    // Dunia dari jalur lama: langsung dibuat dengan status `published`.
+    const created = await post(cookie, '/admin/worlds', {
+      worldId: '',
+      title: 'Dunia Terbit',
+      synopsis: 'S',
+      premise: 'P',
+      coverAssetId: 'a_cover_lentera',
+      status: 'published',
+      contentRating: 'all',
+      genres: ['drama'],
+      locales: ['id-ID'],
+    });
+    const worldId = /\/admin\/worlds\/([^/?]+)/.exec(location(created))?.[1] ?? '';
+    expect(worldId).not.toBe('');
+
+    const hijack = await post(cookie, '/admin/worlds-wizard/1', {
+      worldId,
+      title: 'Dibajak',
+      intent: 'draft',
+    });
+
+    expect(location(hijack)).toContain('notice=not-draft');
+
+    // Judul versi terbit tidak boleh tersentuh.
+    const { rows } = await ctx.db.query<{ title: string }>(
+      'SELECT title FROM world_versions WHERE world_id = $1',
+      [worldId],
+    );
+    expect(rows.map((row) => row.title)).toEqual(['Dunia Terbit']);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Langkah 2 — latar belakang                                          */
+/* ------------------------------------------------------------------ */
+
+describe('langkah 2: latar belakang', () => {
+  it('menambah beberapa latar belakang sekaligus dan membacanya kembali', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const a = await upload(cookie, png(1280, 720, 'bg-1'));
+    const b = await upload(cookie, png(1280, 720, 'bg-2'));
+
+    const response = await post(cookie, '/admin/worlds-wizard/2/backgrounds', {
+      worldId,
+      mediaId: [a, b],
+    });
+    expect(location(response)).toContain('/wizard/2?notice=created');
+
+    const draft = await drafts.findDraft(worldId);
+    expect(draft?.backgroundCount).toBe(2);
+
+    const rows = await drafts.listBackgrounds(worldId, 1);
+    expect(rows.map((row) => row.mediaId)).toEqual([a, b]);
+    // Urutan ditentukan `position`, bukan urutan penyisipan yang kebetulan.
+    expect(rows.map((row) => row.position)).toEqual([1, 2]);
+    expect(rows.every((row) => row.uri === `/v1/media/${row.mediaId}`)).toBe(true);
+  });
+
+  it('membaca dimensi dari basis data, bukan dari kiriman klien', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+    const mediaId = await upload(cookie, png(1280, 720, 'bg-dimensi'));
+
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId });
+
+    const [row] = await drafts.listBackgrounds(worldId, 1);
+    // Angka-angka ini tidak pernah dikirim oleh permintaan di atas: server
+    // mengambilnya dari `media_blobs`. Kalau klien boleh mengarangnya, titik
+    // fokus akan dihitung dari kanvas yang salah.
+    expect(row?.width).toBe(1280);
+    expect(row?.height).toBe(720);
+  });
+
+  it('mengabaikan id media yang tidak ada, tanpa membatalkan sisanya', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+    const real = await upload(cookie, png(1280, 720, 'bg-real'));
+
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', {
+      worldId,
+      mediaId: ['a'.repeat(64), 'bukan-hash', real],
+    });
+
+    const rows = await drafts.listBackgrounds(worldId, 1);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.mediaId).toBe(real);
+  });
+
+  it('menyimpan keterangan, usage, dan taksiran peluang bertemu', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+    const mediaId = await upload(cookie, png(1280, 720, 'bg-edit'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId });
+    const assetId = (await drafts.listBackgrounds(worldId, 1))[0]!.assetId;
+
+    await post(cookie, '/admin/worlds-wizard/2/background', {
+      worldId,
+      assetId,
+      description: 'Aula kantor',
+      usageNote: 'Banyak orang lalu lalang, peluang bertemu NPC lain tinggi.',
+      encounterLikelihood: 'high',
+      blurStrength: '12',
+      focalX: '0.25',
+      focalY: '0.75',
+    });
+
+    const [row] = await drafts.listBackgrounds(worldId, 1);
+    expect(row?.description).toBe('Aula kantor');
+    expect(row?.usageNote).toContain('Banyak orang lalu lalang');
+    expect(row?.encounterLikelihood).toBe('high');
+    expect(row?.blurStrength).toBe(12);
+    expect(row?.focalX).toBeCloseTo(0.25);
+    expect(row?.focalY).toBeCloseTo(0.75);
+  });
+
+  it('menjepit blur ke 0..100 dan titik fokus ke 0..1', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+    const mediaId = await upload(cookie, png(1280, 720, 'bg-clamp'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId });
+    const assetId = (await drafts.listBackgrounds(worldId, 1))[0]!.assetId;
+
+    await post(cookie, '/admin/worlds-wizard/2/background', {
+      worldId,
+      assetId,
+      blurStrength: '999',
+      focalX: '-3',
+      focalY: '7',
+    });
+
+    const [row] = await drafts.listBackgrounds(worldId, 1);
+    // Nilai di luar rentang disimpan sebagai batasnya, bukan sebagai angka liar
+    // yang kemudian dipakai CSS dan RN dengan tafsiran berbeda.
+    expect(row?.blurStrength).toBe(100);
+    expect(row?.focalX).toBe(0);
+    expect(row?.focalY).toBe(1);
+  });
+
+  it('menyimpan taksiran peluang yang tidak dikenal sebagai kosong', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+    const mediaId = await upload(cookie, png(1280, 720, 'bg-lik'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId });
+    const assetId = (await drafts.listBackgrounds(worldId, 1))[0]!.assetId;
+
+    await post(cookie, '/admin/worlds-wizard/2/background', {
+      worldId,
+      assetId,
+      encounterLikelihood: 'sangat-tinggi',
+    });
+
+    const [row] = await drafts.listBackgrounds(worldId, 1);
+    expect(row?.encounterLikelihood).toBeNull();
+  });
+
+  it('menggeser urutan latar belakang dan menghapusnya', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+    const a = await upload(cookie, png(1280, 720, 'bg-ord-1'));
+    const b = await upload(cookie, png(1280, 720, 'bg-ord-2'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId: [a, b] });
+
+    const before = await drafts.listBackgrounds(worldId, 1);
+    const second = before[1]!.assetId;
+
+    await post(cookie, '/admin/worlds-wizard/2/background/move', {
+      worldId,
+      assetId: second,
+      direction: 'up',
+    });
+
+    const after = await drafts.listBackgrounds(worldId, 1);
+    expect(after.map((row) => row.mediaId)).toEqual([b, a]);
+
+    await post(cookie, '/admin/worlds-wizard/2/background/delete', {
+      worldId,
+      assetId: second,
+    });
+
+    const remaining = await drafts.listBackgrounds(worldId, 1);
+    expect(remaining.map((row) => row.mediaId)).toEqual([a]);
+
+    // Berkas medianya TIDAK ikut terhapus: alamatnya berbasis isi dan mungkin
+    // masih dipakai dunia lain.
+    const { rows } = await ctx.db.query<{ total: number }>(
+      'SELECT count(*)::int AS total FROM media_blobs',
+    );
+    expect(rows[0]?.total).toBe(3); // sampul + dua latar belakang
+  });
+
+  it(`menolak latar belakang ke-${String(MAX_BACKGROUNDS + 1)} dan berhenti tepat di batas`, async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const ids: string[] = [];
+    for (let index = 0; index < MAX_BACKGROUNDS + 1; index += 1) {
+      ids.push(await upload(cookie, png(1280, 720, `bg-cap-${String(index)}`)));
+    }
+
+    // Dikirim sebagai SATU permintaan berisi 51 berkas: batas harus ditegakkan
+    // per penambahan, di dalam transaksi — bukan dengan menghitung di muka.
+    const response = await post(cookie, '/admin/worlds-wizard/2/backgrounds', {
+      worldId,
+      mediaId: ids,
+    });
+
+    expect(location(response)).toContain('notice=limit');
+    expect(await drafts.listBackgrounds(worldId, 1)).toHaveLength(MAX_BACKGROUNDS);
+
+    // Percobaan berikutnya tetap ditolak, bukan diterima karena hitungannya
+    // kebetulan sudah kembali di bawah batas.
+    const again = await post(cookie, '/admin/worlds-wizard/2/backgrounds', {
+      worldId,
+      mediaId: [ids[0]!],
+    });
+    expect(location(again)).toContain('notice=limit');
+    expect(await drafts.listBackgrounds(worldId, 1)).toHaveLength(MAX_BACKGROUNDS);
+  });
+
+  it('menolak "Lanjut" bila belum ada satu pun latar belakang', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const response = await post(cookie, '/admin/worlds-wizard/2', { worldId, intent: 'next' });
+    expect(location(response)).toContain('/wizard/2?notice=incomplete');
+  });
+
+  it('mengizinkan "Simpan & keluar" tanpa latar belakang', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const response = await post(cookie, '/admin/worlds-wizard/2', { worldId, intent: 'draft' });
+    expect(location(response)).toContain('/admin/worlds?notice=draft');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Langkah 3 — karakter                                                */
+/* ------------------------------------------------------------------ */
+
+describe('langkah 3: karakter dan ekspresi', () => {
+  async function step3(cookie: string): Promise<string> {
+    const worldId = await createDraftToStep2(cookie);
+    const bg = await upload(cookie, png(1280, 720, 'bg-npc'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId: bg });
+    return worldId;
+  }
+
+  it('menyimpan NPC beserta sifat, relasi, dan ekspresinya', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    const base = await upload(cookie, png(512, 768, 'npc-base'));
+    const netral = await upload(cookie, png(512, 768, 'npc-netral'));
+    const marah = await upload(cookie, png(512, 768, 'npc-marah'));
+
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Elysia',
+      role: 'Atasan',
+      traits: 'dingin, teliti ,  ambisius',
+      initialRelation: 'dekat',
+      publicBackstory: 'Atasan yang tidak pernah memuji.',
+      baseMediaId: base,
+      expression: ['netral', 'marah'],
+      expressionUsage: ['Dipakai saat berbicara biasa.', 'Dipakai saat ia marah.'],
+      expressionMedia: [netral, marah],
+    });
+
+    const npcs = await drafts.listNpcs(worldId, 1);
+    expect(npcs).toHaveLength(1);
+
+    const npc = npcs[0]!;
+    expect(npc.name).toBe('Elysia');
+    expect(npc.role).toBe('Atasan');
+    // Spasi di sekitar koma dibuang; entri kosong dibuang.
+    expect(npc.traits).toEqual(['dingin', 'teliti', 'ambisius']);
+    expect(npc.initialRelation).toBe('dekat');
+    // Gambar dasar tersimpan sebagai ekspresi `dasar` di urutan PERTAMA, jadi
+    // dialah potret bawaan — dan karena ia ekspresi yang terdaftar, mesin cerita
+    // dapat memintanya. Aset tanpa nama ekspresi akan tersaring dari manifest
+    // dan menjadi data mati.
+    expect(npc.expressions.map((item) => item.expression)).toEqual(['dasar', 'netral', 'marah']);
+    expect(npc.baseMediaId).toBe(base);
+    expect(npc.expressions.map((item) => item.mediaId)).toEqual([base, netral, marah]);
+    expect(npc.expressions[1]?.usageNote).toBe('Dipakai saat berbicara biasa.');
+  });
+
+  it('menjadikan potret ekspresi PERTAMA sebagai potret bawaan', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    const pertama = await upload(cookie, png(512, 768, 'urut-1'));
+    const kedua = await upload(cookie, png(512, 768, 'urut-2'));
+
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Leo',
+      traits: '',
+      initialRelation: 'normal',
+      expression: ['tersenyum', 'kesal'],
+      expressionMedia: [pertama, kedua],
+    });
+
+    const { rows } = await ctx.db.query<{ npc_id: string; default_portrait_asset_id: string }>(
+      'SELECT npc_id, default_portrait_asset_id FROM world_characters WHERE world_id = $1',
+      [worldId],
+    );
+    const npcId = rows[0]!.npc_id;
+
+    // Potret bawaan harus menunjuk aset ekspresi pertama — bukan yang terakhir,
+    // dan bukan id yang dikarang di tempat lain.
+    expect(rows[0]?.default_portrait_asset_id).toBe(`p_${npcId}_tersenyum`);
+
+    const { rows: assets } = await ctx.db.query<{ asset_id: string }>(
+      `SELECT asset_id FROM world_assets WHERE world_id = $1 AND kind = 'portrait' ORDER BY position`,
+      [worldId],
+    );
+    expect(assets.map((row) => row.asset_id)).toEqual([
+      `p_${npcId}_tersenyum`,
+      `p_${npcId}_kesal`,
+    ]);
+  });
+
+  it('menjadikan gambar dasar sebagai potret bawaan, tanpa membuang berkasnya', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    const dasar = await upload(cookie, png(512, 768, 'dasar-saja'));
+
+    // Tanpa satu pun ekspresi bernama. Sebelum perbaikan, berkas ini diterima
+    // lalu dibuang tanpa jejak: tidak ada kolom untuknya, dan
+    // `default_portrait_asset_id` hanya dapat menunjuk aset potret.
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Hanya Dasar',
+      initialRelation: 'normal',
+      baseMediaId: dasar,
+    });
+
+    const npcs = await drafts.listNpcs(worldId, 1);
+    expect(npcs[0]?.baseMediaId).toBe(dasar);
+    expect(npcs[0]?.expressions.map((item) => item.expression)).toEqual(['dasar']);
+
+    // Dan karakter ini terhitung PUNYA potret, jadi tidak menahan penerbitan.
+    expect(await drafts.countNpcsWithoutPortrait(worldId, 1)).toBe(0);
+  });
+
+  it('mengganti ekspresi bernama `dasar` dengan gambar dasar, bukan menduplikasinya', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    const dasar = await upload(cookie, png(512, 768, 'dasar-a'));
+    const lain = await upload(cookie, png(512, 768, 'dasar-b'));
+
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Bentrok Nama',
+      baseMediaId: dasar,
+      // Pengguna menamai sendiri salah satu ekspresinya `dasar`.
+      expression: ['dasar', 'netral'],
+      expressionMedia: [lain, lain],
+    });
+
+    const npc = (await drafts.listNpcs(worldId, 1))[0]!;
+    // Hanya satu entri `dasar`, dan yang menang adalah gambar dasar — dua aset
+    // berid sama tidak dapat hidup berdampingan.
+    expect(npc.expressions.map((item) => item.expression)).toEqual(['dasar', 'netral']);
+    expect(npc.expressions[0]?.mediaId).toBe(dasar);
+  });
+
+  it('membuang ekspresi yang gambarnya tidak ada, bukan menyimpan namanya saja', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Tanpa Gambar',
+      traits: '',
+      initialRelation: 'normal',
+      expression: ['netral', 'sedih'],
+      // Tidak satu pun pernah diunggah; yang pertama berbentuk hash yang sah
+      // tetapi tidak ada isinya, yang kedua bukan hash sama sekali.
+      expressionMedia: ['a'.repeat(64), 'bukan-hash'],
+    });
+
+    const npcs = await drafts.listNpcs(worldId, 1);
+    expect(npcs).toHaveLength(1);
+    expect(npcs[0]?.expressions).toEqual([]);
+
+    // Nama ekspresi pun tidak disimpan. Kalau ia disimpan, ia akan terlihat oleh
+    // kontrak katalog pemain sebagai ekspresi yang dapat dipilih AI — padahal
+    // tidak ada gambar untuk dirender. Dan karena panel menurunkan daftar
+    // ekspresi dari baris aset, nama itu juga tidak akan pernah tampil di sini
+    // lalu hilang senyap pada penyimpanan berikutnya.
+    const { rows: names } = await ctx.db.query<{ total: number }>(
+      'SELECT count(*)::int AS total FROM world_character_expressions WHERE world_id = $1',
+      [worldId],
+    );
+    expect(names[0]?.total).toBe(0);
+
+    const { rows: assets } = await ctx.db.query<{ total: number }>(
+      `SELECT count(*)::int AS total FROM world_assets WHERE world_id = $1 AND kind = 'portrait'`,
+      [worldId],
+    );
+    expect(assets[0]?.total).toBe(0);
+  });
+
+  it('menjatuhkan relasi yang tidak dikenal ke `normal`', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Relasi Aneh',
+      initialRelation: 'musuh-bebuyutan',
+    });
+
+    const npcs = await drafts.listNpcs(worldId, 1);
+    expect(npcs[0]?.initialRelation).toBe('normal');
+  });
+
+  it('menyunting NPC tidak menumpuk ekspresi lama', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    const satu = await upload(cookie, png(512, 768, 'edit-1'));
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Bisa Berubah',
+      expression: ['netral', 'marah'],
+      expressionMedia: [satu, satu],
+    });
+
+    const npcId = (await drafts.listNpcs(worldId, 1))[0]!.npcId;
+
+    // Daftar ekspresi diganti seluruhnya: yang hilang benar-benar hilang.
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId,
+      name: 'Bisa Berubah',
+      expression: ['tercengang'],
+      expressionMedia: [satu],
+    });
+
+    const npcs = await drafts.listNpcs(worldId, 1);
+    expect(npcs).toHaveLength(1);
+    expect(npcs[0]?.expressions.map((item) => item.expression)).toEqual(['tercengang']);
+
+    const { rows } = await ctx.db.query<{ total: number }>(
+      `SELECT count(*)::int AS total FROM world_assets WHERE world_id = $1 AND kind = 'portrait'`,
+      [worldId],
+    );
+    expect(rows[0]?.total).toBe(1);
+  });
+
+  it('menghapus NPC beserta potretnya', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    const gambar = await upload(cookie, png(512, 768, 'hapus-1'));
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Akan Hilang',
+      expression: ['netral'],
+      expressionMedia: [gambar],
+    });
+
+    const npcId = (await drafts.listNpcs(worldId, 1))[0]!.npcId;
+    await post(cookie, '/admin/worlds-wizard/3/npc/delete', { worldId, npcId });
+
+    expect(await drafts.listNpcs(worldId, 1)).toHaveLength(0);
+
+    // Potret tidak terhapus lewat kunci asing — ia harus dibuang secara eksplisit.
+    const { rows } = await ctx.db.query<{ total: number }>(
+      `SELECT count(*)::int AS total FROM world_assets WHERE world_id = $1 AND kind = 'portrait'`,
+      [worldId],
+    );
+    expect(rows[0]?.total).toBe(0);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Terbit                                                              */
+/* ------------------------------------------------------------------ */
+
+describe('penerbitan', () => {
+  it('menolak terbit tanpa latar belakang atau tanpa NPC', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    // Tanpa latar belakang sama sekali.
+    const kosong = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+    expect(location(kosong)).toContain('/wizard/3?notice=incomplete');
+
+    // Ada latar belakang, belum ada NPC.
+    const bg = await upload(cookie, png(1280, 720, 'pub-bg'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId: bg });
+
+    const tanpaNpc = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+    expect(location(tanpaNpc)).toContain('/wizard/3?notice=incomplete');
+
+    const { rows } = await ctx.db.query<{ status: string }>(
+      'SELECT status FROM world_versions WHERE world_id = $1',
+      [worldId],
+    );
+    expect(rows[0]?.status).toBe('draft');
+  });
+
+  it('menolak terbit bila ada karakter yang belum punya gambar ekspresi', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const bg = await upload(cookie, png(1280, 720, 'faceless-bg'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId: bg });
+
+    // Karakter tanpa satu pun gambar ekspresi tetap boleh disimpan sebagai draf
+    // — wizard ini memang mendukung pekerjaan setengah jadi. Yang ditahan adalah
+    // penerbitannya: pemain tidak boleh melihat karakter tanpa wajah.
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Belum Ada Wajah',
+      expression: [],
+    });
+    expect(await drafts.countNpcsWithoutPortrait(worldId, 1)).toBe(1);
+
+    const response = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+    expect(location(response)).toContain('/wizard/3?notice=incomplete');
+
+    const { rows } = await ctx.db.query<{ status: string }>(
+      'SELECT status FROM world_versions WHERE world_id = $1',
+      [worldId],
+    );
+    expect(rows[0]?.status).toBe('draft');
+
+    // Setelah gambar ekspresinya diunggah, penerbitan berhasil.
+    const wajah = await upload(cookie, png(512, 768, 'faceless-npc'));
+    const npcId = (await drafts.listNpcs(worldId, 1))[0]!.npcId;
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId,
+      name: 'Belum Ada Wajah',
+      expression: ['netral'],
+      expressionMedia: [wajah],
+    });
+
+    expect(await drafts.countNpcsWithoutPortrait(worldId, 1)).toBe(0);
+    const published = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+    expect(location(published)).toContain('notice=published');
+  });
+
+  it('menerbitkan draf dan mencatat tanggal terbitnya', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const bg = await upload(cookie, png(1280, 720, 'pub-bg-2'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId: bg });
+
+    const npc = await upload(cookie, png(512, 768, 'pub-npc'));
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Elysia',
+      expression: ['netral'],
+      expressionMedia: [npc],
+    });
+
+    const response = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+    expect(location(response)).toContain('/admin/worlds?notice=published');
+
+    const { rows } = await ctx.db.query<{ status: string; published_at: unknown }>(
+      'SELECT status, published_at FROM world_versions WHERE world_id = $1',
+      [worldId],
+    );
+    expect(rows[0]?.status).toBe('published');
+    expect(rows[0]?.published_at).not.toBeNull();
+
+    // Tidak ada versi kedua: penerbitan mengubah status, bukan menyalin baris.
+    const { rows: versions } = await ctx.db.query<{ total: number }>(
+      'SELECT count(*)::int AS total FROM world_versions WHERE world_id = $1',
+      [worldId],
+    );
+    expect(versions[0]?.total).toBe(1);
+
+    // Dan draf itu tidak lagi dapat dilanjutkan lewat wizard.
+    expect(await drafts.findDraft(worldId)).toBeNull();
+  });
+
+  it('tidak lagi menyunting di tempat setelah terbit', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const bg = await upload(cookie, png(1280, 720, 'pub-bg-3'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId: bg });
+    const npc = await upload(cookie, png(512, 768, 'pub-npc-3'));
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Elysia',
+      expression: ['netral'],
+      expressionMedia: [npc],
+    });
+    await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+
+    const judulSebelum = (await ctx.db.query<{ title: string }>(
+      'SELECT title FROM world_versions WHERE world_id = $1',
+      [worldId],
+    )).rows[0]!.title;
+
+    // Seluruh jalur penyuntingan draf harus menolak, bukan diam-diam berhasil.
+    const identity = await post(cookie, '/admin/worlds-wizard/1', {
+      worldId,
+      title: 'Judul Baru',
+      intent: 'draft',
+    });
+    expect(location(identity)).toContain('notice=not-draft');
+
+    const background = await post(cookie, '/admin/worlds-wizard/2/backgrounds', {
+      worldId,
+      mediaId: [bg],
+    });
+    expect(location(background)).toContain('notice=not-draft');
+
+    const publish = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+    expect(location(publish)).toContain('notice=not-draft');
+
+    const { rows } = await ctx.db.query<{ title: string; status: string }>(
+      'SELECT title, status FROM world_versions WHERE world_id = $1',
+      [worldId],
+    );
+    expect(rows[0]?.title).toBe(judulSebelum);
+    expect(rows[0]?.status).toBe('published');
+  });
+
+  it('mencatat penyimpanan draf dan penerbitan di audit', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const bg = await upload(cookie, png(1280, 720, 'audit-bg'));
+    await post(cookie, '/admin/worlds-wizard/2/backgrounds', { worldId, mediaId: bg });
+    const npc = await upload(cookie, png(512, 768, 'audit-npc'));
+    await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      npcId: '',
+      name: 'Elysia',
+      expression: ['netral'],
+      expressionMedia: [npc],
+    });
+    await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+
+    for (const action of [
+      'world.draft.save',
+      'world.background.add',
+      'world.npc.create',
+      'world.publish',
+    ]) {
+      const entries = await admins.listAudit(50, { action });
+      expect(entries.length, `audit untuk ${action}`).toBeGreaterThan(0);
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+/* Perlindungan dan render                                             */
+/* ------------------------------------------------------------------ */
+
+describe('perlindungan dan render halaman wizard', () => {
+  const WIZARD_PAGES = [
+    '/admin/worlds-wizard',
+    '/admin/worlds/w_apa-saja/wizard/1',
+    '/admin/worlds/w_apa-saja/wizard/2',
+    '/admin/worlds/w_apa-saja/wizard/3',
+  ];
+
+  it('mengalihkan seluruh halaman wizard ke halaman masuk tanpa sesi', async () => {
+    for (const url of WIZARD_PAGES) {
+      const response = await app.inject({ method: 'GET', url });
+      expect(response.statusCode, `${url} seharusnya dialihkan`).toBe(302);
+      expect(location(response)).toContain('/admin/login');
+    }
+  });
+
+  it('menolak seluruh tindakan wizard tanpa sesi', async () => {
+    const mutations: [string, Record<string, string>][] = [
+      ['/admin/worlds-wizard/1', { worldId: '', intent: 'draft' }],
+      ['/admin/worlds-wizard/2', { worldId: 'w_x', intent: 'draft' }],
+      ['/admin/worlds-wizard/2/backgrounds', { worldId: 'w_x', mediaId: 'a'.repeat(64) }],
+      ['/admin/worlds-wizard/2/background', { worldId: 'w_x', assetId: 'bg_x' }],
+      ['/admin/worlds-wizard/3', { worldId: 'w_x', intent: 'next' }],
+      ['/admin/worlds-wizard/3/npc', { worldId: 'w_x', name: 'X' }],
+      ['/admin/worlds-wizard/3/npc/delete', { worldId: 'w_x', npcId: 'npc_x' }],
+    ];
+
+    for (const [url, payload] of mutations) {
+      const response = await app.inject({
+        method: 'POST',
+        url,
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        payload: form(payload),
+      });
+      expect(response.statusCode, `${url} seharusnya dialihkan`).toBe(302);
+      expect(location(response)).toContain('/admin/login');
+    }
+  });
+
+  it('menyusun halaman wizard sebagai markup, bukan teks yang ter-escape', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+
+    const page = await app.inject({
+      method: 'GET',
+      url: `/admin/worlds/${worldId}/wizard/2`,
+      headers: { cookie },
+    });
+    const body = page.body;
+
+    // Kalau `html()` menerima potongan yang sudah di-`join`, tabelnya tampil
+    // sebagai `&lt;td&gt;` — tanpa galat, tanpa tag hidup, dan uji XSS yang
+    // hanya mencari "tidak ada skrip" tetap lolos. Karena itu diperiksa di sini.
+    for (const broken of ['&lt;table', '&lt;td&gt;', '&lt;li&gt;', '&lt;input']) {
+      expect(body, `markup tampil sebagai teks: ${broken}`).not.toContain(broken);
+    }
+    expect(body).toContain('Latar belakang');
+    expect(body).toContain('type="file"');
+  });
+
+  it('meng-escape judul draf sehingga tidak dapat menyuntikkan skrip', async () => {
+    const cookie = await login();
+    const cover = await upload(cookie, png(600, 800, 'xss-cover'));
+
+    await post(cookie, '/admin/worlds-wizard/1', {
+      worldId: '',
+      title: '<script>alert(1)</script>',
+      synopsis: 'Sinopsis',
+      premise: 'Premis',
+      coverMediaId: cover,
+      genres: ['drama'],
+      locales: ['id-ID'],
+      intent: 'draft',
+    });
+
+    const page = await app.inject({
+      method: 'GET',
+      url: '/admin/worlds',
+      headers: { cookie },
+    });
+
+    expect(page.body).not.toContain('<script>alert(1)</script>');
+    expect(page.body).toContain('&lt;script&gt;alert(1)&lt;/script&gt;');
+  });
+});

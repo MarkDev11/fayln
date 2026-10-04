@@ -21,8 +21,10 @@ import { defaultAssetsRoot, registerAssetRoutes } from './routes/assets';
 import { registerCatalogRoutes } from './routes/catalog';
 import { registerHealthRoutes } from './routes/health';
 import { registerJourneyRoutes } from './routes/journeys';
+import { registerMediaRoutes } from './routes/media';
 import { registerUsageAndReportRoutes } from './routes/usage';
 import type { CatalogRepository } from './repositories/catalogRepository';
+import { MediaRepository } from './repositories/mediaRepository';
 import type { ReportRepository } from './repositories/reportRepository';
 import type { UsageRepository } from './repositories/usageRepository';
 import type { JourneyService } from './services/journeyService';
@@ -42,6 +44,11 @@ export type AppDeps = {
    */
   accounts: { ensure: (accountId: string) => Promise<void> };
   catalog: CatalogRepository;
+  /**
+   * Penyimpanan berkas gambar unggahan. Opsional: bawaannya dibangun dari `db`,
+   * sehingga pengujian yang tidak menyentuh unggahan tidak perlu menyiapkannya.
+   */
+  media?: MediaRepository;
   usage: UsageRepository;
   reports: ReportRepository;
   journeys: JourneyService;
@@ -205,6 +212,13 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     maxAgeSec: 86_400,
   });
 
+  // Berkas unggahan dibaca dari basis data, bukan dari disk. Kontainer blitz
+  // bersifat sementara: berkas yang ditulis saat berjalan hilang begitu aplikasi
+  // dibangun ulang atau bangun kembali. Karena alamatnya memuat hash isi, isi di
+  // balik satu alamat tidak akan pernah berubah — temboloknya boleh abadi.
+  const media = deps.media ?? new MediaRepository(deps.db);
+  registerMediaRoutes(app, { media, maxAgeSec: 31_536_000 });
+
   // Akun diadakan sebelum route mana pun berjalan. Tanpa ini, perangkat baru
   // yang mengirim ID buatannya sendiri akan ditolak kunci asing saat membuat
   // perjalanan pertama (terlihat sebagai HTTP 500).
@@ -241,6 +255,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     registerAdminRoutes(app, {
       admins: deps.admin.repository,
       pages: deps.admin.pages,
+      media,
       isProduction: deps.config.isProduction,
     });
   }
