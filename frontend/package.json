@@ -17,6 +17,7 @@
     "expo": "~57.0.7",
     "expo-constants": "~57.0.6",
     "expo-image": "~57.0.1",
+    "expo-linear-gradient": "~57.0.2",
     "expo-linking": "~57.0.3",
     "expo-router": "~57.0.7",
     "expo-secure-store": "~57.0.4",
@@ -45,6 +46,7 @@
     "setupFilesAfterEnv": [
       "<rootDir>/jest.setup.js"
     ],
+    "testTimeout": 20000,
     "transformIgnorePatterns": [
       "node_modules/(?!((jest-)?react-native|@react-native(-community)?)|expo(nent)?|@expo(nent)?/.*|@expo-google-fonts/.*|react-navigation|@react-navigation/.*|@sentry/react-native|native-base|react-native-svg)"
     ]

@@ -31,7 +31,15 @@ export type WorldCatalogItem = {
   status: WorldStatus;
   contentRating: ContentRating;
   supportedResponseLocales: ResponseLocale[];
-  updatedAt: string;
+  /**
+   * Kapan versi terbit ini masuk katalog.
+   *
+   * Sebelumnya bernama `updatedAt`, padahal isinya tanggal terbit. Nama lama itu
+   * membuat rail "Baru Diperbarui" menyebut dunia yang belum pernah disunting
+   * sebagai "baru diperbarui". Rail "Terbaru Dirilis" memakai bidang ini dengan
+   * sebutan yang benar.
+   */
+  publishedAt: string;
 };
 
 export type NPCPublicDTO = {

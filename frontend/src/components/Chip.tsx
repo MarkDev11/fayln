@@ -1,6 +1,7 @@
 import React from 'react';
-import { Pressable, StyleSheet, View } from 'react-native';
+import { Pressable, StyleSheet, View, type Insets } from 'react-native';
 
+import { Icon } from './Icon';
 import { Text } from './Text';
 
 import { useTheme } from '@/theme/ThemeProvider';
@@ -12,6 +13,21 @@ export type ChipProps = {
   onPress?: () => void;
   /** Chip nonaktif hanya menampilkan label, tanpa aksi. */
   readOnly?: boolean;
+  /**
+   * Varian permukaan Beranda: radius 8, lebar minimum 48, dan garis 1px
+   * (docs/05 §8.3). Nilai default mempertahankan tampilan lama di luar Beranda,
+   * karena penyelarasan radius se-aplikasi sengaja ditunda (D1).
+   */
+  tile?: boolean;
+  /**
+   * Tanda centang pada chip aktif. Keadaan terpilih tidak boleh hanya ditandai
+   * warna (NFR-01): tebal + latar + tepi + ikon.
+   */
+  check?: boolean;
+  /** Baris ringkas setinggi 20 untuk lencana di dalam kartu. */
+  dense?: boolean;
+  /** Perluas area sentuh tanpa mengubah ukuran visual. */
+  hitSlop?: number | Insets | null;
   testID?: string;
 };
 
@@ -19,20 +35,38 @@ export type ChipProps = {
  * Chip status atau filter.
  * Status aktif ditandai teks tebal + garis tepi, bukan hanya warna (NFR-01).
  */
-export function Chip({ label, selected = false, onPress, readOnly = false, testID }: ChipProps) {
+export function Chip({
+  label,
+  selected = false,
+  onPress,
+  readOnly = false,
+  tile = false,
+  check = false,
+  dense = false,
+  hitSlop,
+  testID,
+}: ChipProps) {
   const { colors } = useTheme();
 
   const body = (
     <View
       style={[
         styles.chip,
-        {
-          backgroundColor: selected ? colors.bgMuted : 'transparent',
-          borderColor: selected ? colors.accent : colors.line,
-        },
+        // Tanpa garis tepi: keadaan dibedakan oleh isian, bukan bingkai.
+        // Tidak terpilih = permukaan lembut; terpilih = isian aksen penuh.
+        { backgroundColor: selected ? colors.accent : colors.bgMuted },
+        tile ? styles.tile : null,
+        dense ? styles.dense : null,
       ]}
     >
-      <Text variant="caption" weight={selected ? '700' : '500'} tone={selected ? 'accent' : 'secondary'}>
+      {selected && check ? (
+        <Icon name="check" size={12} color={colors.inkInverse} />
+      ) : null}
+      <Text
+        variant="caption"
+        weight={selected ? '700' : '500'}
+        tone={selected ? 'inverse' : 'secondary'}
+      >
         {label}
       </Text>
     </View>
@@ -49,7 +83,7 @@ export function Chip({ label, selected = false, onPress, readOnly = false, testI
       accessibilityRole="button"
       accessibilityState={{ selected }}
       accessibilityLabel={label}
-      hitSlop={6}
+      hitSlop={hitSlop === undefined ? 6 : hitSlop}
     >
       {body}
     </Pressable>
@@ -61,8 +95,17 @@ const styles = StyleSheet.create({
     minHeight: 32,
     paddingHorizontal: space.md,
     borderRadius: radius.chip,
-    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
+    flexDirection: 'row',
+    gap: space.xs,
+  },
+  tile: {
+    minWidth: 48,
+    borderRadius: radius.tile,
+  },
+  dense: {
+    minHeight: 20,
+    paddingHorizontal: space.sm,
   },
 });

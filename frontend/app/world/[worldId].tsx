@@ -17,6 +17,7 @@ import { useGateway } from '@/data/GatewayProvider';
 import { StoryGatewayError } from '@/data/gateway';
 import { useWorldDetail } from '@/data/queries';
 import { contentRatingLabelKey, genreLabelKey, worldStatusLabelKey } from '@/domain/labels';
+import { MEDIA_ASPECT } from '@/domain/media';
 import type { NPCPublicDTO } from '@/domain/types';
 import { StartJourneySheet, type PersonaDraft } from '@/features/catalog/StartJourneySheet';
 import { useProfile } from '@/features/profile/ProfileProvider';
@@ -194,7 +195,7 @@ export default function WorldDetailScreen() {
           uri={`asset://${data.coverAssetId}`}
           accessibilityLabel={data.title}
           placeholderLabel={data.title}
-          aspectRatio={16 / 10}
+          aspectRatio={MEDIA_ASPECT.landscape}
         />
 
         <View style={styles.titleBlock}>
@@ -312,7 +313,7 @@ function CharacterCard({ character }: { character: NPCPublicDTO }) {
       <AssetImage
         uri={`asset://${character.defaultPortraitAssetId}`}
         accessibilityLabel={character.name}
-        aspectRatio={1}
+        aspectRatio={MEDIA_ASPECT.square}
         contentFit="cover"
         style={styles.characterPortrait}
       />

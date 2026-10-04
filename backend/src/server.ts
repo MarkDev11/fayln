@@ -5,6 +5,7 @@
  * membuka port dan tanpa proses panjang.
  */
 
+import cookie from '@fastify/cookie';
 import cors from '@fastify/cors';
 import rateLimit from '@fastify/rate-limit';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -12,6 +13,10 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { AppError } from './contracts/errors';
 import type { AppConfig } from './config';
 import type { Database } from './db/pool';
+import { registerAdminRoutes } from './admin/adminRoutes';
+import type { AdminRepository } from './admin/adminRepository';
+import type { AdminPageContext } from './admin/pages/context';
+import { registerAdminAuthHook } from './admin/session';
 import { defaultAssetsRoot, registerAssetRoutes } from './routes/assets';
 import { registerCatalogRoutes } from './routes/catalog';
 import { registerHealthRoutes } from './routes/health';
@@ -39,6 +44,14 @@ export type AppDeps = {
   usage: UsageRepository;
   reports: ReportRepository;
   journeys: JourneyService;
+  /**
+   * Panel admin. Opsional supaya pengujian yang hanya menguji jalur pemain tidak
+   * perlu menyiapkan seluruh repositori admin.
+   */
+  admin?: {
+    repository: AdminRepository;
+    pages: AdminPageContext;
+  };
   logger?: boolean;
 };
 
@@ -51,6 +64,31 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // Membatasi ukuran badan permintaan: tindakan bebas dibatasi 600 karakter.
     bodyLimit: 64 * 1024,
   });
+
+  /* ---------------- Cookie sesi admin ---------------- */
+  // Hanya dipakai panel admin (cookie sesi). Jalur pemain tidak memakai cookie
+  // sama sekali — identitasnya diambil dari header `x-account-id`.
+  await app.register(cookie);
+
+  /*
+   * Pengurai badan formulir HTML.
+   *
+   * Fastify hanya mengurai JSON secara bawaan. Tanpa ini, setiap formulir panel
+   * admin ditolak dengan HTTP 415 sebelum sampai ke handler — dan pesannya
+   * ("Unsupported Media Type") tidak menunjukkan bahwa yang kurang adalah
+   * pengurai, bukan formulirnya.
+   */
+  app.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (_request, body, done) => {
+      try {
+        done(null, parseFormBody(body as string));
+      } catch (error) {
+        done(error as Error, undefined);
+      }
+    },
+  );
 
   /* ---------------- CORS ---------------- */
   // Asal kosong berarti hanya permintaan tanpa Origin yang dilayani, yaitu
@@ -122,13 +160,35 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     });
   });
 
-  app.setNotFoundHandler((_request, reply) =>
-    reply.status(404).send({
+  /*
+   * Penanganan alamat tidak dikenal.
+   *
+   * Dua bentuk balasan yang sengaja dibedakan:
+   * - Jalur /admin/ yang tidak ada: halaman HTML yang menjelaskan, karena
+   *   pengguna panel memakai peramban dan JSON mentah akan membingungkan.
+   * - Jalur lain: JSON, mengikuti bentuk kesalahan yang sama dengan seluruh API.
+   */
+  app.setNotFoundHandler((request, reply) => {
+    if (request.url.startsWith('/admin')) {
+      return reply.status(404).type('text/html; charset=utf-8').send(
+        [
+          '<!doctype html><html lang="id"><head><meta charset="utf-8">',
+          '<title>Tidak ditemukan — fayLN admin</title>',
+          '<style>body{margin:0;background:#0f1416;color:#e6edef;font:14px/1.6 ui-sans-serif,system-ui,sans-serif}',
+          'main{max-width:520px;margin:14vh auto;padding:24px}a{color:#2fb894}</style>',
+          '</head><body><main><h1 style="font-size:20px">Halaman tidak ada</h1>',
+          '<p style="color:#8fa1a6">Alamat yang diminta tidak ada di panel admin.</p>',
+          '<p><a href="/admin">Kembali ke ringkasan</a></p></main></body></html>',
+        ].join(''),
+      );
+    }
+
+    return reply.status(404).send({
       code: 'NOT_FOUND',
       message: 'Alamat yang diminta tidak ada.',
       retryable: false,
-    }),
-  );
+    });
+  });
 
   /* ---------------- Route ---------------- */
   registerHealthRoutes(app, {
@@ -168,6 +228,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
   }));
 
+  /* ---------------- Panel admin ---------------- */
+  // Dipasang TERAKHIR dan setelah hook identitas. Keduanya tidak saling ganggu:
+  // hook identitas hanya bekerja pada jalur `/v1/`, sedangkan panel ini hanya
+  // pada `/admin`. Keduanya diperiksa dari `request.url`, sehingga urutan
+  // pendaftaran tidak berpengaruh pada perilakunya.
+  if (deps.admin) {
+    registerAdminAuthHook(app, deps.admin.repository, deps.config.isProduction);
+    registerAdminRoutes(app, {
+      admins: deps.admin.repository,
+      pages: deps.admin.pages,
+      isProduction: deps.config.isProduction,
+    });
+  }
+
   return app;
 }
 
@@ -178,6 +252,57 @@ function isZodError(error: unknown): boolean {
     'name' in error &&
     (error as { name?: string }).name === 'ZodError'
   );
+}
+
+/**
+ * Mengurai badan `application/x-www-form-urlencoded` menjadi objek.
+ *
+ * Ditulis sendiri, bukan memakai `querystring.parse`, karena ada dua hal yang
+ * harus benar dan mudah terlewat:
+ *
+ * 1. Nama yang muncul berulang menjadi LARIK, bukan saling menimpa. Ini yang
+ *    membuat kotak centang "genre" dapat mengirim beberapa nilai sekaligus.
+ * 2. `+` berarti spasi. Tidak menerjemahkannya membuat "Dunia Baru" tersimpan
+ *    sebagai "Dunia+Baru".
+ */
+function parseFormBody(body: string): Record<string, string | string[]> {
+  const result: Record<string, string | string[]> = {};
+
+  for (const pair of body.split('&')) {
+    if (pair.length === 0) {
+      continue;
+    }
+    const separator = pair.indexOf('=');
+    const rawKey = separator === -1 ? pair : pair.slice(0, separator);
+    const rawValue = separator === -1 ? '' : pair.slice(separator + 1);
+
+    const key = decodeFormComponent(rawKey);
+    const value = decodeFormComponent(rawValue);
+    if (key.length === 0) {
+      continue;
+    }
+
+    const existing = result[key];
+    if (existing === undefined) {
+      result[key] = value;
+    } else if (Array.isArray(existing)) {
+      existing.push(value);
+    } else {
+      result[key] = [existing, value];
+    }
+  }
+
+  return result;
+}
+
+/** `decodeURIComponent` dengan `+` sebagai spasi, dan tanpa melempar. */
+function decodeFormComponent(value: string): string {
+  try {
+    return decodeURIComponent(value.replace(/\+/g, ' '));
+  } catch {
+    // Persen-escape yang rusak tidak boleh menggagalkan seluruh permintaan.
+    return value;
+  }
 }
 
 /** Membaca `statusCode` dari kesalahan yang bentuknya belum diketahui. */

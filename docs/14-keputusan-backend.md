@@ -167,8 +167,10 @@ HTTP. Dengan begitu aturan domain dapat diuji tanpa server.
 
 **Keputusan:** tidak ada pekerjaan terjadwal yang menjadi syarat kebenaran.
 
-Karena aplikasi tidur setelah dua jam tanpa pengunjung pada paket gratis, cron apa pun akan
-terlewat. Karena itu:
+Karena aplikasi tidur setelah **30 menit** tanpa pengunjung pada paket gratis
+(`usage_get` → `sleepsAfterMinutes: 30`; `apps_get` → `keepAwakeAllowed: false`), cron apa pun akan
+terlewat. Lebih tegas lagi: pada paket gratis **program tidak dapat membangunkan aplikasi
+sama sekali** — hanya kunjungan peramban manusia yang bisa. Karena itu:
 
 | Kebutuhan | Cara yang dipakai |
 |---|---|

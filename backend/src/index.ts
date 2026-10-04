@@ -7,13 +7,23 @@
  *   "Starting" tanpa pernah menjawab.
  * - Server mendengarkan di 0.0.0.0, bukan 127.0.0.1, karena lalu lintas datang
  *   dari luar container.
- * - Aplikasi dapat tidur setelah dua jam tanpa pengunjung dan dibangunkan lagi
- *   oleh permintaan berikutnya. Karena itu tidak ada state di memori yang
- *   diandalkan, dan pool database dibiarkan membuang koneksi yang sudah mati.
+ * - Aplikasi dapat tidur setelah 30 menit tanpa pengunjung (paket gratis) dan
+ *   dibangunkan lagi oleh kunjungan peramban manusia. Hanya pemilik yang dapat
+ *   membangunkan lewat program (`keepAwake`, bagian dari paket Pro), jadi tidak
+ *   ada state di memori yang diandalkan, dan pool database dibiarkan membuang
+ *   koneksi yang sudah mati.
  */
 
 import { randomUUID } from 'node:crypto';
 
+import { AdminRepository } from './admin/adminRepository';
+import { AccountsAdminRepository } from './admin/accountsAdminRepository';
+import { CatalogAdminRepository } from './admin/catalogAdminRepository';
+import { ModelsRepository } from './admin/modelsRepository';
+import { PromotionsRepository } from './admin/promotionsRepository';
+import { SettingsRepository } from './admin/settingsRepository';
+import { validatePassword } from './admin/password';
+import type { AdminPageContext } from './admin/pages/context';
 import { parseConfig } from './config';
 import { runMigrations } from './db/migrate';
 import { createDatabase, createPool } from './db/pool';
@@ -83,6 +93,22 @@ async function main(): Promise<void> {
     now: () => new Date(),
   });
 
+  /* ---------------- Panel admin ---------------- */
+  const adminRepository = new AdminRepository(db);
+  const adminPages: AdminPageContext = {
+    admins: adminRepository,
+    settings: new SettingsRepository(db),
+    // Katalog admin TIDAK memakai resolver URI: panel menampilkan jalur apa
+    // adanya sebagai teks, bukan gambar. Menyuntikkan resolver yang sama akan
+    // mengubah kolom teks menjadi alamat lengkap tanpa manfaat.
+    catalog: new CatalogAdminRepository(db),
+    accounts: new AccountsAdminRepository(db),
+    promotions: new PromotionsRepository(db),
+    models: new ModelsRepository(db),
+  };
+
+  await bootstrapAdmin(adminRepository, logger);
+
   const app = await buildApp({
     config,
     db,
@@ -91,6 +117,10 @@ async function main(): Promise<void> {
     usage,
     reports,
     journeys: journeyService,
+    admin: {
+      repository: adminRepository,
+      pages: adminPages,
+    },
     logger: true,
   });
 
@@ -130,3 +160,53 @@ main().catch((error: unknown) => {
   console.error(`Server gagal dijalankan: ${message}`);
   process.exitCode = 1;
 });
+
+/**
+ * Membuat akun admin pertama bila panel masih kosong.
+ *
+ * Mengapa perlu ada: panel admin tertutup rapat — tidak ada pendaftaran mandiri.
+ * Tanpa satu akun awal, panel tidak dapat dibuka sama sekali, dan satu-satunya
+ * cara masuk adalah menulis SQL langsung ke produksi.
+ *
+ * Kata sandi diambil dari `ADMIN_BOOTSTRAP_PASSWORD`, bukan dari kode. Bila
+ * variabel itu kosong dan belum ada admin, server memberi tahu dengan jelas
+ * bahwa panel belum dapat dipakai — bukan diam-diam membiarkannya terkunci.
+ */
+async function bootstrapAdmin(
+  admins: AdminRepository,
+  logger: { info: (obj: unknown, msg: string) => void; warn: (obj: unknown, msg: string) => void },
+): Promise<void> {
+  const existing = await admins.countAdmins();
+  if (existing > 0) {
+    return;
+  }
+
+  const username = process.env.ADMIN_BOOTSTRAP_USERNAME ?? 'admin';
+  const password = process.env.ADMIN_BOOTSTRAP_PASSWORD ?? '';
+
+  if (password.length === 0) {
+    logger.warn(
+      { username },
+      'Panel admin belum punya akun. Setel ADMIN_BOOTSTRAP_PASSWORD lalu jalankan ulang untuk membuatnya.',
+    );
+    return;
+  }
+
+  const problem = validatePassword(password);
+  if (problem) {
+    logger.warn({ problem }, 'ADMIN_BOOTSTRAP_PASSWORD tidak memenuhi syarat; akun admin tidak dibuat.');
+    return;
+  }
+
+  const created = await admins.createAdmin({
+    username,
+    password,
+    displayName: username,
+    role: 'owner',
+  });
+
+  logger.info(
+    { username: created.username },
+    'Akun admin pertama dibuat. Segera ganti kata sandinya dari halaman Pengaturan.',
+  );
+}

@@ -53,7 +53,15 @@ export type WorldCatalogItem = {
   status: WorldStatus;
   contentRating: ContentRating;
   supportedResponseLocales: ResponseLocale[];
-  updatedAt: string;
+  /**
+   * Kapan versi terbit ini dimasukkan ke katalog.
+   *
+   * Sebelumnya bidang ini bernama `updatedAt` padahal isinya `published_at`.
+   * Nama lama membuat rail "Baru Diperbarui" berbohong: dunia yang belum pernah
+   * disunting tetap tampil sebagai baru diperbarui, karena yang berubah hanyalah
+   * tanggal terbitnya. Nama ini menyebut isinya apa adanya.
+   */
+  publishedAt: string;
 };
 
 export const RELATION_STATUSES = [

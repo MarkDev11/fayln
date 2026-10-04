@@ -51,7 +51,7 @@ export function AssetImage({
       testID={testID}
       style={[
         styles.container,
-        { aspectRatio, backgroundColor: colors.placeholder, borderColor: colors.line },
+        { aspectRatio, backgroundColor: colors.placeholder },
         style,
       ]}
     >
@@ -85,10 +85,17 @@ export function AssetImage({
 }
 
 const styles = StyleSheet.create({
+  /**
+   * Tanpa garis tepi.
+   *
+   * Sampul sebelumnya diberi garis `hairlineWidth` yang membuat setiap gambar
+   * terbaca sebagai kotak berbingkai. Beranda kini menyatu: gambar duduk
+   * langsung di latar, dan bila perlu dipisahkan, pemisahnya dibuat oleh
+   * gradasi — bukan garis.
+   */
   container: {
     width: '100%',
     borderRadius: radius.card,
-    borderWidth: StyleSheet.hairlineWidth,
     overflow: 'hidden',
   },
   placeholder: {

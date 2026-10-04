@@ -1,9 +1,15 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { useGateway } from './GatewayProvider';
-import type { CatalogPage, CatalogQuery, ReadProgressInput } from './gateway';
+import type { CatalogPage, CatalogQuery, ReadProgressInput, TopWorldsPage } from './gateway';
 
-import type { JourneyDetailDTO, JourneySummary, UsageDTO, WorldDetailDTO } from '@/domain/types';
+import type {
+  JourneyDetailDTO,
+  JourneySummary,
+  UsageDTO,
+  WorldCatalogItem,
+  WorldDetailDTO,
+} from '@/domain/types';
 
 export const queryKeys = {
   catalog: (query: CatalogQuery) => ['catalog', query] as const,
@@ -11,6 +17,8 @@ export const queryKeys = {
   journeys: () => ['journeys'] as const,
   journey: (journeyId: string) => ['journey', journeyId] as const,
   usage: () => ['usage'] as const,
+  topWorlds: (limit: number) => ['worlds', 'top', limit] as const,
+  newWorlds: (limit: number) => ['worlds', 'new', limit] as const,
 };
 
 /**
@@ -23,6 +31,32 @@ export function useCatalog(query: CatalogQuery): UseQueryResult<CatalogPage, Err
     queryKey: queryKeys.catalog(query),
     queryFn: () => gateway.fetchCatalog(query),
     placeholderData: (previous) => previous,
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Rail "Top 10 Minggu Ini".
+ *
+ * Tidak memakai `placeholderData`: peringkat TIDAK boleh menampilkan angka lama
+ * selagi memuat, karena angka lama itu bisa berasal dari jendela minggu yang
+ * berbeda dan pemain akan membacanya sebagai peringkat minggu ini.
+ */
+export function useTopWorlds(limit = 10): UseQueryResult<TopWorldsPage, Error> {
+  const gateway = useGateway();
+  return useQuery({
+    queryKey: queryKeys.topWorlds(limit),
+    queryFn: () => gateway.fetchTopWorlds(limit),
+    staleTime: 60_000,
+  });
+}
+
+/** Rail "Terbaru Dirilis". */
+export function useNewWorlds(limit = 10): UseQueryResult<WorldCatalogItem[], Error> {
+  const gateway = useGateway();
+  return useQuery({
+    queryKey: queryKeys.newWorlds(limit),
+    queryFn: () => gateway.fetchNewWorlds(limit),
     staleTime: 60_000,
   });
 }

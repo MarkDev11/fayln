@@ -61,6 +61,11 @@ export type ThemeColors = {
   scrim: string;
   /** Placeholder netral ketika aset gagal dimuat. */
   placeholder: string;
+  /**
+   * Alias untuk teks dan penanda yang berada di atas media berscrim (docs/05 §8.11).
+   * `inkInverse` tidak dapat dipakai karena bernilai gelap pada tema gelap.
+   */
+  onMedia: string;
 };
 
 export const lightColors: ThemeColors = {
@@ -79,6 +84,7 @@ export const lightColors: ThemeColors = {
   focus: raw.blue600,
   scrim: 'rgba(29, 27, 22, 0.72)',
   placeholder: raw.sand100,
+  onMedia: raw.white,
 };
 
 export const darkColors: ThemeColors = {
@@ -97,6 +103,7 @@ export const darkColors: ThemeColors = {
   focus: raw.blue300,
   scrim: 'rgba(0, 0, 0, 0.72)',
   placeholder: raw.ink700,
+  onMedia: raw.white,
 };
 
 export const colorsByScheme: Record<ColorScheme, ThemeColors> = {
@@ -121,6 +128,12 @@ export const radius = {
   sheet: 18,
   chip: 999,
   input: 12,
+  /**
+   * Permukaan Beranda (docs/05 §8.11). Mengikuti aturan radius 4–8 untuk
+   * permukaan baru; berbeda dari `card`/`button` yang belum mengikuti pass
+   * penyelarasan radius se-aplikasi (keputusan terbuka D1, sengaja ditunda).
+   */
+  tile: 8,
 } as const;
 
 export const fontSize = {

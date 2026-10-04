@@ -30,6 +30,18 @@ export const worldParamsSchema = z.object({
   worldId: z.string().min(1).max(80),
 });
 
+/**
+ * Parameter untuk rail beranda ("Top 10 Minggu Ini", "Terbaru Dirilis").
+ *
+ * Batas atas 20, bukan 10: rail memang menampilkan 10, tetapi mengizinkan klien
+ * meminta lebih sedikit atau sedikit lebih banyak membuat rail dapat dipakai
+ * ulang tanpa mengubah kontrak. Batas ini juga menahan permintaan yang meminta
+ * seluruh katalog sekaligus.
+ */
+export const railQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(20).default(10),
+});
+
 export const journeyParamsSchema = z.object({
   journeyId: z.string().min(1).max(80),
 });

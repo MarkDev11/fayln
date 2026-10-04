@@ -49,6 +49,18 @@ export type CatalogPage = {
 };
 
 /**
+ * Item katalog dengan peringkat mingguan.
+ *
+ * `startCount` adalah jumlah perjalanan NYATA dalam jendela waktu, bukan angka
+ * hiasan. `rank` diturunkan dari urutan hasil, bukan disimpan di database —
+ * peringkat adalah kesimpulan sesaat, dan menyimpannya akan membuatnya basi.
+ */
+export type RankedWorldItem = WorldCatalogItem & {
+  rank: number;
+  startCount: number;
+};
+
+/**
  * Memilih versi terbit terbaru untuk setiap dunia.
  *
  * Memakai derived table, bukan sub-kueri berkorelasi per baris. Bentuk ini
@@ -142,6 +154,78 @@ export class CatalogRepository {
     };
   }
 
+  /**
+   * Rail "Top 10 Minggu Ini": dunia TERBIT yang paling banyak dimulai.
+   *
+   * Dasar peringkatnya JUMLAH PERJALANAN yang dibuat dalam jendela waktu, bukan
+   * angka yang disimpan di kolom. Karena itu angkanya selalu dapat ditelusuri ke
+   * baris `journeys` yang nyata — tidak ada metrik yang dikarang.
+   *
+   * Mengapa bukan "jumlah pembaca": fayLN tidak mencatat pembacaan per dunia.
+   * Yang dicatat adalah perjalanan, jadi itulah yang dipakai. Menyebutnya
+   * "paling banyak dimainkan" lebih tepat daripada "paling banyak dibaca".
+   *
+   * Hanya dunia dengan `status = 'published'` yang masuk. Dunia yang diarsipkan
+   * tidak boleh ditawarkan untuk dimulai (jalan buntu), dan data lama tidak boleh
+   * membuatnya naik peringkat.
+   */
+  async listTopWorlds(limit: number, windowDays: number): Promise<RankedWorldItem[]> {
+    const { rows } = await this.db.query<WorldVersionRow & { start_count: string }>(
+      `SELECT wv.world_id, wv.world_version, wv.title, wv.synopsis, wv.premise,
+              wv.cover_asset_id, wv.status, wv.content_rating, wv.published_at, wv.created_at,
+              counted.start_count::text AS start_count
+       FROM world_versions wv
+       ${LATEST_PUBLISHED_JOIN}
+       JOIN (
+         SELECT world_id, COUNT(*) AS start_count
+         FROM journeys
+         WHERE created_at >= now() - ($1 || ' days')::interval
+         GROUP BY world_id
+       ) counted ON counted.world_id = wv.world_id
+       WHERE wv.status = 'published'
+       -- Tie-break oleh world_id supaya urutan tidak berubah antar pemanggilan
+       -- ketika dua dunia punya jumlah yang sama.
+       ORDER BY counted.start_count DESC, wv.world_id ASC
+       LIMIT $2`,
+      [String(windowDays), limit],
+    );
+
+    const items = await this.attachCatalogRelations(rows);
+    return items.map((item, index) => ({
+      ...item,
+      rank: index + 1,
+      startCount: Number.parseInt(rows[index]?.start_count ?? '0', 10),
+    }));
+  }
+
+  /**
+   * Rail "Terbaru Dirilis": dunia terbit yang paling baru diterbitkan.
+   *
+   * Memakai `published_at` — kolom yang memang mencatat saat dunia diterbitkan.
+   * Sebelumnya kolom ini tidak pernah dipakai untuk pengurutan; rail "Baru
+   * Diperbarui" mengurutkan dengan nilainya tetapi MENYEBUTNYA "diperbarui",
+   * sehingga dunia yang belum pernah disunting pun tampil sebagai "baru diperbarui".
+   * Rail ini memisahkan dua makna itu dengan benar.
+   *
+   * `published_at` boleh NULL pada baris lama; baris seperti itu diletakkan paling
+   * belakang, bukan dibuang, supaya dunia yang sah tidak hilang dari daftar.
+   */
+  async listNewWorlds(limit: number): Promise<WorldCatalogItem[]> {
+    const { rows } = await this.db.query<WorldVersionRow>(
+      `SELECT wv.world_id, wv.world_version, wv.title, wv.synopsis, wv.premise,
+              wv.cover_asset_id, wv.status, wv.content_rating, wv.published_at, wv.created_at
+       FROM world_versions wv
+       ${LATEST_PUBLISHED_JOIN}
+       WHERE wv.status = 'published'
+       -- NULLS LAST: baris tanpa tanggal terbit tidak boleh menyerobot puncak.
+       ORDER BY wv.published_at DESC NULLS LAST, wv.world_id ASC
+       LIMIT $1`,
+      [limit],
+    );
+
+    return this.attachCatalogRelations(rows);
+  }
+
   /** Mengambil genre dan locale untuk sekumpulan dunia dalam satu query. */
   private async attachCatalogRelations(rows: WorldVersionRow[]): Promise<WorldCatalogItem[]> {
     if (rows.length === 0) {
@@ -163,7 +247,7 @@ export class CatalogRepository {
         status: row.status as WorldStatus,
         contentRating: row.content_rating as ContentRating,
         supportedResponseLocales: (localesByWorld.get(key) ?? []) as ResponseLocale[],
-        updatedAt: (row.published_at ?? row.created_at).toISOString(),
+        publishedAt: (row.published_at ?? row.created_at).toISOString(),
       };
     });
   }
@@ -294,7 +378,7 @@ export class CatalogRepository {
       status: versionRow.status as WorldStatus,
       contentRating: versionRow.content_rating as ContentRating,
       supportedResponseLocales: locales as ResponseLocale[],
-      updatedAt: (versionRow.published_at ?? versionRow.created_at).toISOString(),
+      publishedAt: (versionRow.published_at ?? versionRow.created_at).toISOString(),
       locations: locations.rows.map((row) => ({ locationId: row.location_id, label: row.label })),
       characters,
       assetManifest: manifest,

@@ -168,6 +168,86 @@ describe('katalog', () => {
   });
 });
 
+describe('rail beranda', () => {
+  describe('Top 10 Minggu Ini', () => {
+    it('mengurutkan menurut jumlah perjalanan minggu ini, menurun', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/top' });
+      expect(response.statusCode).toBe(200);
+
+      const body = response.json() as {
+        items: { worldId: string; rank: number; startCount: number }[];
+        windowDays: number;
+      };
+
+      // Data contoh (005_seed_top_weekly.sql): bosku 4, lentera 2, rapat 1.
+      expect(body.windowDays).toBe(7);
+      expect(body.items.map((item) => item.worldId)).toEqual([
+        'w_bosku-mantan',
+        'w_lentera-terakhir',
+        'w_rapat-tengah-malam',
+      ]);
+      expect(body.items.map((item) => item.startCount)).toEqual([4, 2, 1]);
+      expect(body.items.map((item) => item.rank)).toEqual([1, 2, 3]);
+    });
+
+    it('mengabaikan perjalanan yang lebih tua dari jendela mingguan', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/top' });
+      const body = response.json() as { items: { worldId: string; rank: number }[] };
+
+      // w_rapat-tengah-malam punya 2 perjalanan berumur 20 dan 45 hari. Bila
+      // saringan waktu hilang, jumlahnya menjadi 3 dan ia naik ke peringkat 1.
+      // Uji ini memastikan hal itu tidak terjadi.
+      const rapat = body.items.find((item) => item.worldId === 'w_rapat-tengah-malam');
+      expect(rapat?.rank).toBe(3);
+    });
+
+    it('tidak memasukkan dunia yang diarsipkan', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/top' });
+      const body = response.json() as { items: { worldId: string; status: string }[] };
+
+      expect(body.items.every((item) => item.status === 'published')).toBe(true);
+      expect(body.items.some((item) => item.worldId === 'w_arsip-lama')).toBe(false);
+    });
+
+    it('menghormati batas limit dan menolak nilai di luar rentang', async () => {
+      const limited = await app.inject({ method: 'GET', url: '/v1/worlds/top?limit=2' });
+      expect((limited.json() as { items: unknown[] }).items).toHaveLength(2);
+
+      const tooBig = await app.inject({ method: 'GET', url: '/v1/worlds/top?limit=500' });
+      expect(tooBig.statusCode).toBe(400);
+    });
+
+    it('memperlakukan "top" sebagai rute sendiri, bukan sebagai ID dunia', async () => {
+      // Bila rute statis kalah oleh /v1/worlds/:worldId, permintaan ini akan
+      // menjawab 404 "Cerita tidak ditemukan" alih-alih daftar peringkat.
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/top' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toHaveProperty('items');
+    });
+  });
+
+  describe('Terbaru Dirilis', () => {
+    it('mengembalikan dunia terbit, diurutkan menurut tanggal terbit menurun', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/new' });
+      expect(response.statusCode).toBe(200);
+
+      const body = response.json() as { items: { worldId: string; publishedAt: string }[] };
+      expect(body.items.length).toBeGreaterThan(0);
+      expect(body.items.every((item) => item.publishedAt.length > 0)).toBe(true);
+
+      const dates = body.items.map((item) => item.publishedAt);
+      const sorted = [...dates].sort().reverse();
+      expect(dates).toEqual(sorted);
+    });
+
+    it('tidak menawarkan dunia yang diarsipkan', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/new' });
+      const body = response.json() as { items: { worldId: string }[] };
+      expect(body.items.some((item) => item.worldId === 'w_arsip-lama')).toBe(false);
+    });
+  });
+});
+
 describe('pembuatan perjalanan', () => {
   const body = (label: string, worldId = 'w_bosku-mantan') => ({
     clientOperationId: operationId(label),

@@ -32,6 +32,8 @@ import {
   type StoryGateway,
   type SubmitChoiceInput,
   type SubmitCustomInput,
+  type TopWorldsPage,
+  type RankedWorldItem,
 } from '../gateway';
 
 import type {
@@ -553,8 +555,69 @@ export class MockStoryGateway implements StoryGateway {
     return world;
   }
 
-  /* ---------------- Perjalanan ---------------- */
+  /**
+   * Rail "Top 10 Minggu Ini" dalam mode data contoh.
+   *
+   * Angkanya diambil dari peta tetap di bawah — bukan dihitung dari katalog. Ini
+   * disengaja: peringkat berasal dari perjalanan pemain, dan data contoh tidak
+   * punya perjalanan. Nilai tetap membuat tampilan rail dapat diperiksa tanpa
+   * berpura-pura telah menghitung sesuatu.
+   *
+   * Angkanya mencerminkan sebaran yang sama dengan seed backend
+   * (`005_seed_top_weekly.sql`), supaya mode contoh dan mode produksi menampilkan
+   * urutan yang sama. Bila keduanya berbeda, perbedaan tampilan akan tampak
+   * seperti bug padahal hanya data yang berbeda.
+   */
+  async fetchTopWorlds(limit = 10): Promise<TopWorldsPage> {
+    await this.delay(60);
+    this.throwIfFault();
 
+    // Perjalanan minggu ini per dunia, dari yang terbanyak.
+    const startsByWorld: Record<string, number> = {
+      'w_bosku-mantan': 4,
+      'w_lentera-terakhir': 2,
+      'w_rapat-tengah-malam': 1,
+    };
+
+    const ranked: RankedWorldItem[] = allWorlds
+      .filter((world) => world.status === 'published')
+      .map((world) => ({ world, startCount: startsByWorld[world.worldId] ?? 0 }))
+      // Dunia tanpa perjalanan tidak ditampilkan: peringkat 0 bukan peringkat.
+      .filter((entry) => entry.startCount > 0)
+      .sort((a, b) => {
+        if (a.startCount === b.startCount) {
+          return a.world.worldId < b.world.worldId ? -1 : 1;
+        }
+        return b.startCount - a.startCount;
+      })
+      .slice(0, limit)
+      .map((entry, index) => ({
+        ...toCatalogItem(entry.world),
+        rank: index + 1,
+        startCount: entry.startCount,
+      }));
+
+    return { items: ranked, windowDays: 7 };
+  }
+
+  /** Rail "Terbaru Dirilis": urut tanggal terbit menurun. */
+  async fetchNewWorlds(limit = 10): Promise<WorldCatalogItem[]> {
+    await this.delay(50);
+    this.throwIfFault();
+
+    return allWorlds
+      .filter((world) => world.status === 'published')
+      .map(toCatalogItem)
+      .sort((a, b) => {
+        if (a.publishedAt === b.publishedAt) {
+          return a.worldId < b.worldId ? -1 : 1;
+        }
+        return a.publishedAt < b.publishedAt ? 1 : -1;
+      })
+      .slice(0, limit);
+  }
+
+  /* ---------------- Perjalanan ---------------- */
   async fetchJourneys(): Promise<JourneySummary[]> {
     await this.delay(40);
     return [...this.journeys.values()]

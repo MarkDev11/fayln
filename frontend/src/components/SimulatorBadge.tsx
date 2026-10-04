@@ -21,7 +21,7 @@ export function SimulatorBadge() {
     <View
       accessible
       accessibilityLabel={`${t('sim.badge')}. ${t('sim.notice')}`}
-      style={[styles.badge, { borderColor: colors.warning }]}
+      style={[styles.badge, { backgroundColor: colors.bgMuted }]}
     >
       <Text variant="caption" weight="700" tone="warning">
         {t('sim.badge')}
@@ -38,7 +38,7 @@ export function SimulatorNotice() {
     <View
       accessible
       accessibilityRole="alert"
-      style={[styles.notice, { backgroundColor: colors.bgMuted, borderColor: colors.line }]}
+      style={[styles.notice, { backgroundColor: colors.bgMuted }]}
     >
       <Text variant="caption" tone="secondary">
         {t('sim.notice')}
@@ -53,11 +53,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: space.sm,
     paddingVertical: 2,
     borderRadius: radius.chip,
-    borderWidth: StyleSheet.hairlineWidth,
   },
   notice: {
     padding: space.md,
     borderRadius: radius.card,
-    borderWidth: StyleSheet.hairlineWidth,
   },
 });

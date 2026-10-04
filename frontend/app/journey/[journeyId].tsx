@@ -17,6 +17,7 @@ import { Text } from '@/components/Text';
 import { useDeleteJourney, useJourneyDetail, useWorldDetail } from '@/data/queries';
 import { useGateway } from '@/data/GatewayProvider';
 import { LogDrawer } from '@/features/player/components/LogDrawer';
+import { MEDIA_ASPECT } from '@/domain/media';
 import type { Beat } from '@/domain/types';
 import { formatRelativeDay, useI18n } from '@/i18n';
 import { telemetry } from '@/telemetry/analytics';
@@ -166,7 +167,7 @@ export default function JourneyDetailScreen() {
         <AssetImage
           uri={`asset://${data.coverAssetId}`}
           accessibilityLabel={data.worldTitle}
-          aspectRatio={16 / 10}
+          aspectRatio={MEDIA_ASPECT.landscape}
         />
 
         <View style={styles.titleBlock}>

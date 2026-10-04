@@ -21,6 +21,7 @@ import type {
   JourneySummary,
   TurnResultEnvelope,
   UsageDTO,
+  WorldCatalogItem,
   WorldDetailDTO,
 } from '@/domain/types';
 
@@ -38,6 +39,7 @@ import {
   type StoryGateway,
   type SubmitChoiceInput,
   type SubmitCustomInput,
+  type TopWorldsPage,
 } from '../gateway';
 
 export type HttpGatewayConfig = {
@@ -127,6 +129,18 @@ export class HttpStoryGateway implements StoryGateway {
     return this.request<WorldDetailDTO>(`/v1/worlds/${encodeURIComponent(worldId)}`, {
       method: 'GET',
     });
+  }
+
+  async fetchTopWorlds(limit = 10): Promise<TopWorldsPage> {
+    return this.request<TopWorldsPage>(`/v1/worlds/top?limit=${String(limit)}`, { method: 'GET' });
+  }
+
+  async fetchNewWorlds(limit = 10): Promise<WorldCatalogItem[]> {
+    const response = await this.request<{ items: WorldCatalogItem[] }>(
+      `/v1/worlds/new?limit=${String(limit)}`,
+      { method: 'GET' },
+    );
+    return response.items;
   }
 
   /* ---------------------------------------------------------------- */

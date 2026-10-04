@@ -25,6 +25,11 @@ export type ButtonProps = {
   /** Ikon saja tanpa label visual; `label` tetap dipakai untuk aksesibilitas. */
   iconOnly?: boolean;
   fullWidth?: boolean;
+  /**
+   * Radius 8 mengikuti permukaan Beranda (docs/05 §8.2). Default mempertahankan
+   * `radius.button` karena penyelarasan radius se-aplikasi sengaja ditunda (D1).
+   */
+  tile?: boolean;
   testID?: string;
   accessibilityHint?: string;
 };
@@ -38,6 +43,7 @@ export function Button({
   icon,
   iconOnly = false,
   fullWidth = false,
+  tile = false,
   testID,
   accessibilityHint,
 }: ButtonProps) {
@@ -80,6 +86,7 @@ export function Button({
         },
         iconOnly ? styles.iconOnly : null,
         fullWidth ? styles.fullWidth : null,
+        tile ? styles.tile : null,
       ]}
     >
       {loading ? (
@@ -112,6 +119,9 @@ const styles = StyleSheet.create({
   },
   fullWidth: {
     alignSelf: 'stretch',
+  },
+  tile: {
+    borderRadius: radius.tile,
   },
   content: {
     flexDirection: 'row',

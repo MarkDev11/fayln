@@ -50,7 +50,9 @@ describe('i18n', () => {
 
     it('menerapkan interpolasi pada string terjemahan', () => {
       expect(translate('id-ID', 'detail.versionLabel', { version: 7 })).toBe('Versi dunia 7');
-      expect(translate('en-US', 'home.filterActiveCount', { count: 2 })).toBe('2 active filters');
+      expect(translate('en-US', 'home.heroDotsLabel', { index: 1, total: 3 })).toBe(
+        'World 1 of 3',
+      );
     });
   });
 

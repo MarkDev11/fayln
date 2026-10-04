@@ -24,6 +24,25 @@ export const FIXTURE_SEED = 'demo_bosku_mantan_v1';
 /** Awalan URI aset internal. Tidak ada host eksternal yang dikarang. */
 export const LOCAL_ASSET_SCHEME = 'asset://';
 
+/**
+ * Gambar contoh untuk PRATINJAU VISUAL — bukan aset produk.
+ *
+ * Aset sungguhan belum dibuat, sehingga tata letak tidak dapat dinilai dengan
+ * gambar nyata. Agar bentuk kartu, hero, dan rel dapat diperiksa sebagaimana
+ * nanti terlihat, fixture memakai foto acak dari layanan gambar publik.
+ *
+ * PENTING: ini BUKAN konten fayLN, bukan sampul resmi, dan tidak boleh ikut
+ * dirilis. Untuk kembali ke perilaku asli, ganti tiap nilai di bawah menjadi
+ * ID asetnya (`a_cover_kantor`, `a_cover_lentera`, `a_cover_rapat`,
+ * `a_cover_arsip`) — `AssetImage` akan kembali menampilkan placeholder.
+ */
+const SAMPLE_COVERS = {
+  kantor: 'https://picsum.photos/seed/fayln-kantor/600/800',
+  lentera: 'https://picsum.photos/seed/fayln-lentera/600/800',
+  rapat: 'https://picsum.photos/seed/fayln-rapat/600/800',
+  arsip: 'https://picsum.photos/seed/fayln-arsip/600/800',
+} as const;
+
 function asset(assetId: string, label: string): { assetId: string; label: string; uri: string } {
   return { assetId, label, uri: `${LOCAL_ASSET_SCHEME}${assetId}` };
 }
@@ -89,12 +108,12 @@ export const worldBoskuMantan: WorldDetailDTO = {
   synopsis:
     'Hari pertama kerja di perusahaan AAA mempertemukanmu kembali dengan seseorang yang pernah kau kenal baik — kini ia atasanmu.',
   genres: ['romance', 'drama', 'office'] satisfies GenreId[],
-  coverAssetId: 'a_cover_kantor',
+  coverAssetId: SAMPLE_COVERS.kantor,
   worldVersion: 7,
   status: 'published',
   contentRating: '18_plus',
   supportedResponseLocales: ['id-ID', 'en-US'],
-  updatedAt: '2026-09-20T02:00:00.000Z',
+  publishedAt: '2026-09-20T02:00:00.000Z',
   premise:
     'Protagonis memulai pekerjaan pertama di perusahaan AAA. Elysia, mantan dari masa kampus, kini menjadi atasannya. Leo, sahabat keduanya, bekerja di tim yang sama.',
   locations: [
@@ -116,12 +135,12 @@ export const worldLenteraTerakhir: WorldDetailDTO = {
   synopsis:
     'Sebuah desa kehilangan cahayanya satu per satu. Kau satu-satunya yang masih bisa menyalakan lentera.',
   genres: ['fantasy', 'mystery'] satisfies GenreId[],
-  coverAssetId: 'a_cover_lentera',
+  coverAssetId: SAMPLE_COVERS.lentera,
   worldVersion: 3,
   status: 'published',
   contentRating: '13_plus',
   supportedResponseLocales: ['id-ID'],
-  updatedAt: '2026-09-18T04:30:00.000Z',
+  publishedAt: '2026-09-18T04:30:00.000Z',
   premise:
     'Setiap malam satu lentera di desa padam. Penjaga lentera terakhir harus mencari sebabnya sebelum desa kehilangan cahaya sepenuhnya.',
   locations: [{ locationId: 'loc_alun_alun', label: 'Alun-Alun Desa' }],
@@ -150,12 +169,12 @@ export const worldRapatTengahMalam: WorldDetailDTO = {
   synopsis:
     'Rapat pukul dua pagi terasa aneh. Tak ada siapa pun yang mengirim undangan itu.',
   genres: ['mystery', 'office'] satisfies GenreId[],
-  coverAssetId: 'a_cover_rapat',
+  coverAssetId: SAMPLE_COVERS.rapat,
   worldVersion: 1,
   status: 'published',
   contentRating: '13_plus',
   supportedResponseLocales: ['id-ID', 'en-US'],
-  updatedAt: '2026-09-10T09:15:00.000Z',
+  publishedAt: '2026-09-10T09:15:00.000Z',
   premise: 'Kantor mengadakan rapat tengah malam yang tidak pernah dijadwalkan siapa pun.',
   locations: [{ locationId: 'loc_ruang_rapat_besar', label: 'Ruang Rapat Besar' }],
   characters: [
@@ -183,12 +202,12 @@ export const worldDiarsipkan: WorldDetailDTO = {
   title: 'Musim Panas yang Tertunda',
   synopsis: 'Cerita ini sudah diarsipkan kurator dan tidak dapat dimulai lagi.',
   genres: ['drama'] satisfies GenreId[],
-  coverAssetId: 'a_cover_arsip',
+  coverAssetId: SAMPLE_COVERS.arsip,
   worldVersion: 2,
   status: 'retired',
   contentRating: '13_plus',
   supportedResponseLocales: ['id-ID'],
-  updatedAt: '2026-06-01T00:00:00.000Z',
+  publishedAt: '2026-06-01T00:00:00.000Z',
   premise: 'Arsip.',
   locations: [],
   characters: [],

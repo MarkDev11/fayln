@@ -33,6 +33,24 @@ export type CatalogPage = {
   hasMore: boolean;
 };
 
+/**
+ * Item katalog dengan peringkat mingguan.
+ *
+ * `startCount` berasal dari server dan merupakan jumlah perjalanan NYATA dalam
+ * jendela waktu. Ia dibawa ke UI supaya angka dapat diperiksa, bukan sekadar
+ * dipercaya — dan supaya tidak ada tempat bagi UI untuk mengarang angkanya
+ * sendiri.
+ */
+export type RankedWorldItem = WorldCatalogItem & {
+  rank: number;
+  startCount: number;
+};
+
+export type TopWorldsPage = {
+  items: RankedWorldItem[];
+  windowDays: number;
+};
+
 export type SubmitChoiceInput = {
   clientOperationId: string;
   journeyId: string;
@@ -147,6 +165,16 @@ export interface StoryGateway {
 
   fetchCatalog(query: CatalogQuery): Promise<CatalogPage>;
   fetchWorld(worldId: string): Promise<WorldDetailDTO>;
+  /**
+   * Dunia terbit yang paling banyak dimulai dalam jendela mingguan.
+   *
+   * Peringkat dihitung server dari perjalanan nyata. Frontend TIDAK menghitungnya
+   * sendiri: ia tidak punya data perjalanan pemain lain, dan menghitungnya dari
+   * katalog akan menghasilkan urutan yang salah tanpa terlihat salah.
+   */
+  fetchTopWorlds(limit?: number): Promise<TopWorldsPage>;
+  /** Dunia terbit yang paling baru diterbitkan. */
+  fetchNewWorlds(limit?: number): Promise<WorldCatalogItem[]>;
 
   fetchJourneys(): Promise<JourneySummary[]>;
   fetchJourneyDetail(journeyId: string): Promise<JourneyDetailDTO>;

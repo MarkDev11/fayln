@@ -45,8 +45,11 @@ export default function TabsLayout() {
         options={{
           title: t('tabs.journey'),
           tabBarAccessibilityLabel: t('tabs.journey'),
+          // Ikon buku, bukan `journey` (balon bicara): tab ini adalah
+          // perpustakaan cerita yang tersimpan, dan balon bicara memberi kesan
+          // fitur obrolan yang tidak ada di fayLN.
           tabBarIcon: ({ color, focused }) => (
-            <Icon name="journey" size={24} color={color} strokeWidth={focused ? 2.4 : 2} />
+            <Icon name="book" size={24} color={color} strokeWidth={focused ? 2.4 : 2} />
           ),
         }}
       />

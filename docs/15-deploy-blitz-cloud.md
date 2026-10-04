@@ -179,7 +179,7 @@ Ganti satu per satu tanpa mengubah kode apa pun.
 | # | Hal | Cara membuktikan |
 |---|---|---|
 | 1 | Sandbox runtime blitz.cloud mengizinkan egress ke penyedia model | Panggil endpoint penyedia dari dalam aplikasi setelah model diputuskan |
-| 2 | Tidur sungguhan selama dua jam di platform mereka | Akses aplikasi setelah lebih dari dua jam tidak dipakai |
+| 2 | ~~Tidur sungguhan selama dua jam~~ **SUDAH TERJAWAB** | Terukur: tidur setelah **30 menit** tanpa pengunjung (`sleepsAfterMinutes: 30`). Pada paket gratis, program **tidak dapat** membangunkan aplikasi — balasan `{"status":"asleep"}` menyatakan "A program cannot wake it. Opening it in a browser does." Chrome headless juga ditolak. `keepAwake` maunya paket Pro (7 EUR/bulan), `keepAwakeAllowed: false`. Sisa yang belum diuji: berapa lama **kunjungan peramban manusia** membangunkan aplikasi, dan apakah satu kunjungan cukup untuk 30 menit berikutnya. |
 | 3 | Rate limit di belakang reverse proxy platform | Kirim lebih dari `RATE_LIMIT_MAX` permintaan dan pastikan balasan 429 |
 
 Butir 1 baru relevan setelah B-01 (penyedia model) diputuskan.

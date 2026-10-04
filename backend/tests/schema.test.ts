@@ -20,22 +20,34 @@ afterEach(async () => {
 });
 
 describe('migrasi', () => {
+  /**
+   * Daftar ini sengaja ditulis lengkap, bukan dihitung dari direktori.
+   *
+   * Menghitung berkas akan membuat uji ini selalu lulus tanpa memberi tahu
+   * apa pun: migrasi yang tertinggal tidak akan terdeteksi. Dengan daftar
+   * eksplisit, menambah migrasi baru memaksa seseorang memperbarui uji ini —
+   * dan pada saat itu pula urutannya terlihat.
+   */
+  const EXPECTED_MIGRATIONS = [
+    '001_init.sql',
+    '002_seed_reference.sql',
+    '003_asset_paths.sql',
+    '004_admin.sql',
+    '005_seed_top_weekly.sql',
+  ];
+
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
     const { rows } = await ctx.db.query<{ name: string }>(
       'SELECT name FROM schema_migrations ORDER BY name ASC',
     );
-    expect(rows.map((row) => row.name)).toEqual([
-      '001_init.sql',
-      '002_seed_reference.sql',
-      '003_asset_paths.sql',
-    ]);
+    expect(rows.map((row) => row.name)).toEqual(EXPECTED_MIGRATIONS);
   });
 
   it('aman dijalankan ulang tanpa menerapkan apa pun lagi', async () => {
     const { runMigrations } = await import('../src/db/migrate');
     const result = await runMigrations(ctx.db);
     expect(result.applied).toEqual([]);
-    expect(result.skipped).toHaveLength(3);
+    expect(result.skipped).toHaveLength(EXPECTED_MIGRATIONS.length);
   });
 });
 

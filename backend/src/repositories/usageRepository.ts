@@ -3,9 +3,10 @@
  *
  * Keputusan penting (docs/14 bagian 5): reset harian DIHITUNG SAAT DIBACA, bukan
  * dijalankan oleh pekerjaan terjadwal. blitz.cloud menidurkan aplikasi setelah
- * dua jam tanpa pengunjung, jadi cron apa pun akan terlewat. Karena kunci baris
- * memuat tanggal UTC, hari baru berarti baris baru — dan baris baru berarti
- * pemakaian mulai dari nol tanpa perlu ada yang berjalan tengah malam.
+ * 30 menit tanpa pengunjung (paket gratis; hanya kunjungan peramban manusia yang
+ * membangunkannya), jadi cron apa pun akan terlewat. Karena kunci baris memuat
+ * tanggal UTC, hari baru berarti baris baru — dan baris baru berarti pemakaian
+ * mulai dari nol tanpa perlu ada yang berjalan tengah malam.
  */
 
 import type { Database } from '../db/pool';

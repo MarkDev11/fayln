@@ -14,7 +14,19 @@ export type TextVariant =
   | 'caption'
   | 'label';
 
-export type TextTone = 'primary' | 'secondary' | 'inverse' | 'accent' | 'success' | 'warning' | 'danger';
+/**
+ * `onMedia` untuk teks di atas media berscrim (hero Beranda). Nilainya sama pada
+ * kedua tema, sehingga tidak bisa digantikan `inverse` (docs/05 §8.11).
+ */
+export type TextTone =
+  | 'primary'
+  | 'secondary'
+  | 'inverse'
+  | 'onMedia'
+  | 'accent'
+  | 'success'
+  | 'warning'
+  | 'danger';
 
 export type TextProps = RNTextProps & {
   variant?: TextVariant;
@@ -54,6 +66,7 @@ export function Text({
     primary: colors.inkPrimary,
     secondary: colors.inkSecondary,
     inverse: colors.inkInverse,
+    onMedia: colors.onMedia,
     accent: colors.accent,
     success: colors.success,
     warning: colors.warning,

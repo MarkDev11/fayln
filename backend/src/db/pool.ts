@@ -1,9 +1,11 @@
 /**
  * Pool koneksi PostgreSQL.
  *
- * Catatan penting untuk blitz.cloud: aplikasi dapat tidur setelah dua jam tanpa
- * pengunjung. Saat bangun, koneksi lama sudah mati. Karena itu pool dikonfigurasi
- * untuk mendeteksi koneksi mati dan membuangnya, bukan mengembalikannya ke klien.
+ * Catatan penting untuk blitz.cloud: aplikasi dapat tidur setelah 30 menit tanpa
+ * pengunjung (paket gratis), dan hanya kunjungan peramban manusia yang dapat
+ * membangunkannya. Saat bangun, koneksi lama sudah mati. Karena itu pool
+ * dikonfigurasi untuk mendeteksi koneksi mati dan membuangnya, bukan
+ * mengembalikannya ke klien.
  */
 
 import { Pool, type PoolClient, type QueryResultRow } from 'pg';

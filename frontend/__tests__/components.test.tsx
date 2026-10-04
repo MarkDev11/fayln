@@ -25,7 +25,7 @@ describe('StoryCard', () => {
     );
 
     expect(screen.getByText(boskuMantan!.title)).toBeTruthy();
-    expect(screen.getByText('Romansa • Drama')).toBeTruthy();
+    expect(screen.getByText('Romansa +2')).toBeTruthy();
   });
 
   it('menyediakan label aksesibilitas yang memuat judul dan status', async () => {
@@ -36,7 +36,7 @@ describe('StoryCard', () => {
     );
 
     expect(
-      screen.getByLabelText(`${boskuMantan!.title}. Romansa • Drama. Terbit`),
+      screen.getByLabelText(`${boskuMantan!.title}. Romansa, Drama, Kehidupan Kantor. Terbit`),
     ).toBeTruthy();
   });
 
@@ -57,7 +57,7 @@ describe('StoryCard', () => {
       </TestProviders>,
     );
 
-    expect(screen.getByText('Romance • Drama')).toBeTruthy();
+    expect(screen.getByText('Romance +2')).toBeTruthy();
   });
 });
 

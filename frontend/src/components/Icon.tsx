@@ -1,5 +1,5 @@
 import React from 'react';
-import { StyleSheet, View, type ColorValue, type ViewStyle } from 'react-native';
+import { StyleSheet, Text, View, type ColorValue, type ViewStyle } from 'react-native';
 
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -26,7 +26,8 @@ export type IconName =
   | 'pause'
   | 'play'
   | 'eye'
-  | 'eyeOff';
+  | 'eyeOff'
+  | 'star';
 
 export type IconProps = {
   name: IconName;
@@ -49,6 +50,24 @@ export function Icon({ name, size = 24, color, strokeWidth = 2 }: IconProps) {
   );
 
   switch (name) {
+    /**
+     * Bintang digambar sebagai glif teks, bukan bentuk `View`.
+     *
+     * Bintang berujung lima tidak dapat dibentuk dari `View` + `borderWidth`
+     * seperti ikon lain di berkas ini, dan menambahkan pustaka SVG hanya untuk
+     * satu ikon terlalu berat. `★` (U+2605) adalah glif tipografis biasa, bukan
+     * emoji, dan tersedia di semua peramban serta sistem seluler.
+     */
+    case 'star':
+      return (
+        <Text
+          allowFontScaling={false}
+          style={{ color: tint, fontSize: size, lineHeight: size * 1.1 }}
+        >
+          ★
+        </Text>
+      );
+
     case 'home':
       return (
         <View style={[styles.box, { width: size, height: size }]}>

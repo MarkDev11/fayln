@@ -4,6 +4,8 @@ import { Pressable, StyleSheet, View } from 'react-native';
 import { AssetImage } from './AssetImage';
 import { Text } from './Text';
 
+import { assetUri } from '@/domain/assets';
+import { MEDIA_ASPECT } from '@/domain/media';
 import { genreLabelKey, worldStatusLabelKey } from '@/domain/labels';
 import type { WorldCatalogItem } from '@/domain/types';
 import { useI18n } from '@/i18n';
@@ -13,6 +15,14 @@ import { radius, space } from '@/theme/tokens';
 export type StoryCardProps = {
   item: WorldCatalogItem;
   onPress: (worldId: string) => void;
+  /**
+   * Baris keterangan tambahan di bawah genre; dipakai rail "Baru Diperbarui"
+   * untuk menampilkan `home.updatedAt` (SC-01.5). Tanpa nilai, kartu identik
+   * dengan perilaku lama.
+   */
+  note?: string;
+  /** Radius sampul. Beranda memakai 8; default mengikuti `radius.card`. */
+  coverRadius?: number;
   testID?: string;
 };
 
@@ -22,18 +32,38 @@ export type StoryCardProps = {
  * Prioritas visual: sampul dan judul. Genre dan status hanya satu baris kecil agar
  * tidak bersaing dengan karya (D-02, NFR-16).
  */
-export function StoryCard({ item, onPress, testID }: StoryCardProps) {
+export function StoryCard({ item, onPress, note, coverRadius, testID }: StoryCardProps) {
   const { colors } = useTheme();
   const { t } = useI18n();
 
-  const genreText = item.genres.slice(0, 2).map((genre) => t(genreLabelKey(genre))).join(' • ');
+  /**
+   * Daftar genre lengkap — dipakai HANYA untuk pembaca layar.
+   *
+   * Label tampilan dipadatkan (lihat di bawah), tetapi pembaca layar tetap
+   * mendapat daftar utuhnya. Memakai versi padat di sana akan menghilangkan
+   * informasi yang justru paling berguna tanpa penglihatan.
+   */
+  const fullGenreText = item.genres.map((genre) => t(genreLabelKey(genre))).join(', ');
+
+  /**
+   * Genre pertama + penanda sisa, bukan dua genre yang digabung lalu dipotong.
+   *
+   * Sebelumnya dua genre dirangkai dengan " • " dan dipotong `numberOfLines={1}`,
+   * sehingga terputus di tengah kata ("Misteri • Kehidupan Ka…"). Bentuk ini
+   * selalu muat dalam satu baris dan tidak pernah memutus kata.
+   */
+  const firstGenre = item.genres[0];
+  const remainingGenres = item.genres.length - 1;
+  const genreText = firstGenre
+    ? `${t(genreLabelKey(firstGenre))}${remainingGenres > 0 ? ` +${String(remainingGenres)}` : ''}`
+    : '';
 
   return (
     <Pressable
       testID={testID}
       onPress={() => onPress(item.worldId)}
       accessibilityRole="button"
-      accessibilityLabel={`${item.title}. ${genreText}. ${t(worldStatusLabelKey(item.status))}`}
+      accessibilityLabel={`${item.title}. ${fullGenreText}. ${t(worldStatusLabelKey(item.status))}`}
       accessibilityHint={t('detail.startJourney')}
       style={({ pressed }) => [styles.card, { opacity: pressed ? 0.88 : 1 }]}
     >
@@ -42,9 +72,11 @@ export function StoryCard({ item, onPress, testID }: StoryCardProps) {
         di bawah kartu; mengulanginya membuat judul terbaca dua kali.
       */}
       <AssetImage
-        uri={`asset://${item.coverAssetId}`}
+        uri={assetUri(item.coverAssetId)}
         accessibilityLabel={item.title}
-        aspectRatio={3 / 4}
+        aspectRatio={MEDIA_ASPECT.portrait}
+        contentFit="cover"
+        style={coverRadius === undefined ? undefined : { borderRadius: coverRadius }}
       />
       <View style={styles.meta}>
         <Text variant="title" numberOfLines={2}>
@@ -53,6 +85,11 @@ export function StoryCard({ item, onPress, testID }: StoryCardProps) {
         <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.genreLine}>
           {genreText}
         </Text>
+        {note ? (
+          <Text variant="caption" tone="secondary" numberOfLines={1}>
+            {note}
+          </Text>
+        ) : null}
         {item.status !== 'published' ? (
           <Text variant="caption" tone="warning" style={styles.statusLine}>
             {t(worldStatusLabelKey(item.status))}
