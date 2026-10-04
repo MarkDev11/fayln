@@ -7,15 +7,43 @@
  */
 
 import type { SafeHtml } from './../html';
-import { esc, formatTime, html, inputValue, pill, statusPill, table } from './../html';
+import { esc, escOr, formatTime, html, inputValue, pill, statusPill, table } from './../html';
+import { worldStatusLabel, type WorldStatus } from '../catalogAdminRepository';
+import { STORY_ENGINE_IS_SIMULATOR } from '../../services/storyEngine';
 import type { AdminPageContext } from './context';
 
+/**
+ * Urutan status yang ditampilkan ringkasan.
+ *
+ * Keempatnya selalu ditampilkan, termasuk yang jumlahnya nol: kosakata status
+ * dunia harus terlihat sekilas, bukan hanya status yang kebetulan terpakai.
+ */
+const SUMMARY_STATUSES: WorldStatus[] = ['published', 'draft', 'retired', 'revoked'];
+
 export async function dashboard(ctx: AdminPageContext): Promise<SafeHtml> {
-  const stats = await ctx.settings.dashboardStats();
+  const [stats, worlds, health] = await Promise.all([
+    ctx.settings.dashboardStats(),
+    ctx.catalog.listWorlds(),
+    ctx.models.chainHealth(),
+  ]);
+
+  /*
+   * Jumlah per status dihitung dari versi TERBARU tiap dunia, bukan dari
+   * "pernah terbit". Bedanya nyata: dunia yang versi terbitnya sudah diganti
+   * versi baru berstatus draft punya versi lama berstatus published, tetapi
+   * yang dipakai katalog adalah versi terbarunya.
+   */
+  const statusCards = SUMMARY_STATUSES.map((status) => {
+    const total = worlds.filter((world) => world.status === status).length;
+    return html`<div class="stat">
+      <b>${String(total)}</b>
+      <span>${esc(worldStatusLabel(status))} <span class="mono">(${esc(status)})</span></span>
+    </div>`;
+  });
 
   const cards = html`<div class="grid">
-    <div class="stat"><b>${String(stats.worlds)}</b><span>Dunia</span></div>
-    <div class="stat"><b>${String(stats.publishedWorlds)}</b><span>Dunia terbit</span></div>
+    <div class="stat"><b>${String(stats.worlds)}</b><span>Dunia terdaftar</span></div>
+    ${statusCards}
     <div class="stat"><b>${String(stats.characters)}</b><span>Karakter</span></div>
     <div class="stat"><b>${String(stats.accounts)}</b><span>Akun pemain</span></div>
     <div class="stat"><b>${String(stats.journeys)}</b><span>Perjalanan</span></div>
@@ -37,20 +65,78 @@ export async function dashboard(ctx: AdminPageContext): Promise<SafeHtml> {
   const simulator = await ctx.settings.getSetting('engine.simulator');
   const isSimulator = simulator === true;
 
+  /*
+   * Keadaan mesin cerita datang dari DUA fakta, dan keduanya dibaca — bukan
+   * dikarang:
+   *   1. `engine.simulator` — pengaturan yang dapat diubah dari panel.
+   *   2. `STORY_ENGINE_IS_SIMULATOR` — konstanta yang sama dengan yang
+   *      dilaporkan `/v1/meta` pada `storyEngine.simulator`. Bila keduanya
+   *      berbeda, panel harus mengatakannya; menyembunyikan bedanya akan
+   *      membuat admin percaya pada keadaan yang tidak benar.
+   */
+  const disagrees = isSimulator !== STORY_ENGINE_IS_SIMULATOR;
+  const activeModels = health.reduce((sum, item) => sum + item.activeCount, 0);
+  const withoutPrimary = health.filter((item) => item.activeCount > 0 && !item.hasPrimary);
+
   const engineCard = html`<div class="card">
     <div class="between">
       <div>
         <strong>Mesin cerita</strong>
         <p class="sub" style="margin:4px 0 0">
           ${
-            isSimulator
-              ? 'Simulator deterministik. Belum ada model bahasa sungguhan — keluaran tidak boleh dianggap hasil AI.'
-              : 'Model sungguhan aktif. Pastikan biaya per giliran sudah benar di halaman Model.'
+            STORY_ENGINE_IS_SIMULATOR
+              ? 'Mesin yang terpasang adalah simulator deterministik. Belum ada model bahasa sungguhan — keluaran tidak boleh dianggap hasil AI.'
+              : 'Model sungguhan terpasang. Pastikan biaya per giliran sudah benar di halaman Model.'
           }
         </p>
+        <p class="sub" style="margin:6px 0 0">
+          <span class="mono">/v1/meta</span> melaporkan
+          <span class="mono">storyEngine.simulator = ${String(STORY_ENGINE_IS_SIMULATOR)}</span>,
+          sedangkan pengaturan <span class="mono">engine.simulator</span> =
+          <span class="mono">${esc(JSON.stringify(simulator))}</span>.
+        </p>
+        ${
+          disagrees
+            ? html`<p class="sub" style="margin:6px 0 0;color:#e0cf8f">
+            Keduanya tidak sejalan. Yang dipakai pemain adalah mesin yang terpasang;
+            pengaturan hanya menandai niat.
+          </p>`
+            : ''
+        }
       </div>
-      <div><span class="pill ${isSimulator ? 'draft' : 'ok'}">${esc(isSimulator ? 'simulator' : 'model nyata')}</span></div>
+      <div>
+        <span class="pill ${STORY_ENGINE_IS_SIMULATOR ? 'draft' : 'ok'}">${
+          STORY_ENGINE_IS_SIMULATOR ? 'simulator' : 'model nyata'
+        }</span>
+      </div>
     </div>
+    <table style="margin-top:14px">
+      <tbody>
+        <tr>
+          <td>Model aktif terdaftar</td>
+          <td class="right mono">${String(activeModels)}</td>
+        </tr>
+        ${health.map(
+          (item) =>
+            html`<tr>
+          <td>Tier ${esc(item.tier)}</td>
+          <td class="right">${
+            item.activeCount === 0
+              ? pill('tidak ada model aktif', 'off')
+              : pill(`${String(item.activeCount)} aktif`, 'ok')
+          }</td>
+        </tr>`,
+        )}
+      </tbody>
+    </table>
+    ${
+      withoutPrimary.length > 0
+        ? html`<p class="sub" style="margin:10px 0 0;color:#e0cf8f">
+            ${withoutPrimary.map((item) => esc(item.tier)).join(', ')} punya model aktif tetapi tidak
+            ada model utama (posisi 0). Periksa halaman <a href="/admin/models">Model</a>.
+          </p>`
+        : ''
+    }
   </div>`;
 
   return html`<h1>Ringkasan</h1>
@@ -83,25 +169,6 @@ export async function settingsList(ctx: AdminPageContext): Promise<SafeHtml> {
   // Larik, bukan `.join('')` — lihat catatan di `table()` pada html.ts.
   const options = known.map(
     (item) => `<option value="${esc(item.key)}">${esc(item.key)} — ${esc(item.label)}</option>`,
-  );
-
-  const admins = await ctx.admins.listAdmins();
-  const adminRows = admins.map(
-    (admin) =>
-      html`<tr>
-  <td>${admin.username}</td>
-  <td>${admin.displayName ? esc(admin.displayName) : html`<span class="muted">—</span>`}</td>
-  <td>${admin.role}</td>
-  <td>${admin.isActive ? pill('aktif', 'ok') : pill('nonaktif', 'off')}</td>
-  <td class="muted mono">${admin.lastLoginAt ? formatTime(admin.lastLoginAt, 'minute') : 'belum pernah'}</td>
-  <td class="right">
-    <form method="post" action="/admin/admins/toggle" class="inline">
-      <input type="hidden" name="adminId" value="${inputValue(admin.adminId)}">
-      <input type="hidden" name="isActive" value="${admin.isActive ? 'false' : 'true'}">
-      <button class="ghost" type="submit">${admin.isActive ? 'Nonaktifkan' : 'Aktifkan'}</button>
-    </form>
-  </td>
-</tr>`,
   );
 
   return html`<h1>Pengaturan</h1>
@@ -157,54 +224,85 @@ export async function settingsList(ctx: AdminPageContext): Promise<SafeHtml> {
 
 <h2>Akun admin</h2>
 <div class="card">
-  ${table(['Nama pengguna', 'Nama tampilan', 'Peran', 'Status', 'Masuk terakhir', ''], adminRows, 'Belum ada akun admin.')}
-  <h2 style="margin-top:26px">Tambah akun admin</h2>
-  <form method="post" action="/admin/admins">
-    <div class="two">
-      <label><span>Nama pengguna (huruf kecil, 3-32 karakter)</span>
-        <input name="username" required pattern="[a-z0-9_.\\-]{3,32}"
-               title="Huruf kecil, angka, titik, garis bawah, atau tanda hubung">
-      </label>
-      <label><span>Nama tampilan</span>
-        <input name="displayName" placeholder="Nama yang ditampilkan">
-      </label>
-    </div>
-    <div class="two">
-      <label><span>Kata sandi (minimal 8 karakter)</span>
-        <input name="password" type="password" autocomplete="new-password" required>
-      </label>
-      <label><span>Peran</span>
-        <select name="role">
-          <option value="owner">owner — akses penuh</option>
-          <option value="editor">editor — katalog saja</option>
-          <option value="support">support — akun saja</option>
-        </select>
-      </label>
-    </div>
-    <button type="submit">Tambah akun</button>
-  </form>
+  <p class="sub" style="margin-top:0">
+    Menambah dan menonaktifkan akun admin ada di halaman
+    <a href="/admin/admins">Admin</a>, bersama daftar siapa saja yang dapat masuk
+    ke panel ini.
+  </p>
 </div>`;
 }
 
-export async function auditList(ctx: AdminPageContext): Promise<SafeHtml> {
-  const entries = await ctx.admins.listAudit(150);
+/**
+ * Catatan audit dengan saringan.
+ *
+ * Saringan dikirim sebagai query, bukan disimpan di sesi: tautan hasil
+ * penyaringan dapat dibagikan dan di bookmark, dan menekan "kembali" tidak
+ * mengembalikan halaman ke keadaan yang berbeda dari yang tertulis di alamat.
+ */
+export async function auditList(
+  ctx: AdminPageContext,
+  filter: { username: string; action: string },
+): Promise<SafeHtml> {
+  const username = filter.username.trim();
+  const action = filter.action.trim();
+
+  const [entries, facets] = await Promise.all([
+    ctx.admins.listAudit(150, { username, action }),
+    ctx.admins.auditFacets(),
+  ]);
 
   const rows = entries.map(
     (entry) =>
       html`<tr>
   <td class="muted mono">${formatTime(entry.createdAt, 'minute')}</td>
-  <td>${entry.username}</td>
-  <td><span class="pill">${entry.action}</span></td>
-  <td class="mono">${entry.targetKind}${entry.targetId ? ` / ${entry.targetId}` : ''}</td>
+  <td>${esc(entry.username)}</td>
+  <td><span class="pill">${esc(entry.action)}</span></td>
+  <td class="mono">${esc(entry.targetKind)}${entry.targetId ? esc(` / ${entry.targetId}`) : ''}</td>
 </tr>`,
   );
 
+  // LARIK, bukan `.join('')` — `html()` menggabung larik apa adanya, sedangkan
+  // string akan di-escape dan seluruh daftar pilihan tampil sebagai teks.
+  const usernameOptions = facets.usernames.map(
+    (name) =>
+      `<option value="${inputValue(name)}"${name === username ? ' selected' : ''}>${esc(name)}</option>`,
+  );
+  const actionOptions = facets.actions.map(
+    (item) =>
+      `<option value="${inputValue(item)}"${item === action ? ' selected' : ''}>${esc(item)}</option>`,
+  );
+
+  const isFiltered = username !== '' || action !== '';
+
   return html`<h1>Catatan audit</h1>
 <p class="sub">
-  150 tindakan terakhir. Setiap perubahan yang mengubah keadaan dicatat di sini —
-  tanpa ini, tidak ada cara menjawab "siapa yang mengubah ini".
+  ${isFiltered ? 'Hasil penyaringan, ' : ''}150 tindakan terakhir. Setiap perubahan yang
+  mengubah keadaan dicatat di sini — tanpa ini, tidak ada cara menjawab
+  "siapa yang mengubah ini".
 </p>
-<div class="card">${table(['Waktu', 'Admin', 'Tindakan', 'Sasaran'], rows, 'Belum ada catatan.')}</div>`;
+<form method="get" action="/admin/audit" class="card">
+  <div class="row" style="align-items:flex-end">
+    <label style="flex:1;min-width:180px;margin-bottom:0"><span>Admin</span>
+      <select name="username">
+        <option value="">— semua admin —</option>
+        ${usernameOptions}
+      </select>
+    </label>
+    <label style="flex:1;min-width:180px;margin-bottom:0"><span>Tindakan</span>
+      <select name="action">
+        <option value="">— semua tindakan —</option>
+        ${actionOptions}
+      </select>
+    </label>
+    <button type="submit">Saring</button>
+    ${isFiltered ? html`<a href="/admin/audit"><button class="ghost" type="button">Reset</button></a>` : ''}
+  </div>
+</form>
+<div class="between" style="margin-bottom:14px">
+  <span class="muted">${String(entries.length)} catatan${isFiltered ? ' cocok dengan saringan' : ''}</span>
+  ${isFiltered ? html`<span class="muted">Saringan: ${escOr(username, 'semua admin')} · ${escOr(action, 'semua tindakan')}</span>` : ''}
+</div>
+<div class="card">${table(['Waktu', 'Admin', 'Tindakan', 'Sasaran'], rows, 'Tidak ada catatan yang cocok.')}</div>`;
 }
 
 /** Menampilkan nilai JSON dengan aman, merangkum yang terlalu panjang. */

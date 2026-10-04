@@ -147,10 +147,13 @@ const NAV: { href: string; label: string; key: string }[] = [
   { href: '/admin', label: 'Ringkasan', key: 'dashboard' },
   { href: '/admin/worlds', label: 'Dunia', key: 'worlds' },
   { href: '/admin/characters', label: 'Karakter', key: 'characters' },
+  { href: '/admin/locations', label: 'Lokasi', key: 'locations' },
+  { href: '/admin/assets', label: 'Aset', key: 'assets' },
   { href: '/admin/accounts', label: 'Akun', key: 'accounts' },
   { href: '/admin/models', label: 'Model', key: 'models' },
   { href: '/admin/promotions', label: 'Promosi', key: 'promotions' },
   { href: '/admin/settings', label: 'Pengaturan', key: 'settings' },
+  { href: '/admin/admins', label: 'Admin', key: 'admins' },
   { href: '/admin/audit', label: 'Audit', key: 'audit' },
 ];
 
@@ -297,8 +300,14 @@ export function table(headers: string[], rows: (SafeHtml | string)[], emptyText:
 </table>`;
 }
 
-/** Label status berbentuk pil. Hasilnya aman disisipkan ke `html` lain. */
-export function statusPill(status: string): SafeHtml {
+/**
+ * Label status berbentuk pil. Hasilnya aman disisipkan ke `html` lain.
+ *
+ * `label` dipakai bila teks yang dilihat admin berbeda dari nilai mentahnya —
+ * mis. status dunia `retired` yang lebih bermakna sebagai "ditarik". Nilainya
+ * tetap di-escape `html()`, jadi aman walau berasal dari basis data.
+ */
+export function statusPill(status: string, label?: string): SafeHtml {
   const known: Record<string, string> = {
     published: 'ok',
     active: 'ok',
@@ -307,7 +316,7 @@ export function statusPill(status: string): SafeHtml {
     revoked: 'off',
   };
   const cls = known[status] ?? '';
-  return html`<span class="pill ${cls}">${status}</span>`;
+  return html`<span class="pill ${cls}">${label ?? status}</span>`;
 }
 
 /**

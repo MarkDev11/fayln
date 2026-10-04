@@ -12,12 +12,34 @@
 import type { SafeHtml } from '../html';
 import { esc, escOr, formatTime, html, inputValue, safe, selected, statusPill, table } from '../html';
 import { GENRES, RELATION_STATUSES } from '../../contracts/types';
+import { worldStatusLabel, type WorldStatus } from '../catalogAdminRepository';
 import type { AdminPageContext } from './context';
 
-const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: 'draft', label: 'draft — belum terlihat pemain' },
-  { value: 'published', label: 'published — terlihat pemain' },
+/**
+ * Empat keadaan dunia, dengan kata-kata yang dipakai admin sehari-hari.
+ *
+ * Dua yang terakhir sering tertukar, padahal akibatnya berbeda bagi pemain:
+ * `retired` menarik dunia dari katalog tetapi perjalanan yang sudah ada tetap
+ * dapat diselesaikan; `revoked` menariknya seluruhnya. Karena itu bedanya
+ * ditulis di pilihan, bukan diserahkan ke ingatan.
+ */
+const STATUS_OPTIONS: { value: WorldStatus; label: string; help: string }[] = [
+  { value: 'draft', label: 'draft — belum terlihat pemain', help: 'Disiapkan diam-diam. Dunia terbit yang lama tetap tayang.' },
+  { value: 'published', label: 'published — terlihat pemain', help: 'Tayang di katalog. Versi terbit lama otomatis diarsipkan.' },
+  { value: 'retired', label: 'retired — ditarik', help: 'Keluar dari katalog, tetapi perjalanan yang sudah berjalan tetap bisa dilanjutkan.' },
+  { value: 'revoked', label: 'revoked — dicabut', help: 'Ditarik seluruhnya; dunia tidak lagi dilayani, termasuk perjalanan yang sedang berjalan.' },
 ];
+
+/**
+ * Pil status dunia dengan label yang dapat dibaca.
+ *
+ * Nilai mentahnya (`published`, `retired`, …) tetap ditampilkan terpisah di
+ * bawah pil pada daftar dunia: nilai itulah yang dipakai kueri dan log, jadi
+ * admin perlu melihatnya juga — bukan hanya terjemahannya.
+ */
+function worldStatusPill(status: string): SafeHtml {
+  return statusPill(status, worldStatusLabel(status));
+}
 
 const RATING_OPTIONS: { value: string; label: string }[] = [
   { value: 'all', label: 'all — semua umur' },
@@ -37,7 +59,10 @@ export async function worldsList(ctx: AdminPageContext): Promise<SafeHtml> {
     <a href="/admin/worlds/${esc(world.worldId)}">${escOr(world.title, '<span class="muted">tanpa judul</span>')}</a>
     <div class="muted mono" style="font-size:11px">${world.worldId} · v${String(world.worldVersion)}</div>
   </td>
-  <td>${statusPill(world.status)}</td>
+  <td>
+    ${worldStatusPill(world.status)}
+    <div class="muted mono" style="font-size:11px">${esc(world.status)}</div>
+  </td>
   <td class="muted">${world.genres.join(', ') || '—'}</td>
   <td class="right mono">${String(world.characterCount)}</td>
   <td class="right mono">${String(world.journeyCount)}</td>
@@ -107,6 +132,42 @@ export async function worldsForm(ctx: AdminPageContext, worldId: string | null):
   </div>`
     : '';
 
+  /**
+   * Riwayat versi.
+   *
+   * Inilah yang menjawab "apa yang berubah sejak versi kemarin" — dan yang
+   * lebih penting, versi mana yang masih dikunci perjalanan pemain sehingga
+   * tidak boleh hilang. Kolom Perjalanan pada tabel ini adalah alasan versi
+   * lama tidak pernah dihapus.
+   */
+  const versions = world ? await ctx.catalog.listWorldVersions(world.worldId) : [];
+  const versionRows = versions.map((version) => {
+    const isCurrent = version.worldVersion === world?.worldVersion;
+    return html`<tr>
+  <td class="mono">v${String(version.worldVersion)}${
+    isCurrent ? html` <span class="pill ok">terbaru</span>` : ''
+  }</td>
+  <td>${esc(version.title)}</td>
+  <td>${worldStatusPill(version.status)}</td>
+  <td class="right mono">${String(version.characterCount)}</td>
+  <td class="right mono">${String(version.locationCount)}</td>
+  <td class="right mono">${String(version.journeyCount)}</td>
+  <td class="right muted mono">${formatTime(version.publishedAt ?? version.createdAt, 'minute')}</td>
+</tr>`;
+  });
+
+  const historyCard = world
+    ? html`<h2>Riwayat versi</h2>
+<div class="card">
+  <p class="sub" style="margin-top:0">
+    Menyimpan perubahan membuat versi baru; versi lama tidak pernah diubah.
+    Versi dengan <strong>Perjalanan &gt; 0</strong> dikunci oleh pemain yang sedang
+    membacanya, sehingga tidak boleh dihapus — hanya ditarik.
+  </p>
+  ${table(['Versi', 'Judul', 'Status', 'Karakter', 'Lokasi', 'Perjalanan', 'Dibuat/diterbitkan'], versionRows, 'Belum ada versi.')}
+</div>`
+    : '';
+
   const deleteCard = world
     ? html`<h2>Hapus</h2>
 <div class="card">
@@ -114,7 +175,7 @@ export async function worldsForm(ctx: AdminPageContext, worldId: string | null):
     ${
       world.journeyCount > 0
         ? safe(
-            `Dunia ini dipakai ${String(world.journeyCount)} perjalanan pemain, jadi tidak dapat dihapus. Ubah statusnya menjadi <span class="mono">retired</span> untuk menariknya dari katalog.`,
+            `Dunia ini dipakai ${String(world.journeyCount)} perjalanan pemain, jadi tidak dapat dihapus. Tarik dunianya lewat <strong>Status</strong> di atas: <span class="mono">retired</span> bila perjalanan yang sudah ada boleh diselesaikan, <span class="mono">revoked</span> bila dunia harus berhenti dilayani seluruhnya.`,
           )
         : 'Belum ada perjalanan pemain yang memakai dunia ini, sehingga aman dihapus.'
     }
@@ -127,7 +188,13 @@ export async function worldsForm(ctx: AdminPageContext, worldId: string | null):
     : '';
 
   return html`<h1>${world ? 'Ubah dunia' : 'Dunia baru'}</h1>
-<p class="sub">${world ? html`Versi terbaru: v${String(world.worldVersion)} · status ${esc(world.status)}` : 'Dunia baru dimulai dari versi 1.'}</p>
+<p class="sub">${
+  world
+    ? html`Versi terbaru: v${String(world.worldVersion)} · status ${esc(world.status)} (${esc(
+        worldStatusLabel(world.status),
+      )})`
+    : 'Dunia baru dimulai dari versi 1.'
+}</p>
 ${versionNotice}
 <form method="post" action="/admin/worlds" class="card">
   <input type="hidden" name="worldId" value="${inputValue(world?.worldId ?? '')}">
@@ -154,6 +221,12 @@ ${versionNotice}
             `<option value="${esc(option.value)}"${selected(world?.status, option.value)}>${esc(option.label)}</option>`,
         )}
       </select>
+      <div class="muted" style="font-size:12px;margin-top:6px">
+        ${STATUS_OPTIONS.map(
+          (option) =>
+            html`<div><span class="mono">${esc(option.value)}</span> — ${esc(option.help)}</div>`,
+        )}
+      </div>
     </label>
   </div>
   <label><span>Tingkat usia</span>
@@ -175,7 +248,8 @@ ${versionNotice}
     <a href="/admin/worlds"><button class="ghost" type="button">Batal</button></a>
   </div>
 </form>
-${deleteCard}`;
+${deleteCard}
+${historyCard}`;
 }
 
 export async function charactersList(ctx: AdminPageContext): Promise<SafeHtml> {
@@ -307,6 +381,27 @@ export async function charactersForm(
   <div class="row">
     <button type="submit">Simpan</button>
     <a href="/admin/characters"><button class="ghost" type="button">Batal</button></a>
+    ${
+      character
+        ? html`<form method="post" action="/admin/characters/delete" class="inline">
+      <input type="hidden" name="worldId" value="${inputValue(activeWorldId)}">
+      <input type="hidden" name="npcId" value="${inputValue(character.npcId)}">
+      <button class="danger" type="submit">Hapus karakter</button>
+    </form>`
+        : ''
+    }
   </div>
-</form>`;
+</form>
+${
+  character
+    ? html`<h2>Menghapus karakter</h2>
+<div class="card">
+  <p class="sub" style="margin-top:0">
+    Karakter tidak pernah dihapus dari versi yang sedang dipakai pemain.
+    Menghapusnya membuat <strong>versi baru</strong> dunianya tanpa karakter ini,
+    sedangkan versi lama tetap utuh bersama perjalanan yang sudah berjalan.
+  </p>
+</div>`
+    : ''
+}`;
 }

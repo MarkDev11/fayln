@@ -131,6 +131,71 @@ async function login(instance: FastifyInstance = app): Promise<string> {
   return readCookie(response.headers['set-cookie']);
 }
 
+/**
+ * Membuat dunia uji dan mengembalikan id-nya.
+ *
+ * Dinaikkan ke tingkat modul karena dipakai lebih dari satu kelompok
+ * pengujian: karakter, lokasi, dan riwayat versi semuanya butuh dunia.
+ */
+async function createWorld(
+  cookie: string,
+  title = 'Dunia Karakter',
+  status: 'draft' | 'published' | 'retired' | 'revoked' = 'published',
+): Promise<string> {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/admin/worlds',
+    headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+    payload: form({
+      worldId: '',
+      title,
+      synopsis: 'S',
+      premise: 'P',
+      coverAssetId: 'a_cover_lentera',
+      status,
+      contentRating: 'all',
+      genres: ['drama'],
+      locales: ['id-ID'],
+    }),
+  });
+  return String(response.headers.location).split('/admin/worlds/')[1]?.split('?')[0] ?? '';
+}
+
+/** Masuk sebagai admin tertentu. Dipakai untuk menguji saringan audit. */
+async function loginAs(username: string, password: string): Promise<string> {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/admin/login',
+    payload: { username, password },
+  });
+  expect(response.statusCode).toBe(302);
+  return readCookie(response.headers['set-cookie']);
+}
+
+/**
+ * Memastikan halaman tersusun sebagai HTML, bukan sebagai teks markup.
+ *
+ * Inilah pengujian yang membedakan "halaman aman" dari "halaman rusak".
+ * `html()` meng-escape string, sehingga potongan yang dikirim dengan cara yang
+ * salah (mis. hasil `.join('')`) tampil sebagai `&lt;td&gt;` — tanpa galat,
+ * tanpa tag hidup, dan pengujian XSS yang hanya memeriksa "tidak ada tag
+ * hidup" tetap lolos walau tabelnya rusak total.
+ */
+function expectRenderedMarkup(body: string, needles: string[]): void {
+  for (const broken of ['&lt;td&gt;', '&lt;table', '&lt;tr&gt;', '&lt;option']) {
+    expect(body, `markup tampil sebagai teks: ${broken}`).not.toContain(broken);
+  }
+  for (const needle of needles) {
+    expect(body, `seharusnya memuat: ${needle}`).toContain(needle);
+  }
+}
+
+/** Menghitung berapa kali satu tindakan muncul sebagai pil pada baris tabel audit. */
+function auditPillCount(body: string, action: string): number {
+  const pattern = `<span class="pill">${action.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}</span>`;
+  return (body.match(new RegExp(pattern, 'g')) ?? []).length;
+}
+
 /** Formulir HTML dikirim sebagai urlencoded, bukan JSON. */
 function form(payload: Record<string, string | string[]>): string {
   const parts: string[] = [];
@@ -210,12 +275,15 @@ describe('perlindungan halaman admin', () => {
     '/admin/worlds-new',
     '/admin/characters',
     '/admin/characters-form',
+    '/admin/locations',
+    '/admin/assets',
     '/admin/accounts',
     '/admin/models',
     '/admin/models-form',
     '/admin/promotions',
     '/admin/promotions-new',
     '/admin/settings',
+    '/admin/admins',
     '/admin/audit',
   ];
 
@@ -233,6 +301,11 @@ describe('perlindungan halaman admin', () => {
     const mutations: { url: string; payload: Record<string, string> }[] = [
       { url: '/admin/worlds', payload: { title: 'x' } },
       { url: '/admin/characters', payload: { worldId: 'x' } },
+      { url: '/admin/characters/delete', payload: { worldId: 'x', npcId: 'y' } },
+      { url: '/admin/locations', payload: { worldId: 'x', label: 'y' } },
+      { url: '/admin/locations/delete', payload: { worldId: 'x', locationId: 'y' } },
+      { url: '/admin/admins', payload: { username: 'x', password: 'y' } },
+      { url: '/admin/admins/toggle', payload: { adminId: 'x' } },
       { url: '/admin/settings', payload: { key: 'a.b', value: '1' } },
       { url: '/admin/models', payload: { label: 'x' } },
       { url: '/admin/promotions', payload: { code: 'X' } },
@@ -862,27 +935,6 @@ describe('CRUD dunia', () => {
 /* ------------------------------------------------------------------ */
 
 describe('CRUD karakter', () => {
-  /** Membuat dunia uji dan mengembalikan id-nya. */
-  async function createWorld(cookie: string): Promise<string> {
-    const response = await app.inject({
-      method: 'POST',
-      url: '/admin/worlds',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({
-        worldId: '',
-        title: 'Dunia Karakter',
-        synopsis: 'S',
-        premise: 'P',
-        coverAssetId: 'a_cover_lentera',
-        status: 'published',
-        contentRating: 'all',
-        genres: ['drama'],
-        locales: ['id-ID'],
-      }),
-    });
-    return String(response.headers.location).split('/admin/worlds/')[1]?.split('?')[0] ?? '';
-  }
-
   it('menambah karakter dan menaikkan versi dunianya', async () => {
     const cookie = await login();
     const worldId = await createWorld(cookie);
@@ -1700,6 +1752,632 @@ describe('akun admin', () => {
     // Mengunci diri sendiri akan mengakhiri sesi ini juga.
     const still = await admins.findAdminByUsername(ADMIN_USERNAME);
     expect(still?.isActive).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Siklus hidup dunia.
+ *
+ * Yang diuji di sini adalah cacat yang tidak pernah muncul sebagai galat:
+ * halaman dunia menyuruh admin "ubah statusnya menjadi retired", tetapi
+ * formulirnya tidak punya pilihan itu, sehingga permintaan itu berakhir
+ * sebagai penolakan yang diam-diam.
+ */
+describe('siklus hidup dunia', () => {
+  it('menyimpan keempat status dunia', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Siklus');
+
+    for (const status of ['draft', 'published', 'retired', 'revoked'] as const) {
+      await app.inject({
+        method: 'POST',
+        url: '/admin/worlds',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        payload: form({
+          worldId,
+          title: 'Dunia Siklus',
+          synopsis: 'S',
+          premise: 'P',
+          coverAssetId: 'a_cover_lentera',
+          status,
+          contentRating: 'all',
+          genres: ['drama'],
+          locales: ['id-ID'],
+        }),
+      });
+
+      const world = await catalogAdmin.findWorld(worldId);
+      expect(world?.status, `status ${status} seharusnya tersimpan`).toBe(status);
+    }
+  });
+
+  it('menampilkan keempat status pada formulir dunia', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Pilihan');
+
+    const page = await app.inject({ method: 'GET', url: `/admin/worlds/${worldId}`, headers: { cookie } });
+    expect(page.statusCode).toBe(200);
+
+    // Keempatnya harus ADA sebagai pilihan, bukan hanya dua.
+    for (const status of ['draft', 'published', 'retired', 'revoked']) {
+      expect(page.body, `pilihan ${status} seharusnya ada`).toContain(`value="${status}"`);
+    }
+    // Dan bedanya dijelaskan, bukan diserahkan ke ingatan admin.
+    expect(page.body).toContain('tetap bisa dilanjutkan');
+    expect(page.body).toContain('tidak lagi dilayani');
+  });
+
+  it('menampilkan status dengan label yang dapat dibaca pada daftar dunia', async () => {
+    const cookie = await login();
+    await createWorld(cookie, 'Dunia Ditarik', 'revoked');
+
+    const page = await app.inject({ method: 'GET', url: '/admin/worlds', headers: { cookie } });
+    expect(page.statusCode).toBe(200);
+    expectRenderedMarkup(page.body, ['<td', '<table']);
+
+    // Labelnya terbaca, dan nilai mentahnya tetap terlihat karena itulah yang
+    // dipakai kueri serta log.
+    expect(page.body).toContain('dicabut');
+    expect(page.body).toContain('>revoked<');
+  });
+
+  it('menarik dunia mengeluarkan versi terbitnya dari katalog', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Yang Ditarik');
+
+    // Versi 1 terbit. Perjalanan pemain menguncinya.
+    await ctx.db.query("INSERT INTO accounts (account_id) VALUES ('acc_tarik')");
+    await ctx.db.query(
+      `INSERT INTO journeys (journey_id, account_id, world_id, world_version, persona_name,
+                             persona_age, response_locale)
+       VALUES ('jr_tarik', 'acc_tarik', $1, 1, 'Rani', 24, 'id-ID')`,
+      [worldId],
+    );
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/worlds',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        worldId,
+        title: 'Dunia Yang Ditarik',
+        synopsis: 'S',
+        premise: 'P',
+        coverAssetId: 'a_cover_lentera',
+        status: 'retired',
+        contentRating: 'all',
+        genres: ['drama'],
+        locales: ['id-ID'],
+      }),
+    });
+
+    // Inilah intinya: tidak boleh ada lagi versi terbit, kalau tidak pemain
+    // tetap melihat dunia yang baru saja ditarik.
+    const { rows } = await ctx.db.query<{ total: number }>(
+      `SELECT count(*)::int AS total FROM world_versions
+       WHERE world_id = $1 AND status = 'published'`,
+      [worldId],
+    );
+    expect(rows[0]?.total).toBe(0);
+
+    // Perjalanan pemain tidak ikut berubah — itulah bedanya ditarik dari dihapus.
+    const { rows: journeys } = await ctx.db.query<{ world_version: number }>(
+      'SELECT world_version FROM journeys WHERE journey_id = $1',
+      ['jr_tarik'],
+    );
+    expect(journeys[0]?.world_version).toBe(1);
+  });
+
+  it('menampilkan riwayat versi pada halaman dunia', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Berversi');
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/worlds',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        worldId,
+        title: 'Dunia Berversi (revisi)',
+        synopsis: 'S',
+        premise: 'P',
+        coverAssetId: 'a_cover_lentera',
+        status: 'published',
+        contentRating: 'all',
+        genres: ['drama'],
+        locales: ['id-ID'],
+      }),
+    });
+
+    const page = await app.inject({ method: 'GET', url: `/admin/worlds/${worldId}`, headers: { cookie } });
+    expect(page.statusCode).toBe(200);
+    expectRenderedMarkup(page.body, ['Riwayat versi', '<td', 'v2', 'v1']);
+
+    const history = await catalogAdmin.listWorldVersions(worldId);
+    expect(history.map((row) => row.worldVersion)).toEqual([2, 1]);
+    // Versi lama diarsipkan, bukan dihapus, dan judulnya tetap yang lama.
+    expect(history[1]?.status).toBe('retired');
+    expect(history[1]?.title).toBe('Dunia Berversi');
+    expect(history[0]?.title).toBe('Dunia Berversi (revisi)');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('ubah dan hapus karakter', () => {
+  /** Membuat dunia dan satu karakter di dalamnya. */
+  async function createCharacter(cookie: string, name: string): Promise<{ worldId: string; npcId: string }> {
+    const worldId = await createWorld(cookie, 'Dunia Hapus Karakter');
+    await app.inject({
+      method: 'POST',
+      url: '/admin/characters',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        worldId,
+        npcId: '',
+        name,
+        role: 'peran',
+        publicBackstory: 'latar',
+        initialRelation: 'normal',
+        defaultPortraitAssetId: 'p_penjaga_netral',
+        traits: 'sabar',
+        expressions: 'netral',
+      }),
+    });
+    const npcId = (await catalogAdmin.listCharacters(worldId)).find((npc) => npc.name === name)?.npcId ?? '';
+    return { worldId, npcId };
+  }
+
+  it('membuka formulir karakter dengan isian yang sudah terpasang', async () => {
+    const cookie = await login();
+    const { worldId, npcId } = await createCharacter(cookie, 'Karakter Terpasang');
+
+    const page = await app.inject({
+      method: 'GET',
+      url: `/admin/characters-form?world=${encodeURIComponent(worldId)}&npc=${encodeURIComponent(npcId)}`,
+      headers: { cookie },
+    });
+    expect(page.statusCode).toBe(200);
+    expectRenderedMarkup(page.body, ['Ubah karakter', '<input']);
+    // Isian terpasang dari versi terbaru, bukan kosong.
+    expect(page.body).toContain('value="Karakter Terpasang"');
+    expect(page.body).toContain(`value="${npcId}"`);
+  });
+
+  it('menghapus karakter lewat versi baru tanpa menyentuh versi lama', async () => {
+    const cookie = await login();
+    const { worldId, npcId } = await createCharacter(cookie, 'Karakter Dihapus');
+
+    const before = await catalogAdmin.findWorld(worldId);
+    expect(before?.worldVersion).toBe(2);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/characters/delete',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, npcId }),
+    });
+    expect(response.statusCode).toBe(302);
+
+    const characters = await catalogAdmin.listCharacters(worldId);
+    expect(characters.find((npc) => npc.npcId === npcId)).toBeUndefined();
+
+    // Versi lama tetap memuat karakternya — itulah janji kepada pemain yang
+    // sedang membaca versi itu.
+    const { rows } = await ctx.db.query<{ name: string }>(
+      'SELECT name FROM world_characters WHERE world_id = $1 AND world_version = 2 AND npc_id = $2',
+      [worldId, npcId],
+    );
+    expect(rows[0]?.name).toBe('Karakter Dihapus');
+
+    const after = await catalogAdmin.findWorld(worldId);
+    expect(after?.worldVersion).toBe(3);
+  });
+
+  it('mencatat penghapusan karakter di audit', async () => {
+    const cookie = await login();
+    const { worldId, npcId } = await createCharacter(cookie, 'Karakter Beraudit');
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/characters/delete',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, npcId }),
+    });
+
+    const { rows } = await ctx.db.query<{ action: string; target_id: string }>(
+      "SELECT action, target_id FROM admin_audit_log WHERE action = 'character.delete'",
+    );
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.target_id).toBe(`${worldId}/${npcId}`);
+  });
+
+  it('menolak menghapus karakter yang tidak ada tanpa menaikkan versi', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Tanpa Karakter');
+    const before = await catalogAdmin.findWorld(worldId);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/characters/delete',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, npcId: 'npc_tidak_pernah_ada' }),
+    });
+    expect(response.statusCode).toBe(302);
+
+    // Versi tidak boleh naik hanya karena permintaan yang tidak berlaku.
+    const after = await catalogAdmin.findWorld(worldId);
+    expect(after?.worldVersion).toBe(before?.worldVersion);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('lokasi', () => {
+  it('menambah, mengubah, dan menghapus lokasi', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Lokasi');
+    const startVersion = (await catalogAdmin.findWorld(worldId))?.worldVersion ?? 1;
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/locations',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, locationId: '', label: 'Ruang Rapat Kecil' }),
+    });
+
+    const world = await catalogAdmin.findWorld(worldId);
+    const added = await catalogAdmin.listLocations(worldId, world!.worldVersion);
+    const created = added.find((row) => row.label === 'Ruang Rapat Kecil');
+    expect(created).toBeDefined();
+    // ID diturunkan dari labelnya supaya terbaca, bukan deretan acak.
+    expect(created?.locationId).toBe('loc_ruang_rapat_kecil');
+    expect(world?.worldVersion).toBe(startVersion + 1);
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/locations',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, locationId: created!.locationId, label: 'Ruang Rapat Besar' }),
+    });
+
+    const afterEdit = await catalogAdmin.findWorld(worldId);
+    const edited = await catalogAdmin.listLocations(worldId, afterEdit!.worldVersion);
+    expect(edited.find((row) => row.locationId === created!.locationId)?.label).toBe('Ruang Rapat Besar');
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/locations/delete',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, locationId: created!.locationId }),
+    });
+
+    const afterDelete = await catalogAdmin.findWorld(worldId);
+    const remaining = await catalogAdmin.listLocations(worldId, afterDelete!.worldVersion);
+    expect(remaining.find((row) => row.locationId === created!.locationId)).toBeUndefined();
+  });
+
+  it('mencatat perubahan lokasi di audit', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Lokasi Audit');
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/locations',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, locationId: '', label: 'Lobi Utama' }),
+    });
+    await app.inject({
+      method: 'POST',
+      url: '/admin/locations/delete',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, locationId: 'loc_lobi_utama' }),
+    });
+
+    const { rows } = await ctx.db.query<{ action: string }>(
+      "SELECT action FROM admin_audit_log WHERE target_kind = 'location' ORDER BY created_at ASC",
+    );
+    expect(rows.map((row) => row.action)).toEqual(['location.create', 'location.delete']);
+  });
+
+  it('merender halaman lokasi sebagai tabel, bukan teks markup', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Halaman Lokasi');
+    await app.inject({
+      method: 'POST',
+      url: '/admin/locations',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ worldId, locationId: '', label: 'Teras Belakang' }),
+    });
+
+    const page = await app.inject({
+      method: 'GET',
+      url: `/admin/locations?world=${encodeURIComponent(worldId)}`,
+      headers: { cookie },
+    });
+    expect(page.statusCode).toBe(200);
+    // Bukan 500, dan markupnya benar-benar tersusun.
+    expectRenderedMarkup(page.body, ['<table', '<td', 'loc_teras_belakang', '/admin/locations']);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('aset', () => {
+  it('merender halaman aset sebagai tabel, bukan teks markup', async () => {
+    const cookie = await login();
+    const page = await app.inject({ method: 'GET', url: '/admin/assets', headers: { cookie } });
+
+    expect(page.statusCode).toBe(200);
+    expectRenderedMarkup(page.body, ['<table', '<td', 'a_cover_kantor', 'p_elysia_netral']);
+  });
+
+  it('hanya menampilkan aset yang benar-benar ada di basis data', async () => {
+    const cookie = await login();
+    const page = await app.inject({ method: 'GET', url: '/admin/assets', headers: { cookie } });
+
+    const assets = await catalogAdmin.listAssets();
+    const known = [...assets.covers, ...assets.backgrounds, ...assets.portraits].map((a) => a.assetId);
+    expect(known.length).toBeGreaterThan(0);
+    for (const assetId of known) {
+      expect(page.body, `${assetId} seharusnya tampil`).toContain(assetId);
+    }
+
+    // Tidak ada jalur unggah: halaman ini hanya daftar, dan mengatakannya.
+    expect(page.body).not.toContain('type="file"');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('halaman kelola admin', () => {
+  it('menampilkan daftar admin yang terdaftar', async () => {
+    const cookie = await login();
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/admins',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        username: 'editor_satu',
+        displayName: 'Editor Satu',
+        password: 'kata-sandi-uji-999',
+        role: 'editor',
+      }),
+    });
+
+    const page = await app.inject({ method: 'GET', url: '/admin/admins', headers: { cookie } });
+    expect(page.statusCode).toBe(200);
+    expectRenderedMarkup(page.body, ['<table', '<td', 'editor_satu', 'Editor Satu', ADMIN_USERNAME]);
+    expect(page.body).toContain('2 akun terdaftar');
+  });
+
+  it('tidak menawarkan tombol nonaktifkan untuk diri sendiri', async () => {
+    const cookie = await login();
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/admins',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        username: 'editor_dua',
+        password: 'kata-sandi-uji-999',
+        role: 'editor',
+      }),
+    });
+
+    const page = await app.inject({ method: 'GET', url: '/admin/admins', headers: { cookie } });
+    const toggleForms = page.body.match(/action="\/admin\/admins\/toggle"/g) ?? [];
+
+    // Dua admin terdaftar, tetapi hanya SATU tombol: yang untuk admin lain.
+    expect(toggleForms).toHaveLength(1);
+    expect(page.body).toContain('tidak dapat menonaktifkan diri sendiri');
+    // Barisnya sendiri ditandai, supaya jelas siapa "anda".
+    expect(page.body).toContain('anda');
+  });
+
+  it('tetap menolak menonaktifkan diri sendiri bila diminta langsung', async () => {
+    const cookie = await login();
+    const me = await admins.findAdminByUsername(ADMIN_USERNAME);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/admins/toggle',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ adminId: me!.adminId, isActive: 'false' }),
+    });
+
+    // Penolakan tetap di server; menyembunyikan tombol hanyalah kejelasan.
+    expect(response.statusCode).toBe(302);
+    expect(response.headers.location).toContain('/admin/admins');
+    expect((await admins.findAdminByUsername(ADMIN_USERNAME))?.isActive).toBe(true);
+  });
+
+  it('menonaktifkan admin lain dan mencatatnya di audit', async () => {
+    const cookie = await login();
+    await admins.createAdmin({
+      username: 'editor_tiga',
+      password: 'kata-sandi-uji-999',
+      displayName: 'Editor Tiga',
+      role: 'editor',
+    });
+    const target = await admins.findAdminByUsername('editor_tiga');
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/admins/toggle',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ adminId: target!.adminId, isActive: 'false' }),
+    });
+
+    expect((await admins.findAdminByUsername('editor_tiga'))?.isActive).toBe(false);
+
+    const { rows } = await ctx.db.query<{ action: string }>(
+      "SELECT action FROM admin_audit_log WHERE target_kind = 'admin' ORDER BY created_at DESC LIMIT 1",
+    );
+    expect(rows[0]?.action).toBe('admin.deactivate');
+  });
+
+  it('menolak menambah admin bila bukan owner', async () => {
+    await admins.createAdmin({
+      username: 'bukan_owner',
+      password: 'kata-sandi-uji-999',
+      displayName: 'Bukan Owner',
+      role: 'editor',
+    });
+    const cookie = await loginAs('bukan_owner', 'kata-sandi-uji-999');
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/admins',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ username: 'orang_lain', password: 'kata-sandi-uji-999', role: 'editor' }),
+    });
+
+    expect(await admins.findAdminByUsername('orang_lain')).toBeNull();
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('saringan catatan audit', () => {
+  /** Menyiapkan dua admin yang masing-masing melakukan satu tindakan. */
+  async function seedAudit(): Promise<void> {
+    await admins.createAdmin({
+      username: 'editor_audit',
+      password: 'kata-sandi-uji-999',
+      displayName: 'Editor Audit',
+      role: 'editor',
+    });
+
+    const ownerCookie = await login();
+    await app.inject({
+      method: 'POST',
+      url: '/admin/settings',
+      headers: { cookie: ownerCookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ key: 'promo.banner_text', value: 'Diskon', description: 'uji' }),
+    });
+
+    const editorCookie = await loginAs('editor_audit', 'kata-sandi-uji-999');
+    await app.inject({
+      method: 'POST',
+      url: '/admin/promotions',
+      headers: { cookie: editorCookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        promotionId: '',
+        code: 'AUDIT2026',
+        bonusTokens: '1000',
+        maxRedemptions: '0',
+        tierRequirement: 'any',
+        isActive: 'on',
+      }),
+    });
+  }
+
+  it('menyaring menurut tindakan', async () => {
+    const cookie = await login();
+    await seedAudit();
+
+    const all = await app.inject({ method: 'GET', url: '/admin/audit', headers: { cookie } });
+    expect(all.statusCode).toBe(200);
+    expectRenderedMarkup(all.body, ['<table', '<td', '<option value="promotion.create"']);
+    expect(auditPillCount(all.body, 'setting.update')).toBeGreaterThan(0);
+    expect(auditPillCount(all.body, 'promotion.create')).toBeGreaterThan(0);
+
+    const filtered = await app.inject({
+      method: 'GET',
+      url: '/admin/audit?action=promotion.create',
+      headers: { cookie },
+    });
+    expect(filtered.statusCode).toBe(200);
+    expectRenderedMarkup(filtered.body, ['<table', '<td']);
+    expect(auditPillCount(filtered.body, 'promotion.create')).toBeGreaterThan(0);
+    // Yang disaring keluar tidak boleh muncul sebagai baris. Pil pada MENU
+    // saringan tetap ada — itulah yang membuat "tidak memuat teksnya" bukan
+    // pemeriksaan yang benar di sini.
+    expect(auditPillCount(filtered.body, 'setting.update')).toBe(0);
+    expect(filtered.body).toContain('cocok dengan saringan');
+  });
+
+  it('menyaring menurut admin', async () => {
+    const cookie = await login();
+    await seedAudit();
+
+    const filtered = await app.inject({
+      method: 'GET',
+      url: '/admin/audit?username=editor_audit',
+      headers: { cookie },
+    });
+    expect(filtered.statusCode).toBe(200);
+    expectRenderedMarkup(filtered.body, ['<table', '<td', 'editor_audit']);
+    expect(auditPillCount(filtered.body, 'setting.update')).toBe(0);
+    expect(auditPillCount(filtered.body, 'promotion.create')).toBeGreaterThan(0);
+  });
+
+  it('mengembalikan seluruh catatan bila saringan dikosongkan', async () => {
+    const cookie = await login();
+    await seedAudit();
+
+    const filtered = await app.inject({
+      method: 'GET',
+      url: '/admin/audit?username=editor_audit&action=login.ok',
+      headers: { cookie },
+    });
+    expect(auditPillCount(filtered.body, 'promotion.create')).toBe(0);
+
+    const unfiltered = await app.inject({ method: 'GET', url: '/admin/audit', headers: { cookie } });
+    expect(auditPillCount(unfiltered.body, 'promotion.create')).toBeGreaterThan(0);
+    expect(unfiltered.body).not.toContain('cocok dengan saringan');
+  });
+
+  it('menyaring di basis data, bukan di memori', async () => {
+    await seedAudit();
+    // Bukti langsung pada repository: saringan mengubah hasil kuerinya.
+    const all = await admins.listAudit(100);
+    const onlyPromotions = await admins.listAudit(100, { action: 'promotion.create' });
+
+    expect(onlyPromotions.length).toBeGreaterThan(0);
+    expect(onlyPromotions.length).toBeLessThan(all.length);
+    expect(onlyPromotions.every((entry) => entry.action === 'promotion.create')).toBe(true);
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+describe('ringkasan', () => {
+  it('menampilkan jumlah dunia per status, akun, perjalanan, dan keadaan mesin', async () => {
+    const cookie = await login();
+    await createWorld(cookie, 'Dunia Ringkasan Draft', 'draft');
+    await createWorld(cookie, 'Dunia Ringkasan Ditarik', 'revoked');
+
+    const page = await app.inject({ method: 'GET', url: '/admin', headers: { cookie } });
+    expect(page.statusCode).toBe(200);
+    expectRenderedMarkup(page.body, ['<div class="stat">']);
+
+    // Keempat status selalu ditampilkan, termasuk yang jumlahnya nol.
+    for (const label of ['terbit', 'draft', 'ditarik', 'dicabut']) {
+      expect(page.body, `status ${label} seharusnya tampil di ringkasan`).toContain(`>${label} <`);
+    }
+    expect(page.body).toContain('Akun pemain');
+    expect(page.body).toContain('Perjalanan');
+
+    // Keadaan mesin cerita berasal dari fakta server, bukan tebakan.
+    expect(page.body).toContain('storyEngine.simulator');
+    expect(page.body).toContain('engine.simulator');
+  });
+
+  it('menghitung dunia menurut versi terbarunya', async () => {
+    const cookie = await login();
+    const before = await catalogAdmin.listWorlds();
+    const publishedBefore = before.filter((world) => world.status === 'published').length;
+
+    await createWorld(cookie, 'Dunia Terbit Baru', 'published');
+
+    const after = await catalogAdmin.listWorlds();
+    const publishedAfter = after.filter((world) => world.status === 'published').length;
+    expect(publishedAfter).toBe(publishedBefore + 1);
   });
 });
 

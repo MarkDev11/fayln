@@ -304,9 +304,35 @@ export class AdminRepository {
     );
   }
 
-  async listAudit(limit = 100): Promise<
+  /**
+   * Catatan audit terbaru, dengan saringan opsional.
+   *
+   * Saringan dibangun sebagai kondisi SQL yang digabung, BUKAN dengan menarik
+   * seluruh baris lalu menyaringnya di JavaScript. Log audit tumbuh tanpa batas;
+   * menyaring di memori berarti membaca semuanya untuk menampilkan lima puluh
+   * baris. Nilai kosong berarti "jangan disaring", sehingga pemanggil tidak
+   * perlu memilih antara dua fungsi.
+   */
+  async listAudit(
+    limit = 100,
+    filter: { username?: string; action?: string } = {},
+  ): Promise<
     { action: string; username: string; targetKind: string; targetId: string; createdAt: Date | string }[]
   > {
+    const values: unknown[] = [limit];
+    const conditions: string[] = [];
+
+    if (filter.username) {
+      values.push(filter.username);
+      conditions.push(`username = $${values.length}`);
+    }
+    if (filter.action) {
+      values.push(filter.action);
+      conditions.push(`action = $${values.length}`);
+    }
+
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+
     const { rows } = await this.db.query<{
       action: string;
       username: string;
@@ -315,8 +341,8 @@ export class AdminRepository {
       created_at: Date | string;
     }>(
       `SELECT action, username, target_kind, target_id, created_at
-       FROM admin_audit_log ORDER BY created_at DESC LIMIT $1`,
-      [limit],
+       FROM admin_audit_log${where} ORDER BY created_at DESC LIMIT $1`,
+      values,
     );
 
     return rows.map((row) => ({
@@ -326,6 +352,26 @@ export class AdminRepository {
       targetId: row.target_id,
       createdAt: row.created_at,
     }));
+  }
+
+  /**
+   * Nilai yang tersedia untuk saringan audit.
+   *
+   * Diambil dari basis data, bukan dari daftar yang ditulis di kode: daftar
+   * aksi bertambah setiap ada tindakan baru, dan daftar yang ditulis tangan
+   * akan tertinggal diam-diam.
+   */
+  async auditFacets(): Promise<{ usernames: string[]; actions: string[] }> {
+    const [usernames, actions] = await Promise.all([
+      this.distinctValues('SELECT DISTINCT username AS value FROM admin_audit_log ORDER BY value ASC'),
+      this.distinctValues('SELECT DISTINCT action AS value FROM admin_audit_log ORDER BY value ASC'),
+    ]);
+    return { usernames, actions };
+  }
+
+  private async distinctValues(sql: string): Promise<string[]> {
+    const { rows } = await this.db.query<{ value: string }>(sql);
+    return rows.map((row) => row.value).filter((value) => typeof value === 'string' && value !== '');
   }
 }
 

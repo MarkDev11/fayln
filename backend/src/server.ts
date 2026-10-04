@@ -26,6 +26,7 @@ import type { CatalogRepository } from './repositories/catalogRepository';
 import type { ReportRepository } from './repositories/reportRepository';
 import type { UsageRepository } from './repositories/usageRepository';
 import type { JourneyService } from './services/journeyService';
+import { STORY_ENGINE_IS_SIMULATOR } from './services/storyEngine';
 import { CURRENT_IDENTITY_MODE, registerIdentityHook } from './http/identity';
 
 export const SERVICE_VERSION = '0.1.0';
@@ -224,7 +225,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     },
     storyEngine: {
       // Dinyatakan terbuka supaya tidak ada yang menyangka ini AI produksi.
-      simulator: true,
+      // Sumbernya satu konstanta, bukan angka yang diketik ulang — panel admin
+      // membaca konstanta yang sama.
+      simulator: STORY_ENGINE_IS_SIMULATOR,
     },
   }));
 

@@ -61,6 +61,21 @@ export interface StoryEngine {
   generateTurn(context: StoryContext): Promise<StoryEngineResult>;
 }
 
+/**
+ * Apakah mesin cerita yang TERPASANG masih simulator.
+ *
+ * Satu sumber kebenaran untuk tiga tempat yang harus sependapat: penanda
+ * `simulator` pada setiap envelope, `storyEngine.simulator` pada `/v1/meta`
+ * (yang dibaca pemain), dan kartu mesin cerita di panel admin. Menuliskannya
+ * tiga kali di tiga berkas berarti tiga tempat yang dapat berbohong sendiri.
+ *
+ * Penanda ini bukan pengaturan: mengubahnya tidak mengubah mesin yang
+ * dijalankan. Yang bisa diubah dari panel adalah pengaturan
+ * `engine.simulator`, yang hanya menandai niat — karena itu panel
+ * menampilkan keduanya dan memperingatkan bila keduanya tidak sejalan.
+ */
+export const STORY_ENGINE_IS_SIMULATOR = true;
+
 /** Model simulasi. Bukan nama model produksi dan bukan janji apa pun. */
 export const SIMULATOR_MODEL_ID = 'simulator/deterministic-v1';
 const SIMULATOR_MODEL_VERSION = '1.0.0';

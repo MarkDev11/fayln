@@ -36,7 +36,7 @@ import { ReportRepository } from './repositories/reportRepository';
 import { UsageRepository } from './repositories/usageRepository';
 import { buildApp } from './server';
 import { JourneyService } from './services/journeyService';
-import { DeterministicStoryEngine } from './services/storyEngine';
+import { DeterministicStoryEngine, STORY_ENGINE_IS_SIMULATOR } from './services/storyEngine';
 
 async function main(): Promise<void> {
   const config = parseConfig();
@@ -148,7 +148,7 @@ async function main(): Promise<void> {
     {
       port: config.port,
       nodeEnv: config.nodeEnv,
-      simulator: true,
+      simulator: STORY_ENGINE_IS_SIMULATOR,
     },
     'fayLN backend siap menerima permintaan.',
   );

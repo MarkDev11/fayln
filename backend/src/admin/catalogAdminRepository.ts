@@ -20,8 +20,39 @@
 
 import { randomUUID } from 'node:crypto';
 
-import type { Database } from '../db/pool';
+import type { Database, DbClient } from '../db/pool';
 import type { ContentRating, GenreId, RelationStatus, ResponseLocale } from '../contracts/types';
+
+/**
+ * Empat keadaan dunia, sesuai CHECK constraint pada `world_versions`.
+ *
+ * `retired` dan `revoked` berdua menarik dunia dari katalog, tetapi tidak
+ * searti — dan bedanya menentukan nasib pemain yang SUDAH punya perjalanan:
+ *   - `retired` — ditarik dari katalog, perjalanan yang sudah ada tetap dapat
+ *     dilanjutkan sampai selesai.
+ *   - `revoked` — ditarik seluruhnya; dunia tidak lagi dilayani, termasuk untuk
+ *     perjalanan yang sedang berjalan.
+ */
+export type WorldStatus = 'draft' | 'published' | 'retired' | 'revoked';
+
+/**
+ * Terjemahan status dunia untuk dibaca manusia.
+ *
+ * Sengaja diletakkan di sebelah tipe `WorldStatus`, bukan di halaman: bila
+ * suatu hari ada status kelima, tempat yang harus diingat hanya satu. Halaman
+ * dunia, riwayat versi, dan ringkasan semuanya membaca daftar ini.
+ */
+export const WORLD_STATUS_LABELS: Record<WorldStatus, string> = {
+  draft: 'draft',
+  published: 'terbit',
+  retired: 'ditarik',
+  revoked: 'dicabut',
+};
+
+/** Label status yang dapat dibaca; nilai yang tidak dikenal dikembalikan apa adanya. */
+export function worldStatusLabel(status: string): string {
+  return WORLD_STATUS_LABELS[status as WorldStatus] ?? status;
+}
 
 export type WorldAdminRow = {
   worldId: string;
@@ -30,7 +61,7 @@ export type WorldAdminRow = {
   synopsis: string;
   premise: string;
   coverAssetId: string;
-  status: 'draft' | 'published' | 'retired' | 'revoked';
+  status: WorldStatus;
   contentRating: ContentRating;
   publishedAt: Date | string | null;
   createdAt: Date | string;
@@ -62,6 +93,19 @@ export type LocationAdminRow = {
   position: number;
 };
 
+/** Satu baris riwayat versi dunia, seperti yang dilihat admin di halaman dunia. */
+export type WorldVersionAdminRow = {
+  worldVersion: number;
+  title: string;
+  status: WorldStatus;
+  publishedAt: Date | string | null;
+  createdAt: Date | string;
+  characterCount: number;
+  locationCount: number;
+  /** Perjalanan pemain yang mengunci versi ini. Versi dengan angka > 0 tidak boleh hilang. */
+  journeyCount: number;
+};
+
 export type WorldSaveInput = {
   worldId: string | null;
   title: string;
@@ -69,7 +113,7 @@ export type WorldSaveInput = {
   premise: string;
   coverAssetId: string;
   contentRating: ContentRating;
-  status: 'draft' | 'published';
+  status: WorldStatus;
   genres: GenreId[];
   locales: ResponseLocale[];
 };
@@ -84,6 +128,13 @@ export type CharacterSaveInput = {
   defaultPortraitAssetId: string;
   traits: string[];
   expressions: string[];
+};
+
+export type LocationSaveInput = {
+  worldId: string;
+  /** Kosong berarti lokasi baru; ID-nya dibuat di sini. */
+  locationId: string | null;
+  label: string;
 };
 
 export class CatalogAdminRepository {
@@ -178,6 +229,44 @@ export class CatalogAdminRepository {
   }
 
   /**
+   * Riwayat seluruh versi satu dunia, dari yang terbaru.
+   *
+   * Ditampilkan di halaman dunia supaya admin dapat melihat apa yang berubah
+   * dari versi ke versi — dan, yang lebih penting, versi mana yang masih
+   * dikunci perjalanan pemain sehingga tidak boleh hilang.
+   */
+  async listWorldVersions(worldId: string): Promise<WorldVersionAdminRow[]> {
+    const { rows } = await this.db.query<{
+      world_version: number;
+      title: string;
+      status: string;
+      published_at: Date | string | null;
+      created_at: Date | string;
+    }>(
+      `SELECT world_version, title, status, published_at, created_at
+       FROM world_versions WHERE world_id = $1 ORDER BY world_version DESC`,
+      [worldId],
+    );
+
+    // Hitungan diambil per versi dalam kueri terpisah, bukan sebagai sub-kueri
+    // berkorelasi — lihat catatan pada `listWorlds`.
+    const characters = await this.countByWorldVersionFor(worldId, 'world_characters');
+    const locations = await this.countByWorldVersionFor(worldId, 'world_locations');
+    const journeys = await this.countJourneysByVersion(worldId);
+
+    return rows.map((row) => ({
+      worldVersion: row.world_version,
+      title: row.title,
+      status: row.status as WorldStatus,
+      publishedAt: row.published_at,
+      createdAt: row.created_at,
+      characterCount: characters.get(row.world_version) ?? 0,
+      locationCount: locations.get(row.world_version) ?? 0,
+      journeyCount: journeys.get(row.world_version) ?? 0,
+    }));
+  }
+
+  /**
    * Menyimpan dunia: membuat versi pertama, atau menyalin ke versi baru.
    *
    * Mengembalikan nomor versi yang baru ditulis beserta penanda apakah ini
@@ -225,10 +314,20 @@ export class CatalogAdminRepository {
       const worldVersion = isFirstVersion ? 1 : previousMax + 1;
       const isNewVersion = !isFirstVersion;
 
-      // Versi baru selalu lahir sebagai draft, lalu dinaikkan bila diminta.
-      // Alasannya: menulis versi terbit secara langsung akan membuat perubahan
-      // setengah jadi terlihat pemain.
-      const finalStatus = input.status === 'published' ? 'published' : 'draft';
+      /*
+       * Status dipakai apa adanya, bukan dipaksa menjadi draft.
+       *
+       * Dulu hanya `published` yang diteruskan dan sisanya menjadi draft. Itu
+       * membuat panel meminta hal yang tidak dapat dilakukannya: halaman dunia
+       * menyuruh admin "ubah statusnya menjadi retired" untuk menarik dunia
+       * yang dipakai perjalanan pemain, tetapi pilihan statusnya tidak punya
+       * `retired`, sehingga permintaan itu berakhir sebagai draft.
+       *
+       * `retired` dan `revoked` adalah PENARIKAN, bukan penerbitan — keduanya
+       * tidak pernah membuat konten baru terlihat pemain, jadi aman ditulis
+       * langsung ke versi ini.
+       */
+      const finalStatus: WorldStatus = input.status;
 
       /*
        * URUTAN PENTING: baris `world_versions` ditulis SEBELUM salinan isinya.
@@ -288,13 +387,23 @@ export class CatalogAdminRepository {
         );
       }
 
-      // Bila versi baru diterbitkan, versi terbit sebelumnya diarsipkan. Barisnya
-      // TIDAK dihapus: perjalanan lama masih menunjuk ke sana.
-      if (finalStatus === 'published' && previousStatus === 'published' && previousMax !== null) {
+      /*
+       * Satu dunia tidak boleh punya dua versi terbit, dan versi terbit yang
+       * diganti tidak boleh tetap terlihat pemain.
+       *
+       * - Menerbitkan versi baru: versi terbit lama diarsipkan (`retired`).
+       * - Menarik versi baru (`retired`/`revoked`): versi terbit lama ikut
+       *   ditarik dengan status yang sama. Tanpa ini, "tarik dunia ini" hanya
+       *   menandai versi baru dan pemain tetap melihat versi lamanya di katalog.
+       *
+       * Barisnya TIDAK dihapus: perjalanan lama masih menunjuk ke sana.
+       */
+      if (previousStatus === 'published' && (finalStatus === 'published' || isWithdrawn(finalStatus))) {
+        const archiveStatus: WorldStatus = finalStatus === 'published' ? 'retired' : finalStatus;
         await client.query(
-          `UPDATE world_versions SET status = 'retired'
+          `UPDATE world_versions SET status = $3
            WHERE world_id = $1 AND world_version <> $2 AND status = 'published'`,
-          [worldId, worldVersion],
+          [worldId, worldVersion, archiveStatus],
         );
       }
 
@@ -385,62 +494,17 @@ export class CatalogAdminRepository {
    * Menyimpan karakter.
    *
    * Penyuntingan karakter pada dunia yang sudah terbit tetap membuat versi baru
-   * dunia: satu baris `world_characters` berkias-asing ke (world_id,
+   * dunia: satu baris `world_characters` berkunci asing ke (world_id,
    * world_version), jadi mustahil mengubah karakter tanpa versi baru.
    * Inilah alasan operasi ini menyalin versi lebih dulu.
    */
   async saveCharacter(input: CharacterSaveInput): Promise<{ npcId: string; worldVersion: number }> {
     return this.db.transaction(async (client) => {
-      const { rows: latest } = await client.query<{
-        world_version: number;
-        status: string;
-        title: string;
-        synopsis: string;
-        premise: string;
-        cover_asset_id: string;
-        content_rating: string;
-      }>(
-        `SELECT world_version, status, title, synopsis, premise, cover_asset_id, content_rating
-         FROM world_versions WHERE world_id = $1 ORDER BY world_version DESC LIMIT 1`,
-        [input.worldId],
-      );
-
-      const current = latest[0];
-      if (!current) {
+      const next = await this.openNextVersion(client, input.worldId);
+      if (!next) {
         throw new Error('Dunia belum punya versi. Buat dunianya lebih dulu.');
       }
-
-      // Karakter SELALU ditulis ke versi baru, berapa pun status dunia itu.
-      // Menyimpannya ke versi berjalan akan mengubah kanon yang dikunci perjalanan.
-      const worldVersion = current.world_version + 1;
-
-      // Salinan versi mewarisi status asal, kecuali draft yang tetap draft.
-      const inheritedStatus = current.status === 'draft' ? 'draft' : current.status;
-
-      // Baris versi ditulis SEBELUM salinan isinya — lihat catatan urutan pada
-      // saveWorld: seluruh tabel anak berkunci asing ke (world_id, world_version).
-      await client.query(
-        `INSERT INTO world_versions (
-           world_id, world_version, title, synopsis, premise, cover_asset_id,
-           status, content_rating, published_at
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
-        [
-          input.worldId,
-          worldVersion,
-          current.title,
-          current.synopsis,
-          current.premise,
-          current.cover_asset_id,
-          inheritedStatus,
-          current.content_rating,
-          inheritedStatus === 'published' ? new Date() : null,
-        ],
-      );
-
-      // Seluruh karakter dari versi sebelumnya ikut tersalin, sehingga
-      // menyunting satu karakter tidak menghapus karakter lain.
-      await this.copyVersionInto(client, input.worldId, current.world_version, worldVersion);
-
+      const { worldVersion, inheritedStatus, previousStatus } = next;
       const npcId = input.npcId ?? `npc_${slug(randomUUID())}`;
 
       const { rows: posRows } = await client.query<{ next_position: number }>(
@@ -499,15 +563,66 @@ export class CatalogAdminRepository {
         expressionPosition += 1;
       }
 
-      if (inheritedStatus === 'published' && current.status === 'published') {
-        await client.query(
-          `UPDATE world_versions SET status = 'retired'
-           WHERE world_id = $1 AND world_version <> $2 AND status = 'published'`,
-          [input.worldId, worldVersion],
-        );
-      }
+      await this.archivePublishedVersion(
+        client,
+        input.worldId,
+        worldVersion,
+        previousStatus,
+        inheritedStatus,
+      );
 
       return { npcId, worldVersion };
+    });
+  }
+
+  /**
+   * Menghapus karakter dari dunia.
+   *
+   * Menghapus karakter bukan `DELETE` pada versi yang sedang dipakai: karakter
+   * berkunci asing ke (world_id, world_version), dan perjalanan pemain
+   * menunjuk versi itu. Karena itu penghapusan berarti membuat versi baru tanpa
+   * karakter ini — persis seperti menyuntingnya.
+   *
+   * Mengembalikan `null` bila dunia atau karakternya tidak ada, supaya route
+   * dapat membedakan "tidak ketemu" dari "berhasil".
+   *
+   * Keberadaan karakter DIPERIKSA SEBELUM versi baru dibuka, bukan setelah.
+   * Mengandalkan ROLLBACK untuk membatalkan versi yang terlanjur dibuat lebih
+   * rapuh: ia berjalan di PostgreSQL, tetapi tidak dapat diandalkan di mesin
+   * in-memory yang dipakai pengujian — dan kegagalannya berbentuk versi dunia
+   * yang naik tanpa alasan, tanpa satu pun galat yang muncul.
+   */
+  async deleteCharacter(worldId: string, npcId: string): Promise<{ worldVersion: number } | null> {
+    const latest = await this.findWorld(worldId);
+    if (!latest) {
+      return null;
+    }
+
+    const { rows } = await this.db.query<{ npc_id: string }>(
+      `SELECT npc_id FROM world_characters
+       WHERE world_id = $1 AND world_version = $2 AND npc_id = $3 LIMIT 1`,
+      [worldId, latest.worldVersion, npcId],
+    );
+    if (rows.length === 0) {
+      return null;
+    }
+
+    return this.db.transaction(async (client) => {
+      const next = await this.openNextVersion(client, worldId);
+      if (!next) {
+        return null;
+      }
+      const { worldVersion, inheritedStatus, previousStatus } = next;
+
+      // Sifat dan ekspresi ikut terhapus lewat ON DELETE CASCADE pada kunci
+      // asingnya — tidak perlu dihapus satu per satu.
+      await client.query(
+        'DELETE FROM world_characters WHERE world_id = $1 AND world_version = $2 AND npc_id = $3',
+        [worldId, worldVersion, npcId],
+      );
+
+      await this.archivePublishedVersion(client, worldId, worldVersion, previousStatus, inheritedStatus);
+      return { worldVersion };
     });
   }
 
@@ -528,6 +643,88 @@ export class CatalogAdminRepository {
     }));
   }
 
+  /**
+   * Menyimpan lokasi.
+   *
+   * Mengikuti aturan yang sama dengan karakter: lokasi hidup di dalam versi,
+   * jadi menambah atau mengubahnya membuat versi baru dunianya.
+   */
+  async saveLocation(input: LocationSaveInput): Promise<{ locationId: string; worldVersion: number }> {
+    return this.db.transaction(async (client) => {
+      const next = await this.openNextVersion(client, input.worldId);
+      if (!next) {
+        throw new Error('Dunia belum punya versi. Buat dunianya lebih dulu.');
+      }
+      const { worldVersion, inheritedStatus, previousStatus } = next;
+
+      /*
+       * ID baru diturunkan dari labelnya supaya terbaca ("loc_ruang_rapat"),
+       * bukan deretan acak. Bila ID itu sudah dipakai di versi ini, diberi
+       * akhiran acak — tanpa ini, dua lokasi berlabel sama akan saling menimpa
+       * lewat ON CONFLICT DO UPDATE di bawah, dan satu lokasi hilang diam-diam.
+       */
+      let locationId = input.locationId;
+      if (!locationId) {
+        const base = locationIdFromLabel(input.label);
+        const { rows: clash } = await client.query<{ location_id: string }>(
+          `SELECT location_id FROM world_locations
+           WHERE world_id = $1 AND world_version = $2 AND location_id = $3 LIMIT 1`,
+          [input.worldId, worldVersion, base],
+        );
+        locationId = clash.length > 0 ? `${base}_${slug(randomUUID()).slice(0, 6)}` : base;
+      }
+
+      // Posisi dipertahankan untuk lokasi yang sudah ada (hasil salinan), dan
+      // diberi nomor berikutnya untuk yang baru.
+      const { rows: existing } = await client.query<{ position: number }>(
+        `SELECT position FROM world_locations
+         WHERE world_id = $1 AND world_version = $2 AND location_id = $3 LIMIT 1`,
+        [input.worldId, worldVersion, locationId],
+      );
+      let position = existing[0]?.position ?? null;
+      if (position === null) {
+        const { rows: posRows } = await client.query<{ next_position: number }>(
+          `SELECT coalesce(max(position), 0)::int + 1 AS next_position
+           FROM world_locations WHERE world_id = $1 AND world_version = $2`,
+          [input.worldId, worldVersion],
+        );
+        position = posRows[0]?.next_position ?? 1;
+      }
+
+      await client.query(
+        `INSERT INTO world_locations (world_id, world_version, location_id, label, position)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (world_id, world_version, location_id) DO UPDATE SET label = $4`,
+        [input.worldId, worldVersion, locationId, input.label, position],
+      );
+
+      await this.archivePublishedVersion(client, input.worldId, worldVersion, previousStatus, inheritedStatus);
+      return { locationId, worldVersion };
+    });
+  }
+
+  /** Menghapus lokasi dengan membuat versi baru tanpa lokasi itu. */
+  async deleteLocation(worldId: string, locationId: string): Promise<{ worldVersion: number } | null> {
+    return this.db.transaction(async (client) => {
+      const next = await this.openNextVersion(client, worldId);
+      if (!next) {
+        return null;
+      }
+      const { worldVersion, inheritedStatus, previousStatus } = next;
+
+      const { rowCount } = await client.query(
+        'DELETE FROM world_locations WHERE world_id = $1 AND world_version = $2 AND location_id = $3',
+        [worldId, worldVersion, locationId],
+      );
+      if (rowCount === 0) {
+        throw new Error('Lokasi tidak ditemukan pada versi terbaru dunia ini.');
+      }
+
+      await this.archivePublishedVersion(client, worldId, worldVersion, previousStatus, inheritedStatus);
+      return { worldVersion };
+    });
+  }
+
   /* ---------------------------------------------------------------- */
   /* Aset yang tersedia untuk dipilih                                  */
   /* ---------------------------------------------------------------- */
@@ -542,6 +739,7 @@ export class CatalogAdminRepository {
   async listAssets(): Promise<{
     covers: { assetId: string; label: string; uri: string }[];
     portraits: { assetId: string; label: string; uri: string; npcId: string }[];
+    backgrounds: { assetId: string; label: string; uri: string }[];
   }> {
     const { rows } = await this.db.query<{
       asset_id: string;
@@ -566,12 +764,159 @@ export class CatalogAdminRepository {
           uri: row.uri,
           npcId: row.npc_id ?? '',
         })),
+      backgrounds: rows
+        .filter((row) => row.kind === 'background')
+        .map((row) => ({ assetId: row.asset_id, label: row.label, uri: row.uri })),
     };
+  }
+
+  /**
+   * Berapa versi dunia yang memakai setiap aset.
+   *
+   * Dihitung dari dua kueri terpisah (sampul dunia dan potret karakter), bukan
+   * satu kueri gabungan, karena keduanya menunjuk aset dari tabel yang berbeda.
+   * Angkanya yang membuat halaman aset berguna: ia menjawab "amanakah aset ini
+   * diganti?" sebelum seseorang mengubahnya.
+   */
+  async assetUsage(): Promise<Map<string, number>> {
+    const [covers, portraits] = await Promise.all([
+      this.db.query<{ asset_id: string; total: number }>(
+        `SELECT cover_asset_id AS asset_id, count(*)::int AS total
+         FROM world_versions GROUP BY cover_asset_id`,
+      ),
+      this.db.query<{ asset_id: string; total: number }>(
+        `SELECT default_portrait_asset_id AS asset_id, count(*)::int AS total
+         FROM world_characters GROUP BY default_portrait_asset_id`,
+      ),
+    ]);
+
+    const result = new Map<string, number>();
+    for (const row of [...covers.rows, ...portraits.rows]) {
+      if (!row.asset_id) {
+        continue;
+      }
+      result.set(row.asset_id, (result.get(row.asset_id) ?? 0) + row.total);
+    }
+    return result;
   }
 
   /* ---------------------------------------------------------------- */
   /* Salinan versi                                                     */
   /* ---------------------------------------------------------------- */
+
+  /**
+   * Membuka versi baru untuk dunia ini: salinan utuh dari versi terbaru.
+   *
+   * Dipakai bersama oleh penyimpanan karakter, penghapusan karakter, dan
+   * lokasi. Mengumpulkannya di satu tempat penting karena urutannya tidak
+   * boleh salah — baris `world_versions` harus ada SEBELUM isinya disalin,
+   * kalau tidak kunci asing menolaknya. Tiga salinan dari urutan itu berarti
+   * tiga tempat yang dapat meleset.
+   *
+   * Mengembalikan `null` bila dunia belum punya versi sama sekali.
+   */
+  private async openNextVersion(
+    client: DbClient,
+    worldId: string,
+  ): Promise<{
+    previousVersion: number;
+    worldVersion: number;
+    /** Status versi asal, sebelum versi baru dibuat. */
+    previousStatus: WorldStatus;
+    /** Status yang diwarisi versi baru. */
+    inheritedStatus: WorldStatus;
+  } | null> {
+    const { rows: latest } = await client.query<{
+      world_version: number;
+      status: string;
+      title: string;
+      synopsis: string;
+      premise: string;
+      cover_asset_id: string;
+      content_rating: string;
+      published_at: Date | string | null;
+    }>(
+      `SELECT world_version, status, title, synopsis, premise, cover_asset_id,
+              content_rating, published_at
+       FROM world_versions WHERE world_id = $1 ORDER BY world_version DESC LIMIT 1`,
+      [worldId],
+    );
+
+    const current = latest[0];
+    if (!current) {
+      return null;
+    }
+
+    // Isi katalog SELALU ditulis ke versi baru, berapa pun status dunia itu.
+    // Menulisnya ke versi berjalan akan mengubah kanon yang dikunci perjalanan.
+    const worldVersion = current.world_version + 1;
+
+    // Salinan versi mewarisi status asal, kecuali draft yang tetap draft.
+    const inheritedStatus = (current.status === 'draft' ? 'draft' : current.status) as WorldStatus;
+
+    // Baris versi ditulis SEBELUM salinan isinya — lihat catatan urutan pada
+    // saveWorld: seluruh tabel anak berkunci asing ke (world_id, world_version).
+    await client.query(
+      `INSERT INTO world_versions (
+         world_id, world_version, title, synopsis, premise, cover_asset_id,
+         status, content_rating, published_at
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        worldId,
+        worldVersion,
+        current.title,
+        current.synopsis,
+        current.premise,
+        current.cover_asset_id,
+        inheritedStatus,
+        current.content_rating,
+        // Versi yang ditarik (`retired`/`revoked`) tidak diterbitkan ulang,
+        // tetapi tetap mewarisi tanggal terbit asalnya supaya riwayatnya utuh.
+        inheritedStatus === 'published' ? new Date() : (current.published_at ?? null),
+      ],
+    );
+
+    await this.copyVersionInto(client, worldId, current.world_version, worldVersion);
+
+    return {
+      previousVersion: current.world_version,
+      worldVersion,
+      previousStatus: current.status as WorldStatus,
+      inheritedStatus,
+    };
+  }
+
+  /**
+   * Menarik versi terbit lama setelah versi baru menggantikannya.
+   *
+   * - Versi baru diterbitkan: versi terbit lama menjadi `retired`.
+   * - Versi baru ditarik (`retired`/`revoked`): versi terbit lama ikut ditarik
+   *   dengan status yang sama. Tanpa ini, "tarik dunia ini" hanya menandai
+   *   versi baru dan pemain tetap melihat versi lamanya di katalog.
+   *
+   * Versi `draft` tidak menyentuh yang sudah terbit: itulah gunanya draft —
+   * menyiapkan perubahan tanpa mengganggu yang sedang tayang.
+   */
+  private async archivePublishedVersion(
+    client: DbClient,
+    worldId: string,
+    worldVersion: number,
+    previousStatus: WorldStatus,
+    newStatus: WorldStatus,
+  ): Promise<void> {
+    if (previousStatus !== 'published') {
+      return;
+    }
+    if (newStatus !== 'published' && !isWithdrawn(newStatus)) {
+      return;
+    }
+    const archiveStatus: WorldStatus = newStatus === 'published' ? 'retired' : newStatus;
+    await client.query(
+      `UPDATE world_versions SET status = $3
+       WHERE world_id = $1 AND world_version <> $2 AND status = 'published'`,
+      [worldId, worldVersion, archiveStatus],
+    );
+  }
 
   /**
    * Menyalin SELURUH isi satu versi ke nomor versi lain.
@@ -581,7 +926,7 @@ export class CatalogAdminRepository {
    * dikumpulkan di satu tempat: satu titik yang perlu diingat, bukan lima.
    */
   private async copyVersionInto(
-    client: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
+    client: DbClient,
     worldId: string,
     fromVersion: number,
     toVersion: number,
@@ -653,6 +998,35 @@ export class CatalogAdminRepository {
     return result;
   }
 
+  /** Menghitung baris tabel anak per versi, untuk SATU dunia saja. */
+  private async countByWorldVersionFor(worldId: string, table: string): Promise<Map<number, number>> {
+    const { rows } = await this.db.query<{ world_version: number; total: number }>(
+      `SELECT world_version, count(*)::int AS total
+       FROM ${table} WHERE world_id = $1 GROUP BY world_version`,
+      [worldId],
+    );
+
+    const result = new Map<number, number>();
+    for (const row of rows) {
+      result.set(row.world_version, row.total);
+    }
+    return result;
+  }
+
+  /** Menghitung perjalanan per versi — dipakai riwayat versi. */
+  private async countJourneysByVersion(worldId: string): Promise<Map<number, number>> {
+    const { rows } = await this.db.query<{ world_version: number; total: number }>(
+      'SELECT world_version, count(*)::int AS total FROM journeys WHERE world_id = $1 GROUP BY world_version',
+      [worldId],
+    );
+
+    const result = new Map<number, number>();
+    for (const row of rows) {
+      result.set(row.world_version, row.total);
+    }
+    return result;
+  }
+
   /** Menghitung baris tabel anak per (world_id, world_version). */
   private async countByWorldVersion(table: string): Promise<Map<string, number>> {
     const { rows } = await this.db.query<{
@@ -705,6 +1079,28 @@ export class CatalogAdminRepository {
     }
     return result;
   }
+}
+
+/**
+ * Apakah status ini berarti "ditarik dari katalog".
+ *
+ * Dipisahkan menjadi fungsi kecil karena pemeriksaan ini dipakai di tiga
+ * tempat yang harus selalu sependapat: `saveWorld`, `archivePublishedVersion`,
+ * dan halaman dunia.
+ */
+function isWithdrawn(status: WorldStatus): boolean {
+  return status === 'retired' || status === 'revoked';
+}
+
+/** Membentuk ID lokasi dari labelnya: "Ruang Rapat Kecil" -> "loc_ruang_rapat_kecil". */
+function locationIdFromLabel(label: string): string {
+  const base = label
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 48);
+  return base.length > 0 ? `loc_${base}` : `loc_${slug(randomUUID())}`;
 }
 
 /** Membentuk potongan yang aman dipakai sebagai bagian ID. */

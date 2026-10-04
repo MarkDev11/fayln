@@ -15,8 +15,11 @@ import { z } from 'zod';
 import type { AdminRepository } from './adminRepository';
 import type { AdminPageContext } from './pages/context';
 import { accountDetail, accountsList } from './pages/accountPages';
+import { adminsList, type AdminViewer } from './pages/adminPages';
+import { assetsList } from './pages/assetPages';
 import { charactersForm, charactersList, worldsForm, worldsList } from './pages/catalogPages';
 import { auditList, dashboard, settingsList } from './pages/dashboardPages';
+import { locationsList } from './pages/locationPages';
 import { modelForm, modelsList } from './pages/modelPages';
 import { promotionForm, promotionsList } from './pages/promotionPages';
 import type { SafeHtml } from './html';
@@ -55,7 +58,13 @@ type AdminPages = {
   promotionsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   promotionForm: (ctx: AdminPageContext, promotionId: string | null) => Promise<SafeHtml>;
   settingsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
-  auditList: (ctx: AdminPageContext) => Promise<SafeHtml>;
+  adminsList: (ctx: AdminPageContext, viewer: AdminViewer) => Promise<SafeHtml>;
+  auditList: (
+    ctx: AdminPageContext,
+    filter: { username: string; action: string },
+  ) => Promise<SafeHtml>;
+  locationsList: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
+  assetsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
 };
 
 const DEFAULT_PAGES: AdminPages = {
@@ -71,7 +80,10 @@ const DEFAULT_PAGES: AdminPages = {
   promotionsList,
   promotionForm,
   settingsList,
+  adminsList,
   auditList,
+  locationsList,
+  assetsList,
 };
 
 /* ------------------------------------------------------------------ */
@@ -89,13 +101,21 @@ const passwordBody = z.object({
   newPassword: z.string().min(1).max(200),
 });
 
+/**
+ * Empat status dunia diterima di sini karena skema mengizinkan keempatnya.
+ *
+ * Dulu hanya `draft` dan `published` yang diterima, padahal halaman dunia
+ * menyuruh admin memakai `retired` untuk menarik dunia yang dipakai perjalanan
+ * pemain. Permintaan itu berakhir sebagai penolakan tanpa pesan — cacat yang
+ * tidak pernah muncul sebagai galat, hanya sebagai perubahan yang tidak terjadi.
+ */
 const worldBody = z.object({
   worldId: z.string().optional().default(''),
   title: z.string().trim().min(1).max(120),
   synopsis: z.string().trim().min(1).max(240),
   premise: z.string().trim().min(1).max(2000),
   coverAssetId: z.string().trim().min(1).max(120),
-  status: z.enum(['draft', 'published']),
+  status: z.enum(['draft', 'published', 'retired', 'revoked']),
   contentRating: z.enum(['all', '13_plus', '18_plus']),
   genres: z.union([z.string(), z.array(z.string())]).optional(),
   locales: z.union([z.string(), z.array(z.string())]).optional(),
@@ -120,6 +140,12 @@ const characterBody = z.object({
   defaultPortraitAssetId: z.string().trim().min(1).max(120),
   traits: z.string().optional(),
   expressions: z.string().optional(),
+});
+
+const locationBody = z.object({
+  worldId: z.string().trim().min(1).max(120),
+  locationId: z.string().optional().default(''),
+  label: z.string().trim().min(1).max(120),
 });
 
 const modelBody = z.object({
@@ -365,6 +391,20 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     send(reply, request, 'Detail akun', await pages.accountDetail(ctx, request.params.accountId), 'accounts'),
   );
 
+  app.get<{ Querystring: { world?: string } }>('/admin/locations', async (request, reply) =>
+    send(
+      reply,
+      request,
+      'Lokasi',
+      await pages.locationsList(ctx, request.query.world ?? null),
+      'locations',
+    ),
+  );
+
+  app.get('/admin/assets', async (request, reply) =>
+    send(reply, request, 'Aset', await pages.assetsList(ctx), 'assets'),
+  );
+
   app.get('/admin/models', async (request, reply) =>
     send(reply, request, 'Model', await pages.modelsList(ctx), 'models'),
   );
@@ -397,8 +437,23 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     send(reply, request, 'Pengaturan', await pages.settingsList(ctx), 'settings'),
   );
 
-  app.get('/admin/audit', async (request, reply) =>
-    send(reply, request, 'Audit', await pages.auditList(ctx), 'audit'),
+  app.get('/admin/admins', async (request, reply) =>
+    send(reply, request, 'Akun admin', await pages.adminsList(ctx, viewerOf(request)), 'admins'),
+  );
+
+  app.get<{ Querystring: { username?: string; action?: string } }>(
+    '/admin/audit',
+    async (request, reply) =>
+      send(
+        reply,
+        request,
+        'Audit',
+        await pages.auditList(ctx, {
+          username: request.query.username ?? '',
+          action: request.query.action ?? '',
+        }),
+        'audit',
+      ),
   );
 
   /* ---------------------------------------------------------------- */
@@ -504,6 +559,106 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       `/admin/characters-form?world=${encodeURIComponent(parsed.data.worldId)}&npc=${encodeURIComponent(result.npcId)}&notice=${
         result.worldVersion > 1 ? 'saved' : 'created'
       }`,
+      302,
+    );
+  });
+
+  app.post('/admin/characters/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({ worldId: z.string().trim().min(1), npcId: z.string().trim().min(1) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/characters?notice=invalid-input', 302);
+    }
+
+    try {
+      // Penghapusan membuat versi baru dunianya — bukan menghapus baris yang
+      // sedang dipakai perjalanan pemain. Versi lama tetap utuh.
+      await ctx.catalog.deleteCharacter(body.data.worldId, body.data.npcId);
+    } catch {
+      // Dunia tanpa versi, atau karakter yang sudah tidak ada di versi terbaru.
+      return reply.redirect('/admin/characters?notice=not-found', 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'character.delete',
+      targetKind: 'character',
+      targetId: `${body.data.worldId}/${body.data.npcId}`,
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/characters?notice=deleted', 302);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Perubahan: lokasi                                                 */
+  /* ---------------------------------------------------------------- */
+
+  app.post('/admin/locations', async (request, reply) => {
+    const session = request.adminSession;
+    const parsed = locationBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.redirect('/admin/locations?notice=invalid-input', 302);
+    }
+
+    try {
+      const saved = await ctx.catalog.saveLocation({
+        worldId: parsed.data.worldId,
+        locationId: parsed.data.locationId || null,
+        label: parsed.data.label,
+      });
+      await admins.recordAudit({
+        adminId: session?.adminId ?? null,
+        username: session?.username ?? '',
+        action: parsed.data.locationId ? 'location.update' : 'location.create',
+        targetKind: 'location',
+        targetId: `${parsed.data.worldId}/${saved.locationId}`,
+        detail: { worldVersion: saved.worldVersion, label: parsed.data.label },
+        ipAddress: request.ip,
+      });
+    } catch {
+      // Dunia belum punya versi: tidak ada tempat untuk menaruh lokasi.
+      return reply.redirect('/admin/locations?notice=not-found', 302);
+    }
+
+    return reply.redirect(
+      `/admin/locations?world=${encodeURIComponent(parsed.data.worldId)}&notice=saved`,
+      302,
+    );
+  });
+
+  app.post('/admin/locations/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({ worldId: z.string().trim().min(1), locationId: z.string().trim().min(1) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/locations?notice=invalid-input', 302);
+    }
+
+    try {
+      await ctx.catalog.deleteLocation(body.data.worldId, body.data.locationId);
+    } catch {
+      return reply.redirect(
+        `/admin/locations?world=${encodeURIComponent(body.data.worldId)}&notice=not-found`,
+        302,
+      );
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'location.delete',
+      targetKind: 'location',
+      targetId: `${body.data.worldId}/${body.data.locationId}`,
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect(
+      `/admin/locations?world=${encodeURIComponent(body.data.worldId)}&notice=deleted`,
       302,
     );
   });
@@ -817,12 +972,12 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       })
       .safeParse(request.body);
     if (!body.success) {
-      return reply.redirect('/admin/settings?notice=invalid-input', 302);
+      return reply.redirect('/admin/admins?notice=invalid-input', 302);
     }
 
     const existing = await admins.findAdminByUsername(body.data.username);
     if (existing) {
-      return reply.redirect('/admin/settings?notice=conflict', 302);
+      return reply.redirect('/admin/admins?notice=conflict', 302);
     }
 
     const created = await admins.createAdmin({
@@ -842,26 +997,26 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       ipAddress: request.ip,
     });
 
-    return reply.redirect('/admin/settings?notice=created', 302);
+    return reply.redirect('/admin/admins?notice=created', 302);
   });
 
   app.post('/admin/admins/toggle', async (request, reply) => {
     const session = request.adminSession;
     if (session?.role !== 'owner') {
-      return reply.redirect('/admin/settings?notice=invalid-input', 302);
+      return reply.redirect('/admin/admins?notice=invalid-input', 302);
     }
 
     const body = z
       .object({ adminId: z.string().trim().min(1), isActive: z.enum(['true', 'false']) })
       .safeParse(request.body);
     if (!body.success) {
-      return reply.redirect('/admin/settings?notice=invalid-input', 302);
+      return reply.redirect('/admin/admins?notice=invalid-input', 302);
     }
 
     // Mengunci diri sendiri akan mengakhiri sesi ini juga; tolak supaya tidak
     // ada admin yang terkunci dari panelnya sendiri.
     if (body.data.adminId === session.adminId && body.data.isActive === 'false') {
-      return reply.redirect('/admin/settings?notice=conflict', 302);
+      return reply.redirect('/admin/admins?notice=conflict', 302);
     }
 
     const target = body.data.adminId;
@@ -876,7 +1031,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       ipAddress: request.ip,
     });
 
-    return reply.redirect('/admin/settings?notice=saved', 302);
+    return reply.redirect('/admin/admins?notice=saved', 302);
   });
 }
 
@@ -911,6 +1066,22 @@ function send(
       notice: readNotice(request),
     }),
   );
+}
+
+/**
+ * Admin yang sedang masuk, untuk diserahkan ke halaman yang menerapkannya.
+ *
+ * Diperlukan karena halaman kelola admin harus menyembunyikan tombol
+ * "nonaktifkan" pada barisnya sendiri. Penolakannya tetap dilakukan server;
+ * menyembunyikan tombolnya hanya mencegah admin mencoba sesuatu yang pasti
+ * ditolak.
+ */
+function viewerOf(request: FastifyRequest): AdminViewer {
+  const session = request.adminSession;
+  if (!session) {
+    return null;
+  }
+  return { adminId: session.adminId, username: session.username, role: session.role };
 }
 
 /** Menerjemahkan penanda ?notice= menjadi pesan yang dapat dibaca. */
