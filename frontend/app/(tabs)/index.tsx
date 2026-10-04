@@ -412,7 +412,24 @@ export default function HomeScreen() {
   const journeysUnauthorized = isGatewayCode(journeysError, 'UNAUTHORIZED');
   // Blok 5 tidak dirender dan tidak menyimpan ruang selama `journeys` memuat.
   const journeysLoading = journeys.isLoading && !journeys.data;
-  const resumeItems = (journeys.data ?? []).slice(0, RESUME_LIMIT);
+  /*
+   * Dunia pertama di hero disembunyikan agar tidak muncul dua kali di satu
+   * layar — aturan yang sama dengan tiga rail lain ("Baru Diperbarui",
+   * "Terbaru Dirilis", "Top 10"). Sebelum ini rail "Lanjutkan Bermain"
+   * satu-satunya yang melanggarnya, sehingga dunia unggulan berperjalanan
+   * tampil sebagai hero DAN sekali lagi sebagai kartu lanjut.
+   *
+   * Saring DULU, baru potong: memotong lebih dahulu lalu menyaring akan
+   * menyisakan lebih sedikit dari `RESUME_LIMIT`.
+   *
+   * Bila satu-satunya perjalanan ada di dunia hero, blok ini hilang seluruhnya
+   * — dan itu benar: hero di posisi pertama sudah menawarkan "Lanjutkan" untuk
+   * dunia itu, jadi aksinya tetap terjangkau.
+   */
+  const heroWorldId = featured[0]?.worldId;
+  const resumeItems = (journeys.data ?? [])
+    .filter((journey) => journey.worldId !== heroWorldId)
+    .slice(0, RESUME_LIMIT);
   const showResume = !journeysLoading && !journeysUnauthorized && resumeItems.length > 0;
   // Tamu/`UNAUTHORIZED` disembunyikan tanpa baris galat: menjelajah tanpa
   // identitas adalah keadaan sah (SC-02), bukan kegagalan.

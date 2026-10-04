@@ -5,7 +5,7 @@ import HomeScreen from '../app/(tabs)/index';
 
 import { StoryGatewayError } from '@/data/gateway';
 import { MockStoryGateway } from '@/data/mock/MockStoryGateway';
-import { worldBoskuMantan } from '@/data/mock/fixtures';
+import { worldBoskuMantan, worldRapatTengahMalam } from '@/data/mock/fixtures';
 import { TestProviders } from '@/testing/TestProviders';
 
 /**
@@ -29,13 +29,38 @@ jest.setTimeout(20_000);
 
 const instant = () => new MockStoryGateway({ instant: true });
 
-async function startJourney(gateway: MockStoryGateway) {
+async function startJourneyIn(
+  gateway: MockStoryGateway,
+  worldId: string,
+  clientOperationId: string,
+) {
   return gateway.createJourney({
-    clientOperationId: 'op-home-1',
-    worldId: worldBoskuMantan.worldId,
+    clientOperationId,
+    worldId,
     persona: { name: 'Arfan', age: 24 },
     responseLocale: 'id-ID',
   });
+}
+
+/**
+ * Perjalanan di dunia unggulan PERTAMA (`w_bosku-mantan`). Dunia ini tampil
+ * sebagai hero, jadi perjalanannya TIDAK muncul di rail "Lanjutkan Bermain".
+ */
+async function startJourney(gateway: MockStoryGateway) {
+  return startJourneyIn(gateway, worldBoskuMantan.worldId, 'op-home-1');
+}
+
+/**
+ * Perjalanan di dunia NON-hero (`w_rapat-tengah-malam`). Hanya perjalanan
+ * seperti inilah yang muncul di rail "Lanjutkan Bermain", karena dunia hero
+ * disaring agar tidak muncul dua kali di satu layar.
+ *
+ * Dunia ini juga BUKAN unggulan pertama saat katalog disaring ke `mystery`
+ * (yang menjadi hero adalah `w_lentera-terakhir`), sehingga rail tetap tampil
+ * saat saringan aktif — sifat yang diuji oleh SC-01.3.
+ */
+async function startResumeJourney(gateway: MockStoryGateway) {
+  return startJourneyIn(gateway, worldRapatTengahMalam.worldId, 'op-home-resume');
 }
 
 beforeEach(() => {
@@ -115,7 +140,8 @@ describe('SC-01.4 — Lanjutkan Bermain', () => {
 
   it('membuka pemutar saat kartu ditekan', async () => {
     const gateway = instant();
-    const created = await startJourney(gateway);
+    // Dunia NON-hero: satu-satunya cara sebuah perjalanan muncul di rail ini.
+    const created = await startResumeJourney(gateway);
 
     const view = await render(
       <TestProviders gateway={gateway}>
@@ -133,7 +159,7 @@ describe('SC-01.4 — Lanjutkan Bermain', () => {
 
   it('menampilkan lencana belum dibaca di dalam label kartu, bukan hanya warna', async () => {
     const gateway = instant();
-    const created = await startJourney(gateway);
+    const created = await startResumeJourney(gateway);
 
     const view = await render(
       <TestProviders gateway={gateway}>
@@ -146,7 +172,7 @@ describe('SC-01.4 — Lanjutkan Bermain', () => {
     expect(card.props.accessibilityRole).toBe('button');
     expect(card.props.accessibilityLabel).toContain('Belum selesai dibaca');
     expect(card.props.accessibilityHint).toBe(
-      `Lanjutkan perjalanan ${worldBoskuMantan.title}`,
+      `Lanjutkan perjalanan ${worldRapatTengahMalam.title}`,
     );
     expect(view.getByText('Belum selesai dibaca')).toBeTruthy();
   });
@@ -155,7 +181,7 @@ describe('SC-01.4 — Lanjutkan Bermain', () => {
 describe('SC-01.3/SC-01.1 — chip genre', () => {
   it('menyaring Baru Diperbarui dan Semua Cerita, tetapi bukan Lanjutkan Bermain', async () => {
     const gateway = instant();
-    await startJourney(gateway);
+    await startResumeJourney(gateway);
 
     const view = await render(
       <TestProviders gateway={gateway}>
@@ -869,8 +895,8 @@ describe('A1 — "Lanjutkan Bermain" naik saat ada adegan belum dibaca', () => {
 
   it('merender "Lanjutkan Bermain" SEBELUM hero saat ada adegan belum dibaca', async () => {
     const gateway = instant();
-    // Perjalanan yang baru dibuat selalu `hasUnreadBeats: true`.
-    await startJourney(gateway);
+    // Perjalanan NON-hero yang baru dibuat selalu `hasUnreadBeats: true`.
+    await startResumeJourney(gateway);
 
     const view = await render(
       <TestProviders gateway={gateway}>
@@ -887,7 +913,7 @@ describe('A1 — "Lanjutkan Bermain" naik saat ada adegan belum dibaca', () => {
 
   it('tetap menaruhnya SESUDAH hero saat tidak ada adegan belum dibaca', async () => {
     const gateway = instant();
-    const created = await startJourney(gateway);
+    const created = await startResumeJourney(gateway);
     // Semua adegan sudah dibaca: tidak ada alasan mendahulukan blok ini.
     await gateway.syncReadProgress({
       journeyId: created.journeyId,
@@ -950,6 +976,69 @@ describe('C1 — lencana token dapat diketuk', () => {
      */
     expect(label).toContain('Lihat pemakaian token');
     expect(label).toContain('100.000');
+  });
+});
+
+describe('A2 — dunia hero tidak muncul dua kali di rail Lanjutkan Bermain', () => {
+  it('menyembunyikan kartu lanjut dunia hero, tetapi hero-nya tetap ada', async () => {
+    const gateway = instant();
+    // Dunia unggulan #1 (`w_bosku-mantan`) — juga tampil sebagai hero.
+    const created = await startJourney(gateway);
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    // Pil "Lanjutkan" di hero menandakan katalog DAN perjalanan sudah termuat,
+    // sekaligus membuktikan aksinya tetap terjangkau lewat hero.
+    expect(await view.findByText('Lanjutkan')).toBeTruthy();
+
+    // Tidak ada kartu lanjut untuk dunia hero — itu duplikat yang dilarang.
+    expect(view.queryByTestId(`journey-resume-${created.journeyId}`)).toBeNull();
+    expect(view.getByTestId('hero-w_bosku-mantan')).toBeTruthy();
+    expect(view.getByTestId('hero-w_bosku-mantan-start')).toBeTruthy();
+  });
+
+  it('tidak merender blok Lanjutkan bila satu-satunya perjalanan ada di dunia hero', async () => {
+    const gateway = instant();
+    await startJourney(gateway);
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    expect(await view.findByText('Lanjutkan')).toBeTruthy();
+
+    // Blok hilang seluruhnya — dan itu benar: hero sudah menawarkan "Lanjutkan".
+    expect(view.queryByTestId('home-section-resume')).toBeNull();
+    expect(view.queryByText('Lanjutkan Bermain')).toBeNull();
+    // Beranda tetap utuh, tidak crash.
+    expect(view.getByTestId('home-grid')).toBeTruthy();
+    expect(view.getByText('Semua Cerita')).toBeTruthy();
+  });
+
+  it('menampilkan hanya perjalanan non-hero saat ada dua perjalanan', async () => {
+    const gateway = instant();
+    const heroJourney = await startJourney(gateway); // dunia hero
+    const otherJourney = await startResumeJourney(gateway); // dunia lain
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    // Katalog harus termuat agar penyaringan dunia hero berlaku, baru rail dicek.
+    await view.findByTestId('home-grid');
+    await view.findByTestId('home-section-resume');
+
+    // Rail tetap tampil dan hanya memuat perjalanan non-hero.
+    expect(view.getByTestId(`journey-resume-${otherJourney.journeyId}`)).toBeTruthy();
+    expect(view.queryByTestId(`journey-resume-${heroJourney.journeyId}`)).toBeNull();
   });
 });
 
