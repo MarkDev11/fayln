@@ -922,7 +922,6 @@ describe('C1 — lencana token dapat diketuk', () => {
     const badge = await view.findByTestId('home-token-balance');
     // Lencana kini KONTROL, bukan pajangan.
     expect(badge.props.accessibilityRole).toBe('button');
-    expect(badge.props.accessibilityLabel).toBe('Lihat pemakaian token');
 
     // Lembar belum terbuka.
     expect(view.queryByText('Pemakaian hari ini')).toBeNull();
@@ -932,6 +931,25 @@ describe('C1 — lencana token dapat diketuk', () => {
     expect(view.getByText('Pemakaian hari ini')).toBeTruthy();
     // Sisa awal: 100.000 dari 100.000, lewat formatCount (titik ribuan).
     expect(view.getByText('Sisa 100.000 dari 100.000 token')).toBeTruthy();
+  });
+
+  it('mengumumkan nama tindakan DAN saldo terformat pada label aksesibilitas', async () => {
+    const view = await render(
+      <TestProviders gateway={instant()}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    const badge = await view.findByTestId('home-token-balance');
+    const label = String(badge.props.accessibilityLabel);
+
+    /*
+     * Sebuah kontrol harus mengumumkan nama dan nilainya. Menyebut tindakan
+     * saja membuat pembaca layar kehilangan saldo yang dulu terbaca — regresi
+     * yang uji ini jaga.
+     */
+    expect(label).toContain('Lihat pemakaian token');
+    expect(label).toContain('100.000');
   });
 });
 

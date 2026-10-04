@@ -710,13 +710,17 @@ export default function HomeScreen() {
                     /*
                       Lencana kuota kini KONTROL (C1), bukan pajangan: ketukan
                       membuka lembar pemakaian ringkas. Label aksesibilitasnya
-                      menyebut TINDAKAN, bukan angka — angkanya sendiri sudah
-                      terbaca sebagai teks di dalam tombol.
+                      menyebut TINDAKAN lalu SALDO — sebuah kontrol harus
+                      mengumumkan nama DAN nilainya, bukan hanya tindakannya.
+                      Menyebut tindakan saja akan menghilangkan angka yang dulu
+                      terbaca (`home.tokensLeft`) — itu regresi, bukan kosmetik.
                     */
                     <Pressable
                       onPress={openQuota}
                       accessibilityRole="button"
-                      accessibilityLabel={t('home.quotaOpen')}
+                      accessibilityLabel={`${t('home.quotaOpen')}. ${t('home.tokensLeft', {
+                        count: formatCount(usage.data.available),
+                      })}`}
                       hitSlop={10}
                       style={styles.tokenBadge}
                       testID="home-token-balance"
