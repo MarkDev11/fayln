@@ -419,12 +419,26 @@ export default function HomeScreen() {
    * satu-satunya yang melanggarnya, sehingga dunia unggulan berperjalanan
    * tampil sebagai hero DAN sekali lagi sebagai kartu lanjut.
    *
+   * Yang disaring adalah HERO YANG SEDANG TAMPIL (`featured`, yang ikut
+   * tersaring chip/pencarian) — bukan katalog tanpa saringan. Aturan "Lanjutkan
+   * Bermain tidak ikut tersaring" menjaga SUMBER rail; sumbernya tetap
+   * `journeys` dan tidak pernah katalog, jadi aturan itu tidak dilanggar. Yang
+   * memakai hero tersaring hanyalah pengecualian duplikat, bukan sumbernya.
+   *
+   * JANGAN "perbaiki" ini menjadi menyaring terhadap hero TANPA saringan
+   * (`statusCatalog`). Begitu filter membuat dunia lain menjadi hero,
+   * perjalanan dunia itu akan tampil di hero DAN di rail sekaligus — dan
+   * karena rail penemuan disembunyikan saat filter aktif (`!hasFilters`),
+   * duplikat itu benar-benar terlihat di layar. Duplikat yang terlihat lebih
+   * buruk daripada rail yang mendefer ke hero.
+   *
+   * Akses pemain tidak pernah hilang: saat sebuah perjalanan tersaring keluar
+   * dari rail, dunia itu justru sedang tampil sebagai hero dengan pil
+   * "Lanjutkan". Karena itu bila satu-satunya perjalanan ada di dunia hero,
+   * blok ini hilang seluruhnya — dan itu memang benar.
+   *
    * Saring DULU, baru potong: memotong lebih dahulu lalu menyaring akan
    * menyisakan lebih sedikit dari `RESUME_LIMIT`.
-   *
-   * Bila satu-satunya perjalanan ada di dunia hero, blok ini hilang seluruhnya
-   * — dan itu benar: hero di posisi pertama sudah menawarkan "Lanjutkan" untuk
-   * dunia itu, jadi aksinya tetap terjangkau.
    */
   const heroWorldId = featured[0]?.worldId;
   const resumeItems = (journeys.data ?? [])
