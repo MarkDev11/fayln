@@ -23,6 +23,12 @@ export type StoryCardProps = {
   note?: string;
   /** Radius sampul. Beranda memakai 8; default mengikuti `radius.card`. */
   coverRadius?: number;
+  /**
+   * Dunia ini sedang dimainkan (punya perjalanan aktif, D-12). Menampilkan
+   * penanda teks kecil. Sengaja BUKAN bilah/persen kemajuan: total beat tidak
+   * ada, jadi penyebutnya akan dikarang.
+   */
+  playing?: boolean;
   testID?: string;
 };
 
@@ -32,7 +38,7 @@ export type StoryCardProps = {
  * Prioritas visual: sampul dan judul. Genre dan status hanya satu baris kecil agar
  * tidak bersaing dengan karya (D-02, NFR-16).
  */
-export function StoryCard({ item, onPress, note, coverRadius, testID }: StoryCardProps) {
+export function StoryCard({ item, onPress, note, coverRadius, playing, testID }: StoryCardProps) {
   const { colors } = useTheme();
   const { t } = useI18n();
 
@@ -63,7 +69,13 @@ export function StoryCard({ item, onPress, note, coverRadius, testID }: StoryCar
       testID={testID}
       onPress={() => onPress(item.worldId)}
       accessibilityRole="button"
-      accessibilityLabel={`${item.title}. ${fullGenreText}. ${t(worldStatusLabelKey(item.status))}`}
+      /*
+       * Penanda "Sedang dimainkan" ikut diucapkan, bukan hanya diwarnai: keadaan
+       * ini penting dan tidak boleh hanya tersampaikan lewat warna (NFR-12).
+       */
+      accessibilityLabel={`${item.title}. ${fullGenreText}. ${t(
+        worldStatusLabelKey(item.status),
+      )}${playing ? `. ${t('home.playingBadge')}` : ''}`}
       accessibilityHint={t('detail.startJourney')}
       style={({ pressed }) => [styles.card, { opacity: pressed ? 0.88 : 1 }]}
     >
@@ -85,6 +97,17 @@ export function StoryCard({ item, onPress, note, coverRadius, testID }: StoryCar
         <Text variant="caption" tone="secondary" numberOfLines={1} style={styles.genreLine}>
           {genreText}
         </Text>
+        {playing ? (
+          <Text
+            variant="caption"
+            tone="accent"
+            numberOfLines={1}
+            style={styles.playingLine}
+            testID={testID ? `${testID}-playing` : undefined}
+          >
+            {t('home.playingBadge')}
+          </Text>
+        ) : null}
         {note ? (
           <Text variant="caption" tone="secondary" numberOfLines={1}>
             {note}
@@ -109,6 +132,9 @@ const styles = StyleSheet.create({
     gap: 2,
   },
   genreLine: {
+    marginTop: 2,
+  },
+  playingLine: {
     marginTop: 2,
   },
   statusLine: {

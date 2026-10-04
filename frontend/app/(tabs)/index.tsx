@@ -35,6 +35,7 @@ import {
   useUpdatedWorlds,
   useUsage,
 } from '@/data/queries';
+import { QuotaSheet } from '@/features/home/QuotaSheet';
 import { JourneyCard } from '@/features/journeys/JourneyCard';
 import { formatCount } from '@/domain/format';
 import { genreLabelKey, worldStatusLabelKey } from '@/domain/labels';
@@ -132,8 +133,11 @@ function isGatewayCode(error: Error | null, code: string): boolean {
  * Dua peran sekaligus: pintu kembali ke cerita yang sedang berjalan (blok
  * "Lanjutkan Bermain") dan etalase penemuan yang dapat dipindai dalam satu layar.
  *
- * Urutan vertikal: tajuk + pencarian → `SimulatorNotice` → hero → chip genre →
- * Lanjutkan Bermain → Baru Diperbarui → Semua Cerita.
+ * Urutan vertikal: tajuk + pencarian → hero → chip genre → Lanjutkan Bermain →
+ * Baru Diperbarui → Semua Cerita. Blok "Lanjutkan Bermain" naik ke ATAS hero
+ * saat perjalanan teratas punya adegan belum dibaca dan saringan tidak aktif
+ * (A1) — pemain yang baru saja meninggalkan cerita tidak perlu menggulir
+ * melewati etalase untuk kembali.
  *
  * Tidak ada metrik yang diada-adakan: satu-satunya angka yang tampil adalah milik
  * pemain sendiri (beat dan jumlah keputusan) atau berasal dari data dunia.
@@ -159,6 +163,8 @@ export default function HomeScreen() {
    * Selalu terpasang berarti tidak ada bingkai pertama seperti itu.
    */
   const [searchOpen, setSearchOpen] = useState(false);
+  /** Lembar pemakaian kuota ringkas (C1) sedang terbuka. */
+  const [quotaOpen, setQuotaOpen] = useState(false);
   /** 0 = tajuk biasa, 1 = bilah pencarian penuh. */
   const searchProgress = useRef(new Animated.Value(0)).current;
   const searchInputRef = useRef<TextInput>(null);
@@ -413,6 +419,74 @@ export default function HomeScreen() {
   const showJourneyError = !journeysLoading && !journeysUnauthorized && journeys.isError;
 
   /**
+   * Peta dunia → perjalanan aktif, dipakai menandai CTA hero dan kartu katalog
+   * (A2, D-12).
+   *
+   * Kontrak `JourneySummary` tidak punya status "selesai", jadi seluruh
+   * perjalanan yang dikembalikan gateway dianggap aktif. D-12 menjamin satu
+   * perjalanan per dunia; bila server kelak mengirim lebih dari satu, entri
+   * pertama yang dipertahankan supaya hasilnya tidak bergantung urutan.
+   */
+  const journeyByWorldId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const journey of journeys.data ?? []) {
+      if (!map.has(journey.worldId)) {
+        map.set(journey.worldId, journey.journeyId);
+      }
+    }
+    return map;
+  }, [journeys.data]);
+
+  /**
+   * "Lanjutkan Bermain" naik ke atas hero HANYA saat perjalanan teratas punya
+   * adegan belum dibaca (A1).
+   *
+   * Tidak dinaikkan saat pencarian terbuka atau saringan aktif: di situ pemain
+   * sedang mencari, bukan kembali, dan memindahkan blok hanya akan membuat
+   * tata letak terasa gelisah. Saat tidak ada adegan baru, urutan lama tetap.
+   */
+  const topJourney = resumeItems[0];
+  const promoteResume =
+    showResume && !searchOpen && !hasFilters && topJourney?.hasUnreadBeats === true;
+
+  /**
+   * Blok "Lanjutkan Bermain", dipisah agar dapat ditempatkan di dua posisi
+   * (atas hero saat ada adegan baru, atau setelah chip seperti biasa).
+   *
+   * Judulnya tidak berubah. `accessibilityHint` hanya diisi saat blok
+   * didahulukan, supaya alasan pemindahan itu terbaca oleh pembaca layar.
+   */
+  const resumeSection = showResume ? (
+    <View style={styles.section}>
+      <SectionHeader
+        title={t('home.sectionResume')}
+        accessibilityHint={promoteResume ? t('home.resumeUnreadHint') : undefined}
+        testID="home-section-resume"
+      />
+      <View style={styles.sectionContent}>
+        <ScrollView
+          horizontal
+          showsHorizontalScrollIndicator={false}
+          contentContainerStyle={styles.rail}
+          testID="home-resume"
+        >
+          {resumeItems.map((journey) => (
+            <View key={journey.journeyId} style={styles.resumeCard}>
+              <JourneyCard
+                journey={journey}
+                mode="resume"
+                onPress={openPlayer}
+                worldStatusLabel={worldStatusLabel(journey.worldId)}
+                testID={`journey-resume-${journey.journeyId}`}
+              />
+            </View>
+          ))}
+        </ScrollView>
+      </View>
+    </View>
+  ) : null;
+
+  /**
    * Hero TIDAK ikut disembunyikan saat filter aktif.
    *
    * Sebelumnya hero hilang begitu pemain mengetuk chip. Itu salah: hero adalah
@@ -512,6 +586,15 @@ export default function HomeScreen() {
   const closeSearch = useCallback(() => {
     setSearchOpen(false);
     setSearchInput('');
+  }, []);
+
+  /** Membuka lembar pemakaian kuota ringkas (C1). */
+  const openQuota = useCallback(() => {
+    setQuotaOpen(true);
+  }, []);
+
+  const closeQuota = useCallback(() => {
+    setQuotaOpen(false);
   }, []);
 
   /**
@@ -624,11 +707,17 @@ export default function HomeScreen() {
                     yang belum pasti lebih buruk daripada tidak ada angka sama sekali.
                   */}
                   {usage.data ? (
-                    <View
-                      accessible
-                      accessibilityLabel={t('home.tokensLeft', {
-                        count: formatCount(usage.data.available),
-                      })}
+                    /*
+                      Lencana kuota kini KONTROL (C1), bukan pajangan: ketukan
+                      membuka lembar pemakaian ringkas. Label aksesibilitasnya
+                      menyebut TINDAKAN, bukan angka — angkanya sendiri sudah
+                      terbaca sebagai teks di dalam tombol.
+                    */
+                    <Pressable
+                      onPress={openQuota}
+                      accessibilityRole="button"
+                      accessibilityLabel={t('home.quotaOpen')}
+                      hitSlop={10}
                       style={styles.tokenBadge}
                       testID="home-token-balance"
                     >
@@ -643,7 +732,7 @@ export default function HomeScreen() {
                       <Text variant="caption" weight="700" tone="accent">
                         {formatCount(usage.data.available)}
                       </Text>
-                    </View>
+                    </Pressable>
                   ) : null}
 
                   <Pressable
@@ -707,6 +796,13 @@ export default function HomeScreen() {
           </View>
         </View>
 
+        {/*
+          A1: saat ada adegan belum dibaca, blok "Lanjutkan Bermain" naik ke atas
+          hero. Blok yang sama juga dirender di posisi biasa di bawah; hanya satu
+          yang tampil karena `promoteResume` mengendalikan keduanya.
+        */}
+        {promoteResume ? resumeSection : null}
+
         {isInitialLoading ? (
           <View style={styles.heroWrap}>
             <View style={[styles.skeletonHero, { backgroundColor: colors.placeholder }]} />
@@ -735,6 +831,8 @@ export default function HomeScreen() {
                     index={index}
                     total={featured.length}
                     onOpen={openWorld}
+                    journeyId={journeyByWorldId.get(item.worldId)}
+                    onContinue={openPlayer}
                     testID={`hero-${item.worldId}`}
                   />
                 </View>
@@ -834,31 +932,7 @@ export default function HomeScreen() {
         ) : null}
 
         {/* Blok 5 — Lanjutkan Bermain. Tidak bergantung pada filter. */}
-        {showResume ? (
-          <View style={styles.section}>
-            <SectionHeader title={t('home.sectionResume')} testID="home-section-resume" />
-            <View style={styles.sectionContent}>
-              <ScrollView
-                horizontal
-                showsHorizontalScrollIndicator={false}
-                contentContainerStyle={styles.rail}
-                testID="home-resume"
-              >
-                {resumeItems.map((journey) => (
-                  <View key={journey.journeyId} style={styles.resumeCard}>
-                    <JourneyCard
-                      journey={journey}
-                      mode="resume"
-                      onPress={openPlayer}
-                      worldStatusLabel={worldStatusLabel(journey.worldId)}
-                      testID={`journey-resume-${journey.journeyId}`}
-                    />
-                  </View>
-                ))}
-              </ScrollView>
-            </View>
-          </View>
-        ) : null}
+        {!promoteResume ? resumeSection : null}
 
         {showJourneyError ? (
           <View
@@ -978,6 +1052,7 @@ export default function HomeScreen() {
                           onPress={openWorld}
                           note={t('home.startsThisWeek', { count: item.startCount })}
                           coverRadius={radius.tile}
+                          playing={journeyByWorldId.has(item.worldId)}
                           testID={`top-card-${item.worldId}`}
                         />
                       </View>
@@ -1012,6 +1087,7 @@ export default function HomeScreen() {
                             when: formatRelativeDay(item.publishedAt, locale),
                           })}
                           coverRadius={radius.tile}
+                          playing={journeyByWorldId.has(item.worldId)}
                           testID={`new-card-${item.worldId}`}
                         />
                       </View>
@@ -1040,6 +1116,7 @@ export default function HomeScreen() {
                             when: formatRelativeDay(item.updatedAt, locale),
                           })}
                           coverRadius={radius.tile}
+                          playing={journeyByWorldId.has(item.worldId)}
                           testID={`updated-card-${item.worldId}`}
                         />
                       </View>
@@ -1064,6 +1141,7 @@ export default function HomeScreen() {
                             item={item}
                             onPress={openWorld}
                             coverRadius={radius.tile}
+                            playing={journeyByWorldId.has(item.worldId)}
                             testID={`story-card-${item.worldId}`}
                           />
                         </View>
@@ -1077,6 +1155,19 @@ export default function HomeScreen() {
           </>
         )}
       </ScrollView>
+
+      {/*
+        Lembar pemakaian kuota (C1). Hanya dirender bila angka kuota sudah ada —
+        lencana yang membukanya pun hanya muncul saat itu.
+      */}
+      {usage.data ? (
+        <QuotaSheet
+          visible={quotaOpen}
+          usage={usage.data}
+          onClose={closeQuota}
+          testID="home-quota-sheet"
+        />
+      ) : null}
     </Screen>
   );
 }

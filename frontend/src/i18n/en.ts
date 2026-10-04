@@ -56,6 +56,14 @@ export const en: Dictionary = {
     'No stories have been published yet. Check back after a curator adds new worlds.',
   'home.resumeTitle': 'Continue journey',
   'home.resumeBody': '{world} • beat {beat}',
+  'home.continueCta': 'Continue',
+  'home.playingBadge': 'Currently playing',
+  'home.resumeUnreadHint': 'New scenes are waiting',
+  'home.quotaOpen': 'View token usage',
+  'home.quotaSheetTitle': 'Today’s usage',
+  'home.quotaRemaining': '{available} of {limit} tokens left',
+  'home.quotaResetAt': 'Resets {when} (local time)',
+  'home.quotaRereadFree': 'Re-reading does not use tokens',
 
   'state.offlineTitle': 'You are offline',
   'state.offlineBody':

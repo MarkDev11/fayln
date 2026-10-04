@@ -21,6 +21,14 @@ export type HeroCardProps = {
   /** Jumlah dunia unggulan; dipakai label posisi. */
   total: number;
   onOpen: (worldId: string) => void;
+  /**
+   * Perjalanan aktif di dunia ini, bila ada (D-12). Bila terisi, pil berbunyi
+   * "Lanjutkan" dan ketukan langsung membuka pemutar alih-alih halaman dunia —
+   * supaya label tidak berbohong dan pemain tidak dibawa ke jalur konflik.
+   */
+  journeyId?: string;
+  /** Tujuan ketukan saat dunia sudah punya perjalanan. */
+  onContinue: (journeyId: string) => void;
   testID?: string;
 };
 
@@ -37,7 +45,15 @@ export type HeroCardProps = {
  * mengumumkannya dua kali, dan menyisakan area judul yang tidak dapat ditekan
  * (SC-01.8).
  */
-export function HeroCard({ item, index, total, onOpen, testID }: HeroCardProps) {
+export function HeroCard({
+  item,
+  index,
+  total,
+  onOpen,
+  journeyId,
+  onContinue,
+  testID,
+}: HeroCardProps) {
   const { colors } = useTheme();
   const { t } = useI18n();
 
@@ -45,14 +61,23 @@ export function HeroCard({ item, index, total, onOpen, testID }: HeroCardProps) 
   const genreText = item.genres.slice(0, 2).map((genre) => t(genreLabelKey(genre))).join(' • ');
   const dotsLabel = t('home.heroDotsLabel', { index: index + 1, total });
   const baseTestID = testID ?? `hero-${item.worldId}`;
+  const hasJourney = Boolean(journeyId);
 
   return (
     <Pressable
       testID={baseTestID}
-      onPress={() => onOpen(item.worldId)}
+      onPress={() => (journeyId ? onContinue(journeyId) : onOpen(item.worldId))}
       accessibilityRole="button"
       accessibilityLabel={`${item.title}. ${genreText}. ${dotsLabel}`}
-      accessibilityHint={t('home.openWorldHint')}
+      /*
+       * Hint harus mengikuti tujuan ketukan yang SEBENARNYA. Saat dunia sudah
+       * punya perjalanan, "Membuka halaman dunia" akan berbohong: ketukan
+       * membuka pemutar. Label tidak ikut diubah agar aksi tidak diumumkan dua
+       * kali — pil sudah menyebut "Lanjutkan" secara visual.
+       */
+      accessibilityHint={
+        hasJourney ? t('journey.continueAction', { world: item.title }) : t('home.openWorldHint')
+      }
       style={styles.card}
     >
       {/*
@@ -93,13 +118,16 @@ export function HeroCard({ item, index, total, onOpen, testID }: HeroCardProps) 
           ketuk, dan kartu itu punya `accessibilityLabel` eksplisit — sehingga
           isi di dalamnya tidak diumumkan terpisah dan tidak ada tujuan yang
           terucap dua kali (SC-01.8).
+
+          testID `-start` DIPERTAHANKAN meski labelnya kini bisa "Lanjutkan":
+          uji lama dan pembaca layar bergantung pada simpul yang sama.
         */}
         <View
           testID={`${baseTestID}-start`}
           style={[styles.startPill, { backgroundColor: colors.accent }]}
         >
           <Text variant="label" tone="inverse">
-            {t('home.heroStart')}
+            {t(hasJourney ? 'home.continueCta' : 'home.heroStart')}
           </Text>
         </View>
       </View>

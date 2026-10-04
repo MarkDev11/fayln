@@ -63,6 +63,18 @@ export const id = {
     'Belum ada cerita yang diterbitkan. Periksa kembali setelah kurator menambah dunia baru.',
   'home.resumeTitle': 'Lanjutkan perjalanan',
   'home.resumeBody': '{world} • beat {beat}',
+  // CTA hero untuk dunia yang sudah punya perjalanan aktif (D-12, A2).
+  'home.continueCta': 'Lanjutkan',
+  // Penanda teks pada kartu katalog; sengaja BUKAN bilah kemajuan — total beat
+  // tidak ada, jadi penyebutnya akan dikarang.
+  'home.playingBadge': 'Sedang dimainkan',
+  // Alasan blok "Lanjutkan Bermain" didahulukan; dibacakan pembaca layar.
+  'home.resumeUnreadHint': 'Ada adegan baru menunggu',
+  'home.quotaOpen': 'Lihat pemakaian token',
+  'home.quotaSheetTitle': 'Pemakaian hari ini',
+  'home.quotaRemaining': 'Sisa {available} dari {limit} token',
+  'home.quotaResetAt': 'Reset {when} (waktu lokal)',
+  'home.quotaRereadFree': 'Membaca ulang tidak memakai token',
 
   'state.offlineTitle': 'Kamu sedang offline',
   'state.offlineBody':

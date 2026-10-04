@@ -781,3 +781,157 @@ describe('SC-01.13 — animasi masuk saat saringan berubah', () => {
     }
   });
 });
+
+describe('A2 — CTA "Lanjutkan" untuk dunia yang sudah dimainkan', () => {
+  it('memakai label "Lanjutkan" pada hero dunia yang punya perjalanan, dan "Mulai" untuk yang belum', async () => {
+    const gateway = instant();
+    await startJourney(gateway);
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    // Dunia yang punya perjalanan: pil berbunyi "Lanjutkan".
+    const playedPill = await view.findByTestId('hero-w_bosku-mantan-start');
+    expect(within(playedPill).getByText('Lanjutkan')).toBeTruthy();
+    // Dunia tanpa perjalanan tetap "Mulai" — penanda tidak boleh bocor.
+    const freshPill = view.getByTestId('hero-w_lentera-terakhir-start');
+    expect(within(freshPill).getByText('Mulai')).toBeTruthy();
+  });
+
+  it('membuka pemutar saat hero dunia yang sudah dimainkan ditekan', async () => {
+    const gateway = instant();
+    const created = await startJourney(gateway);
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    // Ketukan langsung ke pemutar (keputusan produk), bukan lewat StoryDetail.
+    await fireEvent.press(await view.findByTestId('hero-w_bosku-mantan'));
+
+    expect(mockRouterPush).toHaveBeenCalledWith(`/player/${created.journeyId}`);
+  });
+
+  it('menandai kartu katalog dunia yang sedang dimainkan, dan tidak menandai yang lain', async () => {
+    const gateway = instant();
+    await startJourney(gateway);
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-grid');
+
+    expect(view.getByTestId('story-card-w_bosku-mantan-playing')).toBeTruthy();
+    expect(view.getByText('Sedang dimainkan')).toBeTruthy();
+    // Dunia tanpa perjalanan tidak diberi penanda ini.
+    expect(view.queryByTestId('story-card-w_rapat-tengah-malam-playing')).toBeNull();
+  });
+});
+
+describe('A1 — "Lanjutkan Bermain" naik saat ada adegan belum dibaca', () => {
+  /**
+   * Mengumpulkan testID sesuai urutan render (pra-order). Dipakai membandingkan
+   * POSISI dua blok, bukan sekadar keberadaannya.
+   */
+  function testIdOrder(view: { toJSON: () => unknown }): string[] {
+    const order: string[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        for (const child of node) {
+          walk(child);
+        }
+        return;
+      }
+      if (!node || typeof node !== 'object') {
+        return;
+      }
+      const element = node as { props?: { testID?: unknown }; children?: unknown };
+      if (typeof element.props?.testID === 'string') {
+        order.push(element.props.testID);
+      }
+      if (Array.isArray(element.children)) {
+        for (const child of element.children) {
+          walk(child);
+        }
+      }
+    };
+    walk(view.toJSON());
+    return order;
+  }
+
+  it('merender "Lanjutkan Bermain" SEBELUM hero saat ada adegan belum dibaca', async () => {
+    const gateway = instant();
+    // Perjalanan yang baru dibuat selalu `hasUnreadBeats: true`.
+    await startJourney(gateway);
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-section-resume');
+    const order = testIdOrder(view);
+
+    expect(order.indexOf('home-section-resume')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('home-section-resume')).toBeLessThan(order.indexOf('home-hero'));
+  });
+
+  it('tetap menaruhnya SESUDAH hero saat tidak ada adegan belum dibaca', async () => {
+    const gateway = instant();
+    const created = await startJourney(gateway);
+    // Semua adegan sudah dibaca: tidak ada alasan mendahulukan blok ini.
+    await gateway.syncReadProgress({
+      journeyId: created.journeyId,
+      lastReadSequence: 3,
+      lastReadBeatId: 't001-b003',
+      decisionCount: 0,
+      hasUnreadBeats: false,
+    });
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-section-resume');
+    const order = testIdOrder(view);
+
+    expect(order.indexOf('home-hero')).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('home-section-resume')).toBeGreaterThan(order.indexOf('home-hero'));
+  });
+});
+
+describe('C1 — lencana token dapat diketuk', () => {
+  it('membuka lembar pemakaian ringkas berisi judul dan sisa token', async () => {
+    const view = await render(
+      <TestProviders gateway={instant()}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    const badge = await view.findByTestId('home-token-balance');
+    // Lencana kini KONTROL, bukan pajangan.
+    expect(badge.props.accessibilityRole).toBe('button');
+    expect(badge.props.accessibilityLabel).toBe('Lihat pemakaian token');
+
+    // Lembar belum terbuka.
+    expect(view.queryByText('Pemakaian hari ini')).toBeNull();
+
+    await fireEvent.press(badge);
+
+    expect(view.getByText('Pemakaian hari ini')).toBeTruthy();
+    // Sisa awal: 100.000 dari 100.000, lewat formatCount (titik ribuan).
+    expect(view.getByText('Sisa 100.000 dari 100.000 token')).toBeTruthy();
+  });
+});
+
