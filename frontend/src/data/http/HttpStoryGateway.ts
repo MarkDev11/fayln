@@ -85,7 +85,25 @@ export class HttpStoryGateway implements StoryGateway {
     if (typeof config.accountId === 'string') {
       this.resolvedAccountId = config.accountId;
     }
-    this.fetchImpl = config.fetchImpl ?? globalThis.fetch;
+    /*
+     * WAJIB diikat ke `globalThis`.
+     *
+     * `fetchImpl` dipanggil sebagai metode (`this.fetchImpl(...)`), sehingga
+     * `this`-nya adalah objek gateway ini. Di web, `fetch` adalah API native
+     * yang menolak penerima selain Window: ia melempar "Illegal invocation"
+     * SEBELUM permintaan dikirim. Gejalanya menipu — tidak ada permintaan
+     * jaringan sama sekali, dan galatnya terbaca sebagai kegagalan jaringan
+     * sehingga UI menampilkan "Kamu sedang offline" padahal server sehat.
+     *
+     * Cacat ini tidak pernah muncul selama pengembangan web memakai gateway
+     * contoh, karena gateway itu tidak menyentuh `fetch` sama sekali.
+     *
+     * `config.fetchImpl` sengaja TIDAK diikat: pengujian menyuntikkan fungsi
+     * biasa, dan mengikatnya akan mengubah perilaku yang mereka andalkan.
+     */
+    this.fetchImpl =
+      config.fetchImpl ??
+      (typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : globalThis.fetch);
     this.timeoutMs = config.timeoutMs ?? 20_000;
   }
 
