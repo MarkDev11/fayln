@@ -603,6 +603,89 @@ describe('SC-01.12 — rail "Terbaru Dirilis"', () => {
   });
 });
 
+describe('SC-01.14 — "Baru Diperbarui" berbeda dari "Terbaru Dirilis"', () => {
+  /** Urutan dunia di dalam sebuah rail, dibaca dari testID kartunya. */
+  const orderOf = (view: { getAllByTestId: (id: RegExp) => { props: { testID?: string } }[] }, prefix: string): string[] =>
+    view
+      .getAllByTestId(new RegExp(`^${prefix}-`))
+      .map((node) => String(node.props.testID).replace(`${prefix}-`, ''));
+
+  it('mengurutkan menurut waktu revisi, bukan tanggal terbit', async () => {
+    const view = await render(
+      <TestProviders gateway={instant()}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-updated');
+
+    /*
+     * Mode contoh: `w_rapat-tengah-malam` TERBIT paling lama (10 Sep) tetapi
+     * direvisi paling akhir (2 Okt). Urutan terbitnya paling belakang, urutan
+     * revisinya paling depan — jadi rail ini membuktikan ia memakai `updatedAt`.
+     */
+    expect(orderOf(view, 'updated-card')).toEqual([
+      'w_rapat-tengah-malam',
+      'w_lentera-terakhir',
+    ]);
+  });
+
+  /*
+   * Penjaga regresi untuk cacat yang sebenarnya. Rail ini pernah diturunkan dari
+   * katalog dengan `publishedAt`, sehingga isinya kembar dengan "Terbaru
+   * Dirilis" — nama berbeda, isi sama, dan tidak ada uji yang menangkapnya.
+   * Perbandingan dilakukan SETELAH dunia hero dibuang dari kedua rail, karena
+   * itulah yang benar-benar tampil ke pemain.
+   */
+  it('menampilkan urutan yang berbeda dari Terbaru Dirilis', async () => {
+    const view = await render(
+      <TestProviders gateway={instant()}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-new');
+    await view.findByTestId('home-updated');
+
+    const terbaru = orderOf(view, 'new-card');
+    const diperbarui = orderOf(view, 'updated-card');
+
+    expect(terbaru.length).toBeGreaterThan(0);
+    expect(diperbarui).not.toEqual(terbaru);
+  });
+
+  it('menyembunyikan rail saat hanya tersisa satu kandidat', async () => {
+    const gateway = instant();
+    gateway.fetchUpdatedWorlds = async () => [
+      { ...worldBoskuMantan, updatedAt: worldBoskuMantan.publishedAt },
+    ];
+
+    const view = await render(
+      <TestProviders gateway={gateway}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-grid');
+
+    // Satu kartu sendirian terbaca seperti baris rusak, bukan pilihan.
+    expect(view.queryByTestId('home-updated')).toBeNull();
+    expect(view.queryByText('Baru Diperbarui')).toBeNull();
+  });
+
+  it('tidak menyertakan dunia yang sudah diarsipkan', async () => {
+    const view = await render(
+      <TestProviders gateway={instant()}>
+        <HomeScreen />
+      </TestProviders>,
+    );
+
+    await view.findByTestId('home-updated');
+
+    expect(view.queryByTestId('updated-card-w_arsip-lama')).toBeNull();
+  });
+});
+
 describe('SC-01.13 — animasi masuk saat saringan berubah', () => {
   /**
    * Membuktikan daftar benar-benar BERGESER-NAIK, bukan berganti seketika.

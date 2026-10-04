@@ -34,6 +34,7 @@ import {
   type SubmitCustomInput,
   type TopWorldsPage,
   type RankedWorldItem,
+  type UpdatedWorldItem,
 } from '../gateway';
 
 import type {
@@ -613,6 +614,49 @@ export class MockStoryGateway implements StoryGateway {
           return a.worldId < b.worldId ? -1 : 1;
         }
         return a.publishedAt < b.publishedAt ? 1 : -1;
+      })
+      .slice(0, limit);
+  }
+
+  /**
+   * Rail "Baru Diperbarui" dalam mode data contoh.
+   *
+   * Memakai peta waktu revisi tetap, BUKAN `publishedAt`. Keduanya sengaja
+   * menghasilkan urutan yang berbeda: `w_rapat-tengah-malam` TERBIT paling lama
+   * tetapi direvisi paling akhir, jadi ia memuncaki rail ini dan bukan rail
+   * "Terbaru Dirilis".
+   *
+   * Urutannya harus tetap berbeda SETELAH dunia hero dibuang — dunia pertama
+   * menurut tanggal terbit disembunyikan dari kedua rail, jadi perbedaan yang
+   * hanya ada di puncak akan ikut terbuang bersama hero.
+   *
+   * Tanggalnya tetap, bukan relatif seperti migrasi 006 di backend, karena
+   * fixture memang memakai tanggal tetap. Yang dijaga sama bukan tanggal
+   * persisnya, melainkan sifatnya: dua rail yang benar-benar berbeda. Bila
+   * keduanya kembali kembar, mode contoh pun akan menunjukkannya.
+   */
+  async fetchUpdatedWorlds(limit = 10): Promise<UpdatedWorldItem[]> {
+    await this.delay(50);
+    this.throwIfFault();
+
+    const revisedAt: Record<string, string> = {
+      'w_rapat-tengah-malam': '2026-10-02T03:00:00.000Z',
+      'w_lentera-terakhir': '2026-09-25T07:30:00.000Z',
+      'w_bosku-mantan': '2026-09-20T02:00:00.000Z',
+    };
+
+    return allWorlds
+      .filter((world) => world.status === 'published')
+      .map((world) => ({
+        ...toCatalogItem(world),
+        // Dunia yang belum pernah direvisi jatuh ke tanggal terbitnya.
+        updatedAt: revisedAt[world.worldId] ?? world.publishedAt,
+      }))
+      .sort((a, b) => {
+        if (a.updatedAt === b.updatedAt) {
+          return a.worldId < b.worldId ? -1 : 1;
+        }
+        return a.updatedAt < b.updatedAt ? 1 : -1;
       })
       .slice(0, limit);
   }

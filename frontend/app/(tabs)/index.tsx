@@ -27,7 +27,14 @@ import { Text } from '@/components/Text';
 
 import { useGateway } from '@/data/GatewayProvider';
 import { StoryGatewayError } from '@/data/gateway';
-import { useCatalog, useJourneys, useNewWorlds, useTopWorlds, useUsage } from '@/data/queries';
+import {
+  useCatalog,
+  useJourneys,
+  useNewWorlds,
+  useTopWorlds,
+  useUpdatedWorlds,
+  useUsage,
+} from '@/data/queries';
 import { JourneyCard } from '@/features/journeys/JourneyCard';
 import { formatCount } from '@/domain/format';
 import { genreLabelKey, worldStatusLabelKey } from '@/domain/labels';
@@ -199,6 +206,7 @@ export default function HomeScreen() {
    */
   const topWorlds = useTopWorlds(TOP_RAIL_LIMIT);
   const newWorlds = useNewWorlds(RAIL_LIMIT);
+  const updatedWorlds = useUpdatedWorlds(RAIL_LIMIT);
 
   /**
    * Katalog TANPA saringan, khusus untuk peta status dunia.
@@ -299,7 +307,12 @@ export default function HomeScreen() {
   );
 
   /**
-   * Rail "Baru Diperbarui".
+   * Rail "Baru Diperbarui" — dunia yang isinya paling baru DISUNTING.
+   *
+   * Sebelumnya rail ini diturunkan dari katalog lalu diurutkan dengan
+   * `publishedAt`, sehingga isinya identik dengan "Terbaru Dirilis": nama
+   * berbeda, isi kembar. Sekarang sumbernya endpoint tersendiri yang mengurutkan
+   * menurut waktu revisi terakhir, dan waktunya dibawa di `updatedAt`.
    *
    * Hanya dunia `published`. Baris ini menawarkan cerita untuk DIMULAI, jadi
    * dunia yang sudah diarsipkan tidak boleh muncul di sini — menawarkannya
@@ -308,10 +321,8 @@ export default function HomeScreen() {
    */
   const updatedItems = useMemo(() => {
     const heroWorldId = featured[0]?.worldId;
-    return items
-      .filter((item) => item.worldId !== heroWorldId && item.status === 'published')
-      .sort(byPublishedAtDesc);
-  }, [items, featured]);
+    return (updatedWorlds.data ?? []).filter((item) => item.worldId !== heroWorldId);
+  }, [updatedWorlds.data, featured]);
 
   /**
    * Isi rail "Terbaru Dirilis".
@@ -621,7 +632,14 @@ export default function HomeScreen() {
                       style={styles.tokenBadge}
                       testID="home-token-balance"
                     >
-                      <Icon name="star" size={13} color={colors.accent} />
+                      {/*
+                        16, bukan 13: aset bintang menyisakan padding ~7% di tepinya,
+                        sehingga bintang yang TERLIHAT hanya ~86% dari angka ini
+                        (16 -> ~13,7 px). Pada 13 bintang tampak lebih kecil daripada
+                        teks 12 px di sebelahnya. 16 juga menyamai tinggi baris caption,
+                        jadi keduanya duduk sejajar.
+                      */}
+                      <Icon name="star" size={16} color={colors.accent} />
                       <Text variant="caption" weight="700" tone="accent">
                         {formatCount(usage.data.available)}
                       </Text>
@@ -1013,7 +1031,7 @@ export default function HomeScreen() {
                           item={item}
                           onPress={openWorld}
                           note={t('home.updatedAt', {
-                            when: formatRelativeDay(item.publishedAt, locale),
+                            when: formatRelativeDay(item.updatedAt, locale),
                           })}
                           coverRadius={radius.tile}
                           testID={`updated-card-${item.worldId}`}

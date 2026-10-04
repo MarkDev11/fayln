@@ -246,6 +246,74 @@ describe('rail beranda', () => {
       expect(body.items.some((item) => item.worldId === 'w_arsip-lama')).toBe(false);
     });
   });
+
+  describe('Baru Diperbarui', () => {
+    it('mengurutkan menurut waktu revisi terakhir, bukan tanggal terbit', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      expect(response.statusCode).toBe(200);
+
+      const body = response.json() as { items: { worldId: string; updatedAt: string }[] };
+      expect(body.items.length).toBeGreaterThan(0);
+
+      const dates = body.items.map((item) => item.updatedAt);
+      const sorted = [...dates].sort().reverse();
+      expect(dates).toEqual(sorted);
+    });
+
+    /*
+     * Penjaga regresi untuk cacat yang sebenarnya: rail ini pernah diturunkan
+     * dari katalog dan memakai `published_at`, sehingga isinya kembar dengan
+     * "Terbaru Dirilis" — nama berbeda, isi sama. Data contoh sengaja disusun
+     * (migrasi 006) supaya urutan keduanya BERBEDA; kalau suatu saat keduanya
+     * kembali sama, uji ini gagal.
+     */
+    it('menghasilkan urutan yang berbeda dari Terbaru Dirilis', async () => {
+      const updated = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const fresh = await app.inject({ method: 'GET', url: '/v1/worlds/new' });
+
+      const orderOf = (response: { json: () => { items: { worldId: string }[] } }): string[] =>
+        response.json().items.map((item) => item.worldId);
+
+      expect(orderOf(updated)).not.toEqual(orderOf(fresh));
+    });
+
+    it('menempatkan dunia yang terbit lama tetapi baru direvisi di puncak', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const body = response.json() as { items: { worldId: string }[] };
+
+      // Migrasi 006: terbit 90 hari lalu, direvisi 2 hari lalu.
+      expect(body.items[0]?.worldId).toBe('w_bosku-mantan');
+    });
+
+    it('membedakan updatedAt dari publishedAt', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const body = response.json() as {
+        items: { worldId: string; updatedAt: string; publishedAt: string }[];
+      };
+
+      const bosku = body.items.find((item) => item.worldId === 'w_bosku-mantan');
+      expect(bosku).toBeDefined();
+      // Dua makna berbeda: kapan terbit versus kapan terakhir disunting.
+      expect(bosku!.updatedAt).not.toBe(bosku!.publishedAt);
+    });
+
+    it('tidak menawarkan dunia yang diarsipkan', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const body = response.json() as { items: { worldId: string }[] };
+      expect(body.items.some((item) => item.worldId === 'w_arsip-lama')).toBe(false);
+    });
+
+    it('menolak batas yang di luar jangkauan', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated?limit=500' });
+      expect(response.statusCode).toBe(400);
+    });
+
+    it('tidak direbut oleh rute dunia berbasis id', async () => {
+      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toHaveProperty('items');
+    });
+  });
 });
 
 describe('pembuatan perjalanan', () => {

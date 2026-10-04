@@ -1,7 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type UseQueryResult } from '@tanstack/react-query';
 
 import { useGateway } from './GatewayProvider';
-import type { CatalogPage, CatalogQuery, ReadProgressInput, TopWorldsPage } from './gateway';
+import type { CatalogPage, CatalogQuery, ReadProgressInput, TopWorldsPage, UpdatedWorldItem } from './gateway';
 
 import type {
   JourneyDetailDTO,
@@ -19,6 +19,7 @@ export const queryKeys = {
   usage: () => ['usage'] as const,
   topWorlds: (limit: number) => ['worlds', 'top', limit] as const,
   newWorlds: (limit: number) => ['worlds', 'new', limit] as const,
+  updatedWorlds: (limit: number) => ['worlds', 'updated', limit] as const,
 };
 
 /**
@@ -57,6 +58,23 @@ export function useNewWorlds(limit = 10): UseQueryResult<WorldCatalogItem[], Err
   return useQuery({
     queryKey: queryKeys.newWorlds(limit),
     queryFn: () => gateway.fetchNewWorlds(limit),
+    staleTime: 60_000,
+  });
+}
+
+/**
+ * Rail "Baru Diperbarui".
+ *
+ * Sumbernya endpoint tersendiri, bukan turunan katalog: katalog diurut judul dan
+ * terpaginasi, sehingga menurunkan rail ini darinya akan membuatnya kembar
+ * dengan "Terbaru Dirilis" — dan, pada katalog besar, membuatnya diam-diam
+ * kehilangan rilis terbaru yang judulnya kebetulan berabjad belakang.
+ */
+export function useUpdatedWorlds(limit = 10): UseQueryResult<UpdatedWorldItem[], Error> {
+  const gateway = useGateway();
+  return useQuery({
+    queryKey: queryKeys.updatedWorlds(limit),
+    queryFn: () => gateway.fetchUpdatedWorlds(limit),
     staleTime: 60_000,
   });
 }

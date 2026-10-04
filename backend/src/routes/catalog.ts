@@ -49,6 +49,19 @@ export function registerCatalogRoutes(app: FastifyInstance, deps: { catalog: Cat
     return { items };
   });
 
+  /**
+   * Rail "Baru Diperbarui" — diurutkan menurut waktu revisi terakhir.
+   *
+   * Rutenya terpisah dari `/v1/worlds/new` karena keduanya menjawab pertanyaan
+   * berbeda: "apa yang baru terbit" versus "apa yang baru disunting". Sebelumnya
+   * yang kedua diturunkan dari katalog, dan hasilnya kembar dengan yang pertama.
+   */
+  app.get('/v1/worlds/updated', async (request) => {
+    const { limit } = railQuerySchema.parse(request.query);
+    const items = await deps.catalog.listUpdatedWorlds(limit);
+    return { items };
+  });
+
   app.get('/v1/worlds/:worldId', async (request) => {
     const { worldId } = worldParamsSchema.parse(request.params);
 

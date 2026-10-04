@@ -61,6 +61,19 @@ export type RankedWorldItem = WorldCatalogItem & {
 };
 
 /**
+ * Dunia untuk rail "Baru Diperbarui", beserta waktu revisi terakhirnya.
+ *
+ * `updatedAt` di sini BUKAN `publishedAt`. Nilainya adalah `created_at` dari
+ * versi terakhir dunia — saat versi itu dibuat, yaitu saat terakhir kali isinya
+ * disunting. Inilah yang membuat rail ini berbeda dari "Terbaru Dirilis":
+ * dunia yang terbit lama tetapi baru direvisi naik ke atas di sini, dan hanya
+ * di sini.
+ */
+export type UpdatedWorldItem = WorldCatalogItem & {
+  updatedAt: string;
+};
+
+/**
  * Memilih versi terbit terbaru untuk setiap dunia.
  *
  * Memakai derived table, bukan sub-kueri berkorelasi per baris. Bentuk ini
@@ -224,6 +237,41 @@ export class CatalogRepository {
     );
 
     return this.attachCatalogRelations(rows);
+  }
+
+  /**
+   * Rail "Baru Diperbarui": dunia terbit yang isinya paling baru disunting.
+   *
+   * Diurutkan menurut `created_at` dari versi TERAKHIR tiap dunia, bukan
+   * `published_at`. Keduanya sempat dianggap sama, dan akibatnya rail ini
+   * menampilkan daftar yang identik dengan "Terbaru Dirilis" — nama berbeda,
+   * isi kembar.
+   *
+   * Menyunting dunia terbit memang membuat baris versi baru (lihat panel admin),
+   * jadi `created_at` versi terakhir memang mencatat waktu revisi terakhir.
+   * Tidak perlu kolom baru.
+   *
+   * `LATEST_PUBLISHED_JOIN` sudah menyambung ke baris versi terakhir, sehingga
+   * `wv.created_at` di sini adalah milik versi itu — bukan versi lama mana pun.
+   */
+  async listUpdatedWorlds(limit: number): Promise<UpdatedWorldItem[]> {
+    const { rows } = await this.db.query<WorldVersionRow>(
+      `SELECT wv.world_id, wv.world_version, wv.title, wv.synopsis, wv.premise,
+              wv.cover_asset_id, wv.status, wv.content_rating, wv.published_at, wv.created_at
+       FROM world_versions wv
+       ${LATEST_PUBLISHED_JOIN}
+       WHERE wv.status = 'published'
+       ORDER BY wv.created_at DESC, wv.world_id ASC
+       LIMIT $1`,
+      [limit],
+    );
+
+    const items = await this.attachCatalogRelations(rows);
+
+    return items.map((item, index) => ({
+      ...item,
+      updatedAt: rows[index]!.created_at.toISOString(),
+    }));
   }
 
   /** Mengambil genre dan locale untuk sekumpulan dunia dalam satu query. */

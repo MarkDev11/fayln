@@ -40,6 +40,7 @@ import {
   type SubmitChoiceInput,
   type SubmitCustomInput,
   type TopWorldsPage,
+  type UpdatedWorldItem,
 } from '../gateway';
 
 export type HttpGatewayConfig = {
@@ -138,6 +139,15 @@ export class HttpStoryGateway implements StoryGateway {
   async fetchNewWorlds(limit = 10): Promise<WorldCatalogItem[]> {
     const response = await this.request<{ items: WorldCatalogItem[] }>(
       `/v1/worlds/new?limit=${String(limit)}`,
+      { method: 'GET' },
+    );
+    return response.items;
+  }
+
+  /** Rail "Baru Diperbarui": diurutkan server menurut waktu revisi terakhir. */
+  async fetchUpdatedWorlds(limit = 10): Promise<UpdatedWorldItem[]> {
+    const response = await this.request<{ items: UpdatedWorldItem[] }>(
+      `/v1/worlds/updated?limit=${String(limit)}`,
       { method: 'GET' },
     );
     return response.items;

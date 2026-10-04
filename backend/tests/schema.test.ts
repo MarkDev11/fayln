@@ -34,6 +34,7 @@ describe('migrasi', () => {
     '003_asset_paths.sql',
     '004_admin.sql',
     '005_seed_top_weekly.sql',
+    '006_seed_timeline.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {

@@ -51,6 +51,18 @@ export type TopWorldsPage = {
   windowDays: number;
 };
 
+/**
+ * Dunia untuk rail "Baru Diperbarui", beserta waktu revisi terakhirnya.
+ *
+ * `updatedAt` BUKAN `publishedAt`. Nilainya adalah waktu versi terakhir dunia
+ * dibuat — yaitu saat isinya terakhir disunting. Inilah yang membedakan rail ini
+ * dari "Terbaru Dirilis"; tanpa bidang ini, keduanya hanya bisa menampilkan
+ * daftar yang sama.
+ */
+export type UpdatedWorldItem = WorldCatalogItem & {
+  updatedAt: string;
+};
+
 export type SubmitChoiceInput = {
   clientOperationId: string;
   journeyId: string;
@@ -175,6 +187,14 @@ export interface StoryGateway {
   fetchTopWorlds(limit?: number): Promise<TopWorldsPage>;
   /** Dunia terbit yang paling baru diterbitkan. */
   fetchNewWorlds(limit?: number): Promise<WorldCatalogItem[]>;
+  /**
+   * Dunia terbit yang isinya paling baru disunting.
+   *
+   * Sengaja endpoint terpisah dari `fetchNewWorlds`, bukan turunan katalog:
+   * "baru terbit" dan "baru disunting" adalah dua pertanyaan berbeda, dan
+   * menurunkan yang kedua dari katalog membuatnya kembar dengan yang pertama.
+   */
+  fetchUpdatedWorlds(limit?: number): Promise<UpdatedWorldItem[]>;
 
   fetchJourneys(): Promise<JourneySummary[]>;
   fetchJourneyDetail(journeyId: string): Promise<JourneyDetailDTO>;

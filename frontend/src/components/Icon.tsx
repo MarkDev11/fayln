@@ -1,5 +1,8 @@
+import { Image } from 'expo-image';
 import React from 'react';
-import { StyleSheet, Text, View, type ColorValue, type ViewStyle } from 'react-native';
+import { StyleSheet, View, type ColorValue, type ViewStyle } from 'react-native';
+
+import starAsset from '../../assets/star.png';
 
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -38,7 +41,7 @@ export type IconProps = {
 };
 
 export function Icon({ name, size = 24, color, strokeWidth = 2 }: IconProps) {
-  const { colors } = useTheme();
+  const { colors, scheme } = useTheme();
   const tint = color ?? colors.inkSecondary;
   const bar = (width: number, height: number, style?: ViewStyle) => (
     <View
@@ -51,22 +54,40 @@ export function Icon({ name, size = 24, color, strokeWidth = 2 }: IconProps) {
 
   switch (name) {
     /**
-     * Bintang digambar sebagai glif teks, bukan bentuk `View`.
+     * Bintang digambar dari aset PNG, bukan bentuk `View` maupun glif teks.
      *
      * Bintang berujung lima tidak dapat dibentuk dari `View` + `borderWidth`
-     * seperti ikon lain di berkas ini, dan menambahkan pustaka SVG hanya untuk
-     * satu ikon terlalu berat. `★` (U+2605) adalah glif tipografis biasa, bukan
-     * emoji, dan tersedia di semua peramban serta sistem seluler.
+     * seperti ikon lain di berkas ini. Sebelumnya dipakai glif `★` (U+2605),
+     * tetapi bentuknya bergantung pada font sistem sehingga tampilannya bisa
+     * berbeda antar perangkat. Aset gambar membuat tampilannya sama di mana pun.
+     *
+     * `tintColor` HANYA dipasang pada tema terang. Asetnya kristal putih
+     * (`#E3E4E9`); di atas latar tema terang (`#F6F3EC`) kontrasnya hanya
+     * ~1,15:1 sehingga bintangnya hilang sama sekali. Di tema gelap asetnya
+     * sudah terbaca dan kilaunya justru yang diinginkan, jadi jangan diwarnai
+     * di sana — mewarnai berarti meratakannya menjadi siluet.
+     *
+     * Karena itu `color` kini DIPAKAI untuk bintang di tema terang. Pemanggil
+     * sudah mengirim warna aksen, jadi tint mengikuti warna teks di sebelahnya.
      */
-    case 'star':
+    case 'star': {
+      /*
+       * `ColorValue` boleh berupa `OpaqueColorValue` — warna khusus platform
+       * seperti `PlatformColor()` — dan `expo-image` hanya menerima string.
+       * Jadi hanya warna berbentuk string yang diteruskan, bukan di-cast.
+       */
+      const starTint = scheme === 'light' && typeof tint === 'string' ? tint : undefined;
       return (
-        <Text
-          allowFontScaling={false}
-          style={{ color: tint, fontSize: size, lineHeight: size * 1.1 }}
-        >
-          ★
-        </Text>
+        <Image
+          source={starAsset}
+          style={{ width: size, height: size }}
+          contentFit="contain"
+          tintColor={starTint}
+          // Ikon dekoratif; label aksesibilitas disediakan pemanggil (lihat kepala berkas).
+          accessible={false}
+        />
       );
+    }
 
     case 'home':
       return (
