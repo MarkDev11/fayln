@@ -24,7 +24,7 @@ export async function accountsList(ctx: AdminPageContext, query: { search: strin
   </td>
   <td>${account.tier === 'paid' ? pill('paid', 'ok') : pill('free')}</td>
   <td class="right mono">${formatNumber(account.spentToday)}</td>
-  <td class="right mono">${account.bonusBalance > 0 ? formatNumber(account.bonusBalance) : '<span class="muted">0</span>'}</td>
+  <td class="right mono">${account.bonusBalance > 0 ? formatNumber(account.bonusBalance) : html`<span class="muted">0</span>`}</td>
   <td class="right mono">${String(account.journeyCount)}</td>
   <td class="right muted mono">${formatTime(account.createdAt)}</td>
 </tr>`,
@@ -39,7 +39,7 @@ export async function accountsList(ctx: AdminPageContext, query: { search: strin
     <input name="search" placeholder="ID akun atau nama tampilan" value="${inputValue(query.search)}"
            style="flex:1;min-width:220px">
     <button type="submit">Cari</button>
-    ${query.search ? '<a href="/admin/accounts"><button class="ghost" type="button">Bersihkan</button></a>' : ''}
+    ${query.search ? html`<a href="/admin/accounts"><button class="ghost" type="button">Bersihkan</button></a>` : ''}
   </div>
 </form>
 <div class="card">${table(

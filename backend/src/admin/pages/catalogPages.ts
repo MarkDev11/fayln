@@ -303,7 +303,7 @@ export async function charactersList(ctx: AdminPageContext): Promise<SafeHtml> {
   Menambah atau mengubah karakter membuat <strong>versi baru</strong> pada dunianya.
   Versi lama tetap utuh untuk perjalanan yang sedang berjalan.
 </p>
-${worlds.length === 0 ? '<div class="empty">Belum ada dunia, jadi belum ada karakter.</div>' : sections}`;
+${worlds.length === 0 ? html`<div class="empty">Belum ada dunia, jadi belum ada karakter.</div>` : sections}`;
 }
 
 export async function charactersForm(
