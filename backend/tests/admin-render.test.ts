@@ -1099,6 +1099,33 @@ describe('provider: keadaan kosong dan berisi', () => {
   });
 
   /**
+   * Saran nama model di formulir model.
+   *
+   * Bidangnya tetap isian bebas — daftar tertutup akan menghalangi nama model
+   * yang belum muncul di `/models` provider, dan penyedia menambah model lebih
+   * cepat daripada halaman ini dimuat ulang. Karena itu yang dirender adalah
+   * `<datalist>`, bukan `<select>`.
+   */
+  it('menyediakan saran nama model tanpa mengunci isiannya', async () => {
+    const cookie = await login();
+    await seedProvider();
+
+    const body = await sweep(cookie, '/admin/models-form');
+
+    expect(body, 'bidang nama model tidak menunjuk daftar saran').toMatch(/list="m-key-options"/);
+    expect(body, 'datalist tidak dirender').toContain('<datalist id="m-key-options"');
+    expect(body, 'kait JavaScript pengisian tidak ada').toContain('data-model-key-input');
+    expect(body, 'baris status tidak dirender').toContain('data-model-key-status');
+    // Daftar sarannya diisi oleh WIZARD_JS. Tanpa skrip itu ia tetap kosong dan
+    // bidangnya tampak seperti isian biasa — tanpa galat apa pun.
+    expect(body, 'skrip pengambil daftar model tidak ikut dimuat').toContain(
+      "'/admin/providers/'",
+    );
+    // Isiannya harus tetap <input>, bukan <select>.
+    expect(body).toMatch(/<input[^>]*name="modelKey"/);
+  });
+
+  /**
    * Kunci tersimpan tidak boleh kembali ke HTML — dalam bentuk apa pun.
    *
    * Dua kebocoran yang mungkin, dan keduanya tampak wajar kalau tidak dijaga:

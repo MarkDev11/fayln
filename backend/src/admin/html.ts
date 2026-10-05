@@ -947,6 +947,15 @@ select{appearance:none;-webkit-appearance:none;
 /* Sejalan dengan .mono, dan sengaja memakai tumpukan yang sama persis. */
 .field__mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
 
+/*
+ * Baris status bidang: hasil sesuatu yang dikerjakan SETELAH halaman tampil,
+ * mis. mengambil daftar model dari provider. Warnanya menyatakan hasilnya,
+ * karena "berhasil" dan "gagal" di sini hanya berbeda satu kata.
+ */
+.field__status{display:block;font-size:12px;line-height:1.55;margin:6px 0 0;color:var(--muted)}
+.field__status[data-state=ok]{color:var(--ok)}
+.field__status[data-state=error]{color:var(--danger)}
+
 /* ---------------- Tombol ---------------- */
 /*
  * Isian tombol memakai --accent-fill, bukan --accent. Di tema gelap --accent

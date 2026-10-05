@@ -37,6 +37,7 @@ import { BASE_EXPRESSION, isRelationStatus } from './worldDraftRepository';
 import type { CharacterFailure } from './charactersRepository';
 import type { CategoryFailure, LocationFailure } from './locationsRepository';
 import type { ModelFailure } from './modelsRepository';
+import { fetchProviderModels } from './providerModels';
 import type { ProviderFailure } from './providersRepository';
 import { html, inputValue, layout } from './html';
 import { validatePassword, verifyPassword } from './password';
@@ -601,8 +602,15 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     send(reply, request, 'Model', await pages.modelsList(ctx), 'models'),
   );
 
+  /*
+   * Formulir model memakai sendWizard, bukan send.
+   *
+   * Yang dibutuhkan adalah WIZARD_JS: ia yang mengisi daftar saran nama model
+   * dari provider yang dipilih. Tanpa itu, <datalist>-nya tetap kosong dan
+   * bidangnya tampak seperti isian biasa — tanpa galat apa pun.
+   */
   app.get<{ Querystring: { model?: string } }>('/admin/models-form', async (request, reply) =>
-    send(reply, request, 'Model', await pages.modelForm(ctx, request.query.model ?? null), 'models'),
+    sendWizard(reply, request, 'Model', await pages.modelForm(ctx, request.query.model ?? null), 'models'),
   );
 
   app.get('/admin/providers', async (request, reply) =>
@@ -1990,6 +1998,38 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     await ctx.providers.move(body.data.providerId, body.data.direction);
     return reply.redirect('/admin/providers', 302);
   });
+
+  /**
+   * Daftar model sebuah provider, untuk saran di formulir model.
+   *
+   * Mengembalikan 200 dengan `ok:false` ketika gagal, bukan kode galat: bagi
+   * halaman, "provider tidak menjawab" adalah keadaan biasa yang perlu
+   * DITAMPILKAN, bukan kesalahan permintaan. Kode galat hanya untuk provider
+   * yang memang tidak ada.
+   *
+   * Kuncinya diambil di sini dan tidak pernah ikut ke jawaban — lihat catatan
+   * di `providerModels.ts`.
+   */
+  app.get<{ Params: { providerId: string } }>(
+    '/admin/providers/:providerId/models',
+    async (request, reply) => {
+      const provider = await ctx.providers.find(request.params.providerId);
+      if (!provider) {
+        return reply.code(404).send({ ok: false, reason: 'not-found', detail: '' });
+      }
+
+      const apiKey = await ctx.providers.apiKeyFor(provider.providerId);
+      if (!apiKey) {
+        return reply.send({ ok: false, reason: 'no-key', detail: '' });
+      }
+
+      const result = await fetchProviderModels(
+        { baseUrl: provider.baseUrl, apiType: provider.apiType },
+        apiKey,
+      );
+      return reply.send(result);
+    },
+  );
 
   app.post('/admin/models/toggle', async (request, reply) => {
     const session = request.adminSession;

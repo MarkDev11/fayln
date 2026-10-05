@@ -297,6 +297,85 @@ export const WIZARD_JS = `
     }
   }
 
+  /* ---------------- Saran nama model dari provider ---------------- */
+
+  /*
+   * Mengisi <datalist> dari GET /admin/providers/<id>/models.
+   *
+   * Hasilnya SARAN, bukan daftar tertutup: input tetap dapat diketik bebas.
+   * Penyedia menambah model lebih cepat daripada halaman ini dimuat ulang, dan
+   * mengunci pilihan hanya akan menghalangi pekerjaan yang sah.
+   *
+   * Daftar dimuat ulang setiap kali providernya berganti, karena nama model
+   * berbeda antar penyedia — saran dari provider lama justru menyesatkan.
+   *
+   * Semua kegagalan berakhir sebagai pesan di baris status, bukan sebagai
+   * halaman yang diam: provider yang belum punya kunci atau tidak menjawab
+   * adalah keadaan biasa, bukan kesalahan admin.
+   */
+  function bindModelKeySync() {
+    var input = document.querySelector('[data-model-key-input]');
+    var options = document.querySelector('[data-model-key-options]');
+    var status = document.querySelector('[data-model-key-status]');
+    var select = document.querySelector('select[name=providerId]');
+    if (!input || !options || !select) { return; }
+
+    var terakhir = null;
+
+    var pesanGagal = {
+      'no-key': 'Provider ini belum punya kunci API, jadi daftar model tidak dapat diambil. Isi namanya manual.',
+      unauthorized: 'Provider menolak kuncinya. Periksa kuncinya di halaman provider.',
+      unreachable: 'Provider tidak dapat dihubungi. Isi namanya manual.',
+      'bad-response': 'Jawaban provider tidak dikenali sebagai daftar model. Isi namanya manual.'
+    };
+
+    function say(pesan, keadaan) {
+      if (!status) { return; }
+      status.textContent = pesan;
+      if (keadaan) { status.setAttribute('data-state', keadaan); }
+      else { status.removeAttribute('data-state'); }
+    }
+
+    function muat() {
+      var id = select.value;
+      if (!id || id === terakhir) { return; }
+      terakhir = id;
+
+      options.innerHTML = '';
+      say('Mengambil daftar model...', null);
+
+      fetch('/admin/providers/' + encodeURIComponent(id) + '/models', {
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin'
+      })
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+          if (!data || data.ok !== true) {
+            var teks = pesanGagal[data && data.reason] || 'Daftar model tidak dapat diambil. Isi namanya manual.';
+            say(teks + (data && data.detail ? ' (' + data.detail + ')' : ''), 'error');
+            return;
+          }
+          var ids = data.ids || [];
+          for (var i = 0; i < ids.length; i++) {
+            var option = document.createElement('option');
+            option.value = ids[i];
+            options.appendChild(option);
+          }
+          if (ids.length === 0) {
+            say('Provider tidak mengembalikan satu pun nama model. Isi namanya manual.', 'error');
+            return;
+          }
+          say(ids.length + ' nama model tersedia. Boleh dipilih, boleh diketik sendiri.', 'ok');
+        })
+        .catch(function () {
+          say('Daftar model tidak dapat diambil. Isi namanya manual.', 'error');
+        });
+    }
+
+    select.addEventListener('change', muat);
+    muat();
+  }
+
   /* ---------------- Peringatan meninggalkan halaman ---------------- */
 
   function bindUnsavedGuard() {
@@ -350,6 +429,7 @@ export const WIZARD_JS = `
       bindExpressionRows
     );
     bindUnsavedGuard();
+    bindModelKeySync();
   }
 
   if (document.readyState === 'loading') {

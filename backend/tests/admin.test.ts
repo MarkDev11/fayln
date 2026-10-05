@@ -19,7 +19,7 @@
  */
 
 import type { FastifyInstance } from 'fastify';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
@@ -3055,6 +3055,127 @@ describe('provider', () => {
       expect(await providers.apiKeyFor(provider!.providerId)).toBe('sk-dari-lingkungan');
 
       delete process.env.FAYLN_UJI_KUNCI;
+    });
+  });
+
+  /**
+   * Saran nama model dari provider.
+   *
+   * Jaringan DIGANTI dengan fungsi palsu. Uji yang menghubungi penyedia model
+   * sungguhan akan gagal di mesin tanpa internet dan lambat di mesin yang ada —
+   * dan yang sedang diuji di sini adalah jalur panel, bukan penyedianya.
+   */
+  describe('saran nama model', () => {
+    const KUNCI_ENKRIPSI = Buffer.from('0123456789abcdef0123456789abcdef').toString('base64');
+    let semula: string | undefined;
+
+    beforeEach(() => {
+      semula = process.env[SECRETS_KEY_ENV];
+      process.env[SECRETS_KEY_ENV] = KUNCI_ENKRIPSI;
+    });
+
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      if (semula === undefined) {
+        delete process.env[SECRETS_KEY_ENV];
+      } else {
+        process.env[SECRETS_KEY_ENV] = semula;
+      }
+    });
+
+    /** Provider yang punya kunci tersimpan, jadi daftar modelnya dapat diambil. */
+    async function providerDenganKunci(cookie: string): Promise<string> {
+      const created = await saveProvider(cookie, {
+        providerId: '',
+        name: 'Sumber Model',
+        prefix: 'sumber',
+        apiType: 'chat-completions',
+        baseUrl: 'https://sumber.example.test/v1',
+        apiKey: 'sk-uji',
+        isActive: 'true',
+      });
+      expect(created).toContain('notice=saved');
+
+      const [provider] = await new ProvidersRepository(ctx.db).list();
+      return provider!.providerId;
+    }
+
+    it('mengembalikan daftar model dari provider', async () => {
+      const cookie = await login();
+      const providerId = await providerDenganKunci(cookie);
+
+      let dipanggil = '';
+      vi.stubGlobal('fetch', async (url: string) => {
+        dipanggil = url;
+        return {
+          status: 200,
+          ok: true,
+          text: async () => '{"data":[{"id":"model-a"},{"id":"model-b"}]}',
+        };
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/admin/providers/${providerId}/models`,
+        headers: { cookie },
+      });
+
+      expect(response.statusCode).toBe(200);
+      expect(response.json()).toEqual({ ok: true, ids: ['model-a', 'model-b'] });
+      // Alamat yang dipanggil diturunkan dari base URL provider, bukan dari
+      // apa pun yang dikirim klien.
+      expect(dipanggil).toBe('https://sumber.example.test/v1/models');
+    });
+
+    it('tidak menghubungi apa pun bila provider belum punya kunci', async () => {
+      const cookie = await login();
+      const created = await saveProvider(cookie, {
+        providerId: '',
+        name: 'Tanpa Kunci',
+        prefix: 'tanpakunci',
+        apiType: 'chat-completions',
+        baseUrl: 'https://tanpa.example.test/v1',
+        isActive: 'true',
+      });
+      expect(created).toContain('notice=saved');
+
+      const [provider] = await new ProvidersRepository(ctx.db).list();
+
+      let dipanggil = 0;
+      vi.stubGlobal('fetch', async () => {
+        dipanggil += 1;
+        return { status: 200, ok: true, text: async () => '{}' };
+      });
+
+      const response = await app.inject({
+        method: 'GET',
+        url: `/admin/providers/${provider!.providerId}/models`,
+        headers: { cookie },
+      });
+
+      expect(response.json()).toEqual({ ok: false, reason: 'no-key', detail: '' });
+      // Tanpa kunci tidak ada yang dapat dikirim, jadi tidak ada permintaan yang
+      // boleh keluar sama sekali.
+      expect(dipanggil).toBe(0);
+    });
+
+    it('menolak provider yang tidak ada', async () => {
+      const cookie = await login();
+      const response = await app.inject({
+        method: 'GET',
+        url: '/admin/providers/prov_hantu/models',
+        headers: { cookie },
+      });
+      expect(response.statusCode).toBe(404);
+    });
+
+    it('menuntut sesi admin lebih dulu', async () => {
+      // Kunci API dipakai di jalur ini, jadi halaman ini tidak boleh terbuka.
+      const response = await app.inject({
+        method: 'GET',
+        url: '/admin/providers/prov_apa/models',
+      });
+      expect(response.statusCode).toBe(302);
     });
   });
 });

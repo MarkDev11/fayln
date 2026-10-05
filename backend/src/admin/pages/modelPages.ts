@@ -64,6 +64,25 @@ function hintFor(id: string, hint: string | SafeHtml, required: boolean | undefi
   }${hint}</span>`;
 }
 
+/**
+ * Atribut tambahan, di-escape nilainya dan dibungkus `safe()`.
+ *
+ * Namanya datang dari kode (bukan dari isian), jadi yang perlu di-escape hanya
+ * nilainya. Dipakai untuk kait JavaScript seperti `data-model-key-input` —
+ * menulisnya sebagai string biasa akan menghasilkan `=&quot;` dan kaitnya tidak
+ * pernah cocok, tanpa galat apa pun.
+ */
+function extraAttrs(extra: Record<string, string> | undefined): SafeHtml {
+  if (!extra) {
+    return safe('');
+  }
+  return safe(
+    Object.entries(extra)
+      .map(([key, value]) => ` ${key}="${esc(value)}"`)
+      .join(''),
+  );
+}
+
 function textField(
   base: FieldBase & {
     name: string;
@@ -72,6 +91,12 @@ function textField(
     maxlength?: number;
     type?: string;
     mono?: boolean;
+    /** Id `<datalist>` penyedia saran. Isian tetap bebas diketik. */
+    list?: string;
+    /** Atribut tambahan, mis. kait JavaScript. */
+    attrs?: Record<string, string>;
+    /** Elemen di bawah bantuan — mis. baris status. */
+    after?: SafeHtml;
   },
 ): SafeHtml {
   return html`<div class="field">
@@ -82,8 +107,10 @@ function textField(
          ${base.maxlength ? safe(` maxlength="${String(base.maxlength)}"`) : ''}
          ${base.placeholder ? safe(` placeholder="${esc(base.placeholder)}"`) : ''}
          ${base.mono ? safe(' class="field__mono"') : ''}
+         ${base.list ? safe(` list="${esc(base.list)}"`) : ''}${extraAttrs(base.attrs)}
          value="${inputValue(base.value)}">
   ${hintFor(base.id, base.hint, base.required)}
+  ${base.after ?? ''}
 </div>`;
 }
 
@@ -610,10 +637,14 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
     name: 'modelKey',
     label: 'Nama model di provider',
     required: true,
-    hint: 'Nama yang dikirim ke API, bukan nama tampilan. Huruf, angka, titik, garis bawah, garis miring, titik dua.',
+    hint: 'Nama yang dikirim ke API, bukan nama tampilan. Daftar saran diambil dari provider yang dipilih — boleh dipilih, dan boleh juga diketik sendiri.',
     placeholder: 'mis. mistral-medium-latest',
     maxlength: 120,
     mono: true,
+    list: 'm-key-options',
+    attrs: { 'data-model-key-input': '' },
+    after: html`<span class="field__status" data-model-key-status>Menunggu daftar model dari provider&hellip;</span>
+<datalist id="m-key-options" data-model-key-options></datalist>`,
     value: model?.modelKey ?? '',
   })}
 
