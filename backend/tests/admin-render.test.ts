@@ -429,14 +429,9 @@ describe('master lokasi: keadaan kosong dan berisi', () => {
     }
     const created = await pages.locations.create({
       name,
-      backgrounds: [
-        {
-          categoryId: category.categoryId,
-          mediaId: MEDIA_ID,
-          description: '',
-          usageNote: '',
-        },
-      ],
+      categoryId: category.categoryId,
+      description: '',
+      mediaId: MEDIA_ID,
     });
     if (!created.ok) {
       throw new Error(`lokasi uji gagal dibuat: ${created.reason}`);
@@ -465,7 +460,7 @@ describe('master lokasi: keadaan kosong dan berisi', () => {
     expect(body, 'pesan kosong masih tampil padahal ada lokasi').not.toContain('Belum ada lokasi');
     expect(body).toContain('class="list__item"');
     expect(body).toContain('Aula Kantor');
-    expect(body).toContain('1 era');
+    expect(body, 'kategori tidak tampil di baris daftar').toContain('masa kini');
     // Latarnya benar-benar dipasang di markup...
     expect(body).toContain(`src="/v1/media/${MEDIA_ID}"`);
 
@@ -485,12 +480,12 @@ describe('master lokasi: keadaan kosong dan berisi', () => {
     // apa-apa — bentuk kegagalan senyap yang paling mudah lolos.
     expect(body).not.toContain('<select name="pick"');
     expect(body, 'halaman diam saja padahal master masih kosong').toContain(
-      'Master lokasi belum punya satu pun latar',
+      'Master lokasi masih kosong',
     );
     expect(body).toContain('/admin/locations');
   });
 
-  it('menawarkan pemilih berisi pasangan lokasi-kategori saat master sudah diisi', async () => {
+  it('menawarkan pemilih berisi lokasi yang dikelompokkan per kategori', async () => {
     const cookie = await login();
     await seedMedia(MEDIA_ID);
     await seedLocation('Aula Kerajaan', 'era dinasti');
@@ -499,10 +494,13 @@ describe('master lokasi: keadaan kosong dan berisi', () => {
     const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/2`);
 
     expect(body, 'pemilih latar tidak dirender').toContain('<select name="pick"');
-    expect(body, 'pasangan lokasi-kategori tidak muncul sebagai pilihan').toContain(
-      'Aula Kerajaan — era dinasti',
+    expect(body, 'lokasi tidak muncul sebagai pilihan').toContain('Aula Kerajaan');
+    // Dikelompokkan memakai elemen bawaan HTML, jadi era-nya terbaca tanpa
+    // satu baris pun JavaScript.
+    expect(body, 'pilihan tidak dikelompokkan menurut kategori').toContain(
+      '<optgroup label="era dinasti">',
     );
-    expect(body).not.toContain('Master lokasi belum punya satu pun latar');
+    expect(body).not.toContain('Master lokasi masih kosong');
   });
 });
 
@@ -799,24 +797,37 @@ describe('templat baris ekspresi berada di dalam formulirnya', () => {
     expect(body, 'bidang tersembunyi id media tidak dirender').toContain('data-portrait-media');
   });
 
-  it('pada halaman master lokasi', async () => {
+  /*
+   * Halaman master lokasi adalah kebalikannya: bentuknya SENGAJA datar.
+   *
+   * Versi sebelumnya memakai baris berulang sehingga satu tempat dapat memuat
+   * banyak gambar (satu per era). Itu dibuang karena yang diisi sehari-hari
+   * adalah satu tempat pada satu era. Uji ini menjaga agar bentuknya tidak
+   * diam-diam kembali berulang — perubahan seperti itu tidak menghasilkan galat
+   * apa pun, hanya formulir yang berbeda dari yang disepakati.
+   */
+  it('pada halaman master lokasi justru tidak ada baris berulang', async () => {
     const cookie = await login();
 
     // Kategori dibuat lebih dulu: tanpa kategori, halaman formulir menampilkan
-    // peringatan dan tidak merender satu baris pun — sehingga ujinya akan lulus
-    // secara palsu tanpa pernah memeriksa letak templatnya.
+    // peringatan dan tidak merender bidang apa pun — sehingga ujinya akan lulus
+    // secara palsu tanpa pernah memeriksa isinya.
     const category = await pages.locations.createCategory('masa kini');
     expect(category.ok).toBe(true);
 
     const body = await sweep(cookie, '/admin/locations-form');
+    const form = formWith(body, 'data-background-scope');
 
-    const form = formWith(body, 'data-expression-scope');
-    expect(form, 'daftar latar berada di luar formulir').toContain('data-expression-list');
-    expect(form, 'tombol tambah latar berada di luar formulir').toContain('data-expression-add');
-    expect(
-      form,
-      'templat latar berada di luar formulir — tombol "+ Tambah latar" tidak akan bekerja',
-    ).toContain('data-expression-template');
+    expect(form, 'nama lokasi tidak ada di formulir').toContain('name="name"');
+    expect(form, 'pemilih kategori tidak ada di formulir').toContain('name="categoryId"');
+    expect(form, 'keterangan tidak ada di formulir').toContain('name="description"');
+    expect(form, 'bidang id media tidak ada di formulir').toContain('name="mediaId"');
+    expect(form, 'formulir ini seharusnya tidak punya baris berulang').not.toContain(
+      'data-expression-row',
+    );
+    expect(form, 'formulir ini seharusnya tidak punya templat baris').not.toContain(
+      'data-expression-template',
+    );
   });
 
   it('memuat skrip unggahan dan slot gambar latar di halaman master lokasi', async () => {

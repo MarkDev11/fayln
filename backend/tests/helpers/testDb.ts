@@ -14,7 +14,7 @@
 
 import { newDb, type IMemoryDb } from 'pg-mem';
 
-import { runMigrations } from '../../src/db/migrate';
+import { migrationsDirectory, runMigrations } from '../../src/db/migrate';
 import { createDatabase, type Database } from '../../src/db/pool';
 
 export type TestDatabase = {
@@ -23,7 +23,18 @@ export type TestDatabase = {
   close: () => Promise<void>;
 };
 
-export async function createTestDatabase(): Promise<TestDatabase> {
+/**
+ * Basis data pengujian dengan seluruh migrasi diterapkan.
+ *
+ * `directory` boleh diarahkan ke folder lain supaya sebuah uji dapat membangun
+ * keadaan SEBELUM satu migrasi tertentu — caranya dengan menyalin migrasi yang
+ * lebih awal ke folder sementara. Tanpa itu, migrasi pemindahan data hanya
+ * pernah berjalan pada tabel kosong, dan janji "tidak ada yang hilang" tidak
+ * pernah dibuktikan.
+ */
+export async function createTestDatabase(
+  directory: string = migrationsDirectory(),
+): Promise<TestDatabase> {
   const mem = newDb();
   const adapter = mem.adapters.createPg();
 
@@ -31,7 +42,7 @@ export async function createTestDatabase(): Promise<TestDatabase> {
   const pool = new adapter.Pool() as unknown as Parameters<typeof createDatabase>[0];
   const db = createDatabase(pool);
 
-  await runMigrations(db);
+  await runMigrations(db, directory);
 
   return {
     db,

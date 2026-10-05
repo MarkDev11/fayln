@@ -1,113 +1,90 @@
 /**
- * Master lokasi: kategori (era/setting), tempat, dan latar belakangnya.
+ * Master lokasi: kategori (era/setting), tempat, dan satu gambar latarnya.
  *
  * Sebelum ini tempat dan latar belakang hanya hidup di dalam SATU versi dunia:
  * `world_locations` menyimpan label, `world_assets` menyimpan gambar. Tempat
  * yang sama pada dua cerita berarti mengunggah gambar yang sama dua kali.
- * Berkas ini memindahkan bagian yang TIDAK khas satu cerita ke satu tempat:
+ * Berkas ini memindahkan bagian yang TIDAK khas satu cerita ke satu tempat.
  *
- *   kategori (era)  →  lokasi (tempat)  →  latar (gambar per era)
+ * Bentuknya sengaja datar — satu lokasi adalah satu nama, satu kategori, satu
+ * keterangan, dan satu gambar:
+ *
+ *     kategori (era)  →  lokasi (tempat + gambar)
+ *
+ * Versi sebelumnya memakai tabel latar tersendiri sehingga satu tempat dapat
+ * memuat banyak gambar (satu per era). Itu dibuang: yang diisi sehari-hari
+ * adalah satu tempat pada satu era, dan baris berulang hanya menambah satu
+ * pertanyaan yang harus dijawab admin setiap kali tanpa ada yang memakainya.
+ * Tempat yang sama pada era lain sekarang adalah LOKASI LAIN — dan itu memang
+ * cara berpikirnya: "Aula Kantor pada era dinasti" bukan "Aula Kantor".
  *
  * Yang khas satu cerita — keterangan yang dibaca mesin cerita, kekuatan blur,
- * titik fokus, peluang kemunculan — tetap tinggal di `world_assets`. Dunia
- * boleh menyesuaikan latar yang dipungutnya tanpa mengubah master.
+ * titik fokus, peluang kemunculan — tetap tinggal di `world_assets`. Dunia boleh
+ * menyesuaikan latar yang dipungutnya tanpa mengubah master.
  *
  * ---------------------------------------------------------------------------
  * TIGA KEPUTUSAN YANG PERLU DIKETAHUI SEBELUM MENYUNTING BERKAS INI
  * ---------------------------------------------------------------------------
  *
- * 1. SATU GAMBAR PER (LOKASI, KATEGORI) — dan yang kedua DITOLAK, bukan dibuang.
+ * 1. GAMBAR DAN KATEGORI WAJIB — dan penolakannya BERBEDA untuk keduanya.
  *
- *    Kunci utama `location_backgrounds` adalah pasangan itu. Karena itu baris
- *    kembar akan muncul sebagai galat kunci utama yang tidak dapat dibaca admin,
- *    jadi ia ditolak lebih dulu di `prepare()` dengan nama kategorinya. Membuang
- *    baris kedua tanpa suara jauh lebih buruk: admin mengunggah dua gambar,
- *    menekan Simpan, dan satu gambar hilang tanpa penjelasan — persis alasan
- *    yang sama seperti `duplicate-expression` pada master karakter.
+ *    Lokasi tanpa gambar tidak dapat dirender, dan lokasi tanpa kategori tidak
+ *    dapat ditawarkan di pemilih wizard. Keduanya ditolak, tetapi dengan sebab
+ *    yang berbeda supaya halaman dapat menunjuk baris yang salah. Basis data
+ *    menegakkannya lagi lewat `NOT NULL` dan kunci asing — jaring pengaman,
+ *    bukan satu-satunya penjaga.
  *
- * 2. BARIS YANG BELUM DIUNGGAH DIBUANG; BARIS YANG KATEGORINYA BELUM DIPILIH
- *    DITOLAK.
- *
- *    Keduanya tampak serupa, tetapi artinya berbeda. Baris tanpa gambar adalah
- *    baris yang memang belum jadi dipakai — sama seperti ekspresi karakter yang
- *    dikosongkan. Baris yang SUDAH punya gambar tetapi kategorinya kosong atau
- *    tidak dikenal adalah pekerjaan yang akan hilang: admin sudah mengunggah,
- *    lalu memilih kategori yang ternyata sudah dihapus di tab lain. Yang kedua
- *    harus berisik.
- *
- * 3. `location_id` DAN `category_id` DIBUAT SISTEM dan tidak pernah berubah.
+ * 2. `location_id` DAN `category_id` DIBUAT SISTEM dan tidak pernah berubah.
  *
  *    Berbeda dari genre, tidak ada nilai yang lebih baik daripada id buatan:
  *    nama tempat bebas ("Aula Kantor", "Hutan Utara") dan nama era bebas
  *    ("masa kini", "era dinasti"), jadi menurunkannya menjadi id akan menabrak
  *    dua nama berbeda yang sama. Yang dapat diubah adalah namanya.
  *
- * ---------------------------------------------------------------------------
- * MENGHAPUS: DIPERIKSA, KARENA DUNIA MENUNJUK KE SINI
- * ---------------------------------------------------------------------------
- * `world_assets.master_location_id` dan `master_category_id` berkunci asing ke
- * sini dengan `ON DELETE RESTRICT`. `remove()` dan `removeCategory()` tetap
- * memeriksa pemakaian LEBIH DULU supaya alasannya dapat disebutkan; kunci asing
- * hanya menjadi jaring pengaman bila ada yang menyisipkan di antara pemeriksaan
- * dan penghapusan — pola yang sama seperti `GenresRepository.remove()`.
+ * 3. MENGHAPUS DIPERIKSA, KARENA DUNIA MENUNJUK KE SINI.
+ *
+ *    `world_assets.master_location_id` dan `master_category_id` berkunci asing
+ *    ke sini dengan `ON DELETE RESTRICT`. `remove()` dan `removeCategory()`
+ *    tetap memeriksa pemakaian LEBIH DULU supaya alasannya dapat disebutkan;
+ *    kunci asing hanya menjadi jaring pengaman bila ada yang menyisipkan di
+ *    antara pemeriksaan dan penghapusan.
  */
 
 import { randomUUID } from 'node:crypto';
 
-import type { Database, DbClient } from '../db/pool';
+import type { Database } from '../db/pool';
 import { isMediaId } from '../repositories/mediaRepository';
 
 export const MAX_LOCATION_NAME = 120;
 export const MAX_CATEGORY_NAME = 60;
-export const MAX_BACKGROUND_DESCRIPTION = 200;
-export const MAX_BACKGROUND_USAGE = 500;
-
-export const ENCOUNTER_LIKELIHOODS = ['none', 'low', 'medium', 'high'] as const;
-export type EncounterLikelihood = (typeof ENCOUNTER_LIKELIHOODS)[number];
+export const MAX_LOCATION_DESCRIPTION = 200;
 
 export type LocationCategoryRow = {
   categoryId: string;
   name: string;
   position: number;
   createdAt: Date | string;
-  /** Berapa LOKASI yang punya latar pada kategori ini. */
+  /** Berapa lokasi yang memakai kategori ini. */
   locationCount: number;
-};
-
-export type LocationBackgroundRow = {
-  categoryId: string;
-  /** Nama kategori, diambil dari master — bukan disalin ke setiap baris. */
-  categoryName: string;
-  mediaId: string;
-  description: string;
-  usageNote: string;
-  encounterLikelihood: EncounterLikelihood | null;
-  blurStrength: number;
-  focalX: number;
-  focalY: number;
-  width: number | null;
-  height: number | null;
 };
 
 export type LocationRow = {
   locationId: string;
   name: string;
+  categoryId: string;
+  /** Nama kategori, diambil dari master — bukan disalin ke setiap baris. */
+  categoryName: string;
+  description: string;
+  mediaId: string;
   position: number;
   createdAt: Date | string;
-  /** Terurut menurut urutan kategori, bukan urutan penyimpanan. */
-  backgrounds: LocationBackgroundRow[];
-};
-
-export type LocationBackgroundInput = {
-  categoryId: string;
-  mediaId: string;
-  description: string;
-  usageNote: string;
 };
 
 export type LocationInput = {
   name: string;
-  backgrounds: readonly LocationBackgroundInput[];
+  categoryId: string;
+  description: string;
+  mediaId: string;
 };
 
 /** Sebab sebuah tindakan ditolak, agar halaman dapat menampilkan pesan tepat. */
@@ -115,9 +92,8 @@ export type CategoryFailure = 'invalid-name' | 'not-found' | 'in-use';
 
 export type LocationFailure =
   | 'invalid-name'
-  | 'no-backgrounds'
   | 'invalid-category'
-  | 'duplicate-category'
+  | 'no-image'
   | 'not-found'
   | 'in-use';
 
@@ -127,9 +103,7 @@ export type CategoryResult =
 
 export type LocationResult =
   | { ok: true; locationId: string }
-  | { ok: false; reason: LocationFailure; detail?: string; usedBy?: number };
-
-type Prepared = { name: string; backgrounds: readonly LocationBackgroundInput[] };
+  | { ok: false; reason: LocationFailure; usedBy?: number };
 
 export class LocationsRepository {
   constructor(private readonly db: Database) {}
@@ -157,8 +131,8 @@ export class LocationsRepository {
     );
 
     const { rows: counts } = await this.db.query<{ category_id: string; total: number }>(
-      `SELECT category_id, count(DISTINCT location_id)::int AS total
-       FROM location_backgrounds
+      `SELECT category_id, count(*)::int AS total
+       FROM locations
        GROUP BY category_id`,
     );
     const byCategory = new Map(counts.map((row) => [row.category_id, row.total]));
@@ -194,7 +168,7 @@ export class LocationsRepository {
     return { ok: true, categoryId };
   }
 
-  /** Mengubah nama. `category_id` TIDAK diubah — ia dirujuk latar dan dunia. */
+  /** Mengubah nama. `category_id` TIDAK diubah — ia dirujuk lokasi dan dunia. */
   async renameCategory(categoryId: string, name: string): Promise<CategoryResult> {
     const cleaned = clamp(name, MAX_CATEGORY_NAME);
     if (cleaned.length === 0) {
@@ -205,16 +179,14 @@ export class LocationsRepository {
       'UPDATE location_categories SET name = $2 WHERE category_id = $1',
       [categoryId, cleaned],
     );
-    return rowCount > 0
-      ? { ok: true, categoryId }
-      : { ok: false, reason: 'not-found' };
+    return rowCount > 0 ? { ok: true, categoryId } : { ok: false, reason: 'not-found' };
   }
 
   /**
    * Menghapus kategori.
    *
-   * Ditolak bila masih ada latar yang memakainya. Menghapus kategori akan
-   * memutus gambar di SEMUA lokasi sekaligus — terlalu mudah terjadi, dan
+   * Ditolak bila masih ada lokasi yang memakainya. Menghapus kategori akan
+   * memutus seluruh lokasi di era itu sekaligus — terlalu mudah terjadi, dan
    * `ON DELETE RESTRICT` sudah menolaknya di tingkat basis data. Pemeriksaan di
    * sini membuat alasannya dapat dibaca admin.
    */
@@ -228,15 +200,13 @@ export class LocationsRepository {
       'DELETE FROM location_categories WHERE category_id = $1',
       [categoryId],
     );
-    return rowCount > 0
-      ? { ok: true, categoryId }
-      : { ok: false, reason: 'not-found' };
+    return rowCount > 0 ? { ok: true, categoryId } : { ok: false, reason: 'not-found' };
   }
 
-  /** Berapa latar (di seluruh lokasi) yang memakai kategori ini. */
+  /** Berapa lokasi yang memakai kategori ini. */
   async categoryUsage(categoryId: string): Promise<number> {
     const { rows } = await this.db.query<{ total: number }>(
-      'SELECT count(*)::int AS total FROM location_backgrounds WHERE category_id = $1',
+      'SELECT count(*)::int AS total FROM locations WHERE category_id = $1',
       [categoryId],
     );
     return rows[0]?.total ?? 0;
@@ -250,13 +220,7 @@ export class LocationsRepository {
    * baris berposisi sama.
    */
   async moveCategory(categoryId: string, direction: 'up' | 'down'): Promise<void> {
-    await this.reorder(
-      'location_categories',
-      'category_id',
-      'position',
-      categoryId,
-      direction,
-    );
+    await this.reorder('location_categories', 'category_id', categoryId, direction);
   }
 
   /* ---------------------------------------------------------------- */
@@ -264,103 +228,45 @@ export class LocationsRepository {
   /* ---------------------------------------------------------------- */
 
   /**
-   * Seluruh lokasi beserta latarnya.
+   * Seluruh lokasi.
    *
-   * Tiga kueri, bukan satu kueri ber-`JOIN`: pengelompokan di sisi JavaScript
-   * tidak terasa karena jumlahnya kecil, dan `ORDER BY` pada kolom turunan
-   * setelah `JOIN` tidak dapat diandalkan di pg-mem. Urutan kategori diterapkan
-   * di sini memakai daftar kategori yang sudah terurut.
+   * Dua kueri, bukan satu kueri ber-`JOIN`: nama kategori diambil dari daftar
+   * yang sudah dibaca, dan `ORDER BY` pada kolom turunan setelah `JOIN` tidak
+   * dapat diandalkan di pg-mem.
    */
   async list(): Promise<LocationRow[]> {
     const categories = await this.listCategories();
-    const categoryById = new Map(categories.map((row) => [row.categoryId, row]));
-    const categoryRank = new Map(categories.map((row, index) => [row.categoryId, index]));
+    const nameById = new Map(categories.map((row) => [row.categoryId, row.name]));
 
     const { rows } = await this.db.query<{
       location_id: string;
       name: string;
+      category_id: string;
+      description: string;
+      media_id: string;
       position: number;
       created_at: Date | string;
     }>(
-      `SELECT location_id, name, position, created_at
+      `SELECT location_id, name, category_id, description, media_id, position, created_at
        FROM locations
        ORDER BY position ASC, location_id ASC`,
     );
 
-    const { rows: backgroundRows } = await this.db.query<{
-      location_id: string;
-      category_id: string;
-      media_id: string;
-      description: string;
-      usage_note: string;
-      encounter_likelihood: string | null;
-      blur_strength: number;
-      focal_x: number;
-      focal_y: number;
-      width: number | null;
-      height: number | null;
-    }>(
-      `SELECT location_id, category_id, media_id, description, usage_note,
-              encounter_likelihood, blur_strength, focal_x, focal_y, width, height
-       FROM location_backgrounds`,
-    );
-
-    const byLocation = new Map<string, LocationBackgroundRow[]>();
-    for (const row of backgroundRows) {
-      const list = byLocation.get(row.location_id) ?? [];
-      list.push({
-        categoryId: row.category_id,
-        categoryName: categoryById.get(row.category_id)?.name ?? row.category_id,
-        mediaId: row.media_id,
-        description: row.description,
-        usageNote: row.usage_note,
-        encounterLikelihood: asLikelihood(row.encounter_likelihood),
-        blurStrength: row.blur_strength,
-        focalX: row.focal_x,
-        focalY: row.focal_y,
-        width: row.width,
-        height: row.height,
-      });
-      byLocation.set(row.location_id, list);
-    }
-
-    return rows.map((row) => {
-      const backgrounds = byLocation.get(row.location_id) ?? [];
-      backgrounds.sort(
-        (a, b) =>
-          (categoryRank.get(a.categoryId) ?? Number.MAX_SAFE_INTEGER) -
-          (categoryRank.get(b.categoryId) ?? Number.MAX_SAFE_INTEGER),
-      );
-      return {
-        locationId: row.location_id,
-        name: row.name,
-        position: row.position,
-        createdAt: row.created_at,
-        backgrounds,
-      };
-    });
+    return rows.map((row) => ({
+      locationId: row.location_id,
+      name: row.name,
+      categoryId: row.category_id,
+      categoryName: nameById.get(row.category_id) ?? row.category_id,
+      description: row.description,
+      mediaId: row.media_id,
+      position: row.position,
+      createdAt: row.created_at,
+    }));
   }
 
   async find(locationId: string): Promise<LocationRow | null> {
     const all = await this.list();
     return all.find((row) => row.locationId === locationId) ?? null;
-  }
-
-  /**
-   * Latar satu pasangan (lokasi, kategori) — dipakai pemilih di wizard.
-   *
-   * Sengaja membaca lewat `list()` alih-alih kueri sendiri: satu bentuk
-   * pembacaan berarti satu tempat yang bisa salah, dan jumlah lokasi kecil.
-   */
-  async findBackground(
-    locationId: string,
-    categoryId: string,
-  ): Promise<LocationBackgroundRow | null> {
-    const location = await this.find(locationId);
-    if (!location) {
-      return null;
-    }
-    return location.backgrounds.find((item) => item.categoryId === categoryId) ?? null;
   }
 
   async create(input: LocationInput): Promise<LocationResult> {
@@ -370,52 +276,54 @@ export class LocationsRepository {
     }
 
     const locationId = newLocationId();
-    await this.db.transaction(async (client) => {
-      const { rows } = await client.query<{ next_position: number }>(
-        'SELECT coalesce(max(position), 0)::int + 1 AS next_position FROM locations',
-      );
-      await client.query(
-        'INSERT INTO locations (location_id, name, position) VALUES ($1, $2, $3)',
-        [locationId, prepared.name, rows[0]?.next_position ?? 1],
-      );
-      await this.replaceBackgrounds(client, locationId, prepared.backgrounds);
-    });
+    const { rows } = await this.db.query<{ next_position: number }>(
+      'SELECT coalesce(max(position), 0)::int + 1 AS next_position FROM locations',
+    );
+    await this.db.query(
+      `INSERT INTO locations (location_id, name, category_id, description, media_id, position)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [
+        locationId,
+        prepared.name,
+        prepared.categoryId,
+        prepared.description,
+        prepared.mediaId,
+        rows[0]?.next_position ?? 1,
+      ],
+    );
 
     return { ok: true, locationId };
   }
 
-  /**
-   * Mengubah nama dan mengganti seluruh daftar latar.
-   *
-   * Daftar latar ditulis ulang, bukan dicocokkan satu per satu: menyunting
-   * daftar berarti menggantinya, dan mencocokkan baris lama dengan baris baru
-   * hanya menambah tempat yang bisa salah.
-   */
   async update(locationId: string, input: LocationInput): Promise<LocationResult> {
     const prepared = await this.prepare(input);
     if ('reason' in prepared) {
       return prepared;
     }
 
-    return this.db.transaction(async (client) => {
-      const { rowCount } = await client.query(
-        'UPDATE locations SET name = $2 WHERE location_id = $1',
-        [locationId, prepared.name],
-      );
-      if (rowCount === 0) {
-        return { ok: false, reason: 'not-found' } as const;
-      }
-      await this.replaceBackgrounds(client, locationId, prepared.backgrounds);
-      return { ok: true, locationId } as const;
-    });
+    const { rowCount } = await this.db.query(
+      `UPDATE locations
+         SET name = $2, category_id = $3, description = $4, media_id = $5
+       WHERE location_id = $1`,
+      [
+        locationId,
+        prepared.name,
+        prepared.categoryId,
+        prepared.description,
+        prepared.mediaId,
+      ],
+    );
+
+    return rowCount > 0
+      ? { ok: true, locationId }
+      : { ok: false, reason: 'not-found' };
   }
 
   /**
-   * Menghapus lokasi beserta latarnya.
+   * Menghapus lokasi.
    *
-   * Ditolak bila ada dunia yang memungut latarnya. Baris latar dibuang LEBIH
-   * DULU, tidak mengandalkan `ON DELETE CASCADE`: kode yang benar hanya
-   * bergantung pada apa yang ia kerjakan sendiri.
+   * Ditolak bila ada dunia yang memungut latarnya. Tidak ada tabel anak yang
+   * harus dibersihkan lebih dulu: di bentuk ini lokasi tidak punya anak.
    */
   async remove(locationId: string): Promise<LocationResult> {
     const used = await this.locationUsage(locationId);
@@ -423,23 +331,14 @@ export class LocationsRepository {
       return { ok: false, reason: 'in-use', usedBy: used };
     }
 
-    return this.db.transaction(async (client) => {
-      const { rows } = await client.query<{ location_id: string }>(
-        'SELECT location_id FROM locations WHERE location_id = $1',
-        [locationId],
-      );
-      if (rows.length === 0) {
-        return { ok: false, reason: 'not-found' } as const;
-      }
-
-      await client.query('DELETE FROM location_backgrounds WHERE location_id = $1', [locationId]);
-      await client.query('DELETE FROM locations WHERE location_id = $1', [locationId]);
-      return { ok: true, locationId } as const;
-    });
+    const { rowCount } = await this.db.query('DELETE FROM locations WHERE location_id = $1', [
+      locationId,
+    ]);
+    return rowCount > 0 ? { ok: true, locationId } : { ok: false, reason: 'not-found' };
   }
 
   async move(locationId: string, direction: 'up' | 'down'): Promise<void> {
-    await this.reorder('locations', 'location_id', 'position', locationId, direction);
+    await this.reorder('locations', 'location_id', locationId, direction);
   }
 
   /** Berapa BARIS aset dunia yang memungut lokasi ini (di seluruh dunia). */
@@ -460,114 +359,62 @@ export class LocationsRepository {
    *
    * Mengembalikan `reason` alih-alih melempar, supaya halaman dapat menjelaskan
    * penolakannya — dan supaya tidak ada satu pun jalur simpan yang dapat
-   * menyelundupkan latar tanpa gambar atau tanpa kategori.
+   * menyelundupkan lokasi tanpa gambar atau tanpa kategori.
    */
   private async prepare(
     input: LocationInput,
-  ): Promise<Prepared | { ok: false; reason: LocationFailure; detail?: string }> {
+  ): Promise<
+    | { name: string; categoryId: string; description: string; mediaId: string }
+    | { ok: false; reason: LocationFailure }
+  > {
     const name = clamp(input.name, MAX_LOCATION_NAME);
     if (name.length === 0) {
       return { ok: false, reason: 'invalid-name' };
     }
 
-    // Baris tanpa gambar belum jadi dipakai — dibuang tanpa suara.
-    const uploaded = input.backgrounds.filter((item) => item.mediaId.trim().length > 0);
-    if (uploaded.length === 0) {
-      return { ok: false, reason: 'no-backgrounds' };
+    const categoryId = input.categoryId.trim();
+    const category = categoryId.length > 0 ? await this.findCategory(categoryId) : null;
+    if (!category) {
+      return { ok: false, reason: 'invalid-category' };
     }
 
-    const categories = await this.listCategories();
-    const knownCategories = new Map(categories.map((row) => [row.categoryId, row.name]));
-
-    // Baris yang gambarnya ADA tetapi kategorinya belum dipilih adalah
-    // pekerjaan yang akan hilang — jadi berisik, bukan dibuang.
-    const missing = uploaded.find((item) => !knownCategories.has(item.categoryId.trim()));
-    if (missing) {
-      return { ok: false, reason: 'invalid-category', detail: missing.categoryId.trim() };
-    }
-
-    const seen = new Set<string>();
-    for (const item of uploaded) {
-      const key = item.categoryId.trim();
-      if (seen.has(key)) {
-        return {
-          ok: false,
-          reason: 'duplicate-category',
-          detail: knownCategories.get(key) ?? key,
-        };
-      }
-      seen.add(key);
-    }
-
-    const known = await this.knownMediaIds(uploaded.map((item) => item.mediaId.trim()));
-    const withImage = uploaded.filter((item) => known.has(item.mediaId.trim()));
-    if (withImage.length === 0) {
-      return { ok: false, reason: 'no-backgrounds' };
+    // Bentuk id diperiksa lebih dulu, dan itu bukan kehati-hatian berlebihan:
+    // `media_blobs.media_id` selalu SHA-256 heksadesimal hasil unggahan, dan
+    // penyaji berkas menolak bentuk lain. Baris yang lolos di sini tetapi
+    // berbentuk lain akan tersimpan sebagai latar yang TIDAK PERNAH dapat
+    // dimuat: markup-nya benar, gambarnya rusak, dan tidak ada galat di mana pun.
+    const mediaId = input.mediaId.trim();
+    if (!isMediaId(mediaId) || !(await this.mediaExists(mediaId))) {
+      return { ok: false, reason: 'no-image' };
     }
 
     return {
       name,
-      backgrounds: withImage.map((item) => ({
-        categoryId: item.categoryId.trim(),
-        mediaId: item.mediaId.trim(),
-        description: clamp(item.description ?? '', MAX_BACKGROUND_DESCRIPTION),
-        usageNote: clamp(item.usageNote ?? '', MAX_BACKGROUND_USAGE),
-      })),
+      categoryId,
+      description: clamp(input.description ?? '', MAX_LOCATION_DESCRIPTION),
+      mediaId,
     };
   }
 
-  /**
-   * Id berkas unggahan yang benar-benar ada.
-   *
-   * Bentuk id diperiksa lebih dulu, dan itu bukan kehati-hatian berlebihan:
-   * `media_blobs.media_id` selalu SHA-256 heksadesimal hasil unggahan, dan
-   * penyaji berkas menolak bentuk lain. Baris yang lolos di sini tetapi
-   * berbentuk lain akan tersimpan sebagai latar yang TIDAK PERNAH dapat
-   * dimuat: markup-nya benar, gambarnya rusak, dan tidak ada galat di mana pun.
-   */
-  private async knownMediaIds(candidates: readonly string[]): Promise<Set<string>> {
-    const unique = [...new Set(candidates.filter((id) => isMediaId(id)))];
-    if (unique.length === 0) {
-      return new Set();
-    }
-
-    const placeholders = unique.map((_id, index) => `$${String(index + 1)}`).join(', ');
+  /** Apakah berkas unggahan itu benar-benar ada. Kunci asing tetap jaring pengaman. */
+  private async mediaExists(mediaId: string): Promise<boolean> {
     const { rows } = await this.db.query<{ media_id: string }>(
-      `SELECT media_id FROM media_blobs WHERE media_id IN (${placeholders})`,
-      unique,
+      'SELECT media_id FROM media_blobs WHERE media_id = $1',
+      [mediaId],
     );
-    return new Set(rows.map((row) => row.media_id));
-  }
-
-  /** Hapus lalu isi ulang. Satu-satunya tempat latar master ditulis. */
-  private async replaceBackgrounds(
-    client: DbClient,
-    locationId: string,
-    backgrounds: readonly LocationBackgroundInput[],
-  ): Promise<void> {
-    await client.query('DELETE FROM location_backgrounds WHERE location_id = $1', [locationId]);
-
-    for (const item of backgrounds) {
-      await client.query(
-        `INSERT INTO location_backgrounds
-           (location_id, category_id, media_id, description, usage_note)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [locationId, item.categoryId, item.mediaId, item.description, item.usageNote],
-      );
-    }
+    return rows.length > 0;
   }
 
   /** Menulis ulang urutan seluruh baris. Dipakai kategori dan lokasi. */
   private async reorder(
     table: 'location_categories' | 'locations',
     idColumn: 'category_id' | 'location_id',
-    orderColumn: 'position',
     id: string,
     direction: 'up' | 'down',
   ): Promise<void> {
     await this.db.transaction(async (client) => {
       const { rows } = await client.query<Record<string, string>>(
-        `SELECT ${idColumn} FROM ${table} ORDER BY ${orderColumn} ASC, ${idColumn} ASC`,
+        `SELECT ${idColumn} FROM ${table} ORDER BY position ASC, ${idColumn} ASC`,
       );
       const ids = rows.map((row) => row[idColumn]!);
       const index = ids.indexOf(id);
@@ -582,7 +429,7 @@ export class LocationsRepository {
 
       for (const [position, each] of ids.entries()) {
         await client.query(
-          `UPDATE ${table} SET ${orderColumn} = $2 WHERE ${idColumn} = $1`,
+          `UPDATE ${table} SET position = $2 WHERE ${idColumn} = $1`,
           [each, position + 1],
         );
       }
@@ -602,12 +449,6 @@ function newCategoryId(): string {
 
 function newLocationId(): string {
   return `loc_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
-}
-
-function asLikelihood(value: string | null): EncounterLikelihood | null {
-  return value && (ENCOUNTER_LIKELIHOODS as readonly string[]).includes(value)
-    ? (value as EncounterLikelihood)
-    : null;
 }
 
 function clamp(value: string, max: number): string {

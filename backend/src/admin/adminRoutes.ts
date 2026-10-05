@@ -219,18 +219,16 @@ const characterBody = z.object({
 /**
  * Isian master lokasi.
  *
- * Bidang yang berulang (kategori, gambar, keterangan) datang sebagai satu nilai
- * ATAU larik, karena formulir mengirim satu baris pun sebagai larik sementara
- * satu baris yang dihapus admin dapat tersisa sebagai nilai tunggal. `toArray()`
- * menyeragamkannya; memasangkannya berdasarkan indeks.
+ * Datar: satu lokasi adalah satu nama, satu kategori, satu keterangan, dan satu
+ * gambar. Tidak ada bidang berulang, jadi tidak ada larik paralel yang harus
+ * dipasangkan berdasarkan indeks.
  */
 const locationMasterBody = z.object({
   locationId: z.string().optional().default(''),
   name: z.string().max(200).optional().default(''),
-  backgroundCategory: z.union([z.string(), z.array(z.string())]).optional(),
-  backgroundMedia: z.union([z.string(), z.array(z.string())]).optional(),
-  backgroundDescription: z.union([z.string(), z.array(z.string())]).optional(),
-  backgroundUsage: z.union([z.string(), z.array(z.string())]).optional(),
+  categoryId: z.string().optional().default(''),
+  description: z.string().max(300).optional().default(''),
+  mediaId: z.string().optional().default(''),
 });
 
 /**
@@ -790,22 +788,13 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     }
     const data = parsed.data;
 
-    // Larik paralel: nama bidang yang berulang menjadi LARIK di sisi server,
-    // dan posisinya yang memasangkannya. Pola yang sama seperti master karakter.
-    const categories = toArray(data.backgroundCategory);
-    const mediaIds = toArray(data.backgroundMedia);
-    const descriptions = toArray(data.backgroundDescription);
-    const usages = toArray(data.backgroundUsage);
-
-    const backgrounds = categories.map((categoryId, index) => ({
-      categoryId,
-      mediaId: mediaIds[index] ?? '',
-      description: descriptions[index] ?? '',
-      usageNote: usages[index] ?? '',
-    }));
-
     const isNew = data.locationId.length === 0;
-    const input = { name: data.name, backgrounds };
+    const input = {
+      name: data.name,
+      categoryId: data.categoryId,
+      description: data.description,
+      mediaId: data.mediaId,
+    };
 
     const result = isNew
       ? await ctx.locations.create(input)
@@ -817,7 +806,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
     if (!result.ok) {
       return reply.redirect(
-        noticeRedirect(base, locationNotice(result.reason), result.detail),
+        noticeRedirect(base, locationNotice(result.reason), undefined),
         302,
       );
     }
@@ -828,7 +817,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       action: isNew ? 'location.create' : 'location.update',
       targetKind: 'location',
       targetId: result.locationId,
-      detail: { name: data.name, backgrounds: backgrounds.length },
+      detail: { name: data.name, categoryId: data.categoryId },
       ipAddress: request.ip,
     });
 
@@ -1251,10 +1240,9 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     const body = z
       .object({
         worldId: z.string().trim().min(1),
-        // Satu nilai "locationId|categoryId": halaman menawarkan pasangan yang
-        // benar-benar punya gambar, jadi dua bidang terpisah hanya akan
-        // memindahkan pekerjaan mencocokkan itu ke admin.
-        pick: z.string().trim().min(3),
+        // Cukup id lokasinya: setiap lokasi master sudah membawa kategorinya
+        // sendiri, jadi tidak ada dua daftar yang harus dicocokkan admin.
+        pick: z.string().trim().min(1),
       })
       .safeParse(request.body);
     if (!body.success) {
@@ -1268,39 +1256,35 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
     const base = `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2`;
 
-    const separator = body.data.pick.indexOf('|');
-    if (separator < 1) {
-      return reply.redirect(`${base}?notice=invalid-input`, 302);
-    }
-    const locationId = body.data.pick.slice(0, separator);
-    const categoryId = body.data.pick.slice(separator + 1);
-
-    const [location, background] = await Promise.all([
-      ctx.locations.find(locationId),
-      ctx.locations.findBackground(locationId, categoryId),
-    ]);
-    if (!location || !background) {
+    const location = await ctx.locations.find(body.data.pick);
+    if (!location) {
       return reply.redirect(`${base}?notice=not-found`, 302);
     }
 
-    const media = await ctx.media.findById(background.mediaId);
+    const media = await ctx.media.findById(location.mediaId);
     if (!media) {
       return reply.redirect(`${base}?notice=not-found`, 302);
     }
 
+    /*
+     * Keterangan dan penyetelan DISALIN dari master sebagai titik awal; dunia
+     * boleh menyesuaikannya tanpa mengubah master. Peluang kemunculan, blur, dan
+     * titik fokus mulai dari netral karena ketiganya keputusan CERITA, bukan
+     * sifat tempatnya — master tidak punya pendapat tentang keduanya.
+     */
     const created = await ctx.drafts.addBackground(draft.worldId, draft.worldVersion, {
-      mediaId: background.mediaId,
+      mediaId: location.mediaId,
       label: location.name,
-      description: background.description,
-      usageNote: background.usageNote,
-      encounterLikelihood: background.encounterLikelihood,
-      blurStrength: background.blurStrength,
-      focalX: background.focalX,
-      focalY: background.focalY,
+      description: location.description,
+      usageNote: '',
+      encounterLikelihood: null,
+      blurStrength: 0,
+      focalX: 0.5,
+      focalY: 0.5,
       width: media.width,
       height: media.height,
       masterLocationId: location.locationId,
-      masterCategoryId: background.categoryId,
+      masterCategoryId: location.categoryId,
     });
 
     if (!created) {
@@ -1328,7 +1312,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       detail: {
         assetId: created.assetId,
         locationId: location.locationId,
-        categoryId: background.categoryId,
+        categoryId: location.categoryId,
       },
       ipAddress: request.ip,
     });
@@ -2260,25 +2244,18 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
       kind: 'error',
       text: 'Nama lokasi tidak boleh kosong.',
     },
-    'location-no-background': {
+    'location-no-image': {
       kind: 'error',
       text:
-        'Setiap lokasi harus punya minimal satu latar bergambar. Baris yang gambarnya ' +
-        'belum diunggah tidak ikut tersimpan — tunggu sampai statusnya "Tersimpan", ' +
-        'lalu simpan lagi.',
+        'Setiap lokasi harus punya gambar latar. Kalau gambarnya baru dipilih, tunggu ' +
+        'sampai statusnya "Tersimpan" sebelum menekan Simpan.',
     },
     'location-category-invalid': {
       kind: 'error',
       // Keadaan ini berarti kategori yang dipilih sudah dihapus di tab lain.
       text:
-        'Ada latar yang kategorinya belum dipilih, atau kategorinya sudah dihapus di ' +
-        'tab lain. Pilih ulang kategorinya — gambarnya tidak ikut hilang.',
-    },
-    'location-duplicate-category': {
-      kind: 'error',
-      text:
-        'Ada kategori yang dipakai lebih dari sekali pada lokasi ini. Satu kategori ' +
-        'memegang satu gambar latar; pilih kategori yang berbeda untuk baris kedua.',
+        'Kategori belum dipilih, atau kategorinya sudah dihapus di tab lain. Pilih ' +
+        'kategorinya — gambar yang sudah diunggah tidak ikut hilang.',
     },
     'location-in-use': {
       kind: 'error',
@@ -2374,12 +2351,10 @@ function locationNotice(reason: LocationFailure): string {
   switch (reason) {
     case 'invalid-name':
       return 'location-name-invalid';
-    case 'no-backgrounds':
-      return 'location-no-background';
     case 'invalid-category':
       return 'location-category-invalid';
-    case 'duplicate-category':
-      return 'location-duplicate-category';
+    case 'no-image':
+      return 'location-no-image';
     case 'in-use':
       return 'location-in-use';
     case 'not-found':

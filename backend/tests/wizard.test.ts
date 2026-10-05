@@ -426,17 +426,18 @@ async function testCategory(): Promise<string> {
 }
 
 /**
- * Membuat satu lokasi master berisi satu latar bergambar.
+ * Membuat satu lokasi master bergambar.
  *
- * Setiap panggilan membuat LOKASI BARU, karena satu lokasi hanya boleh punya
- * satu gambar per kategori — jadi beberapa latar dalam satu dunia berarti
- * beberapa tempat, persis seperti pemakaian sebenarnya.
+ * Setiap panggilan membuat LOKASI BARU. Di bentuk sekarang satu lokasi memang
+ * satu tempat pada satu era, jadi beberapa latar dalam satu dunia berarti
+ * beberapa lokasi — persis seperti pemakaian sebenarnya.
  */
 async function masterLocation(mediaId: string): Promise<string> {
-  const categoryId = await testCategory();
   const created = await locations.create({
     name: `Tempat uji ${mediaId.slice(0, 6)}`,
-    backgrounds: [{ categoryId, mediaId, description: '', usageNote: '' }],
+    categoryId: await testCategory(),
+    description: '',
+    mediaId,
   });
   if (!created.ok) {
     throw new Error(`lokasi uji gagal dibuat: ${created.reason}`);
@@ -444,14 +445,13 @@ async function masterLocation(mediaId: string): Promise<string> {
   return created.locationId;
 }
 
-/** Menyiapkan satu latar di master lokasi, lalu memungutnya ke dalam dunia. */
+/** Menyiapkan satu lokasi di master, lalu memungutnya ke dalam dunia. */
 async function addBackground(cookie: string, worldId: string, mediaId: string) {
   const locationId = await masterLocation(mediaId);
-  const categoryId = await testCategory();
 
   return post(cookie, '/admin/worlds-wizard/2/backgrounds/pick', {
     worldId,
-    pick: `${locationId}|${categoryId}`,
+    pick: locationId,
   });
 }
 
@@ -510,18 +510,13 @@ describe('langkah 2: latar belakang', () => {
      */
     const refused = await locations.create({
       name: 'Tempat tanpa gambar',
-      backgrounds: [
-        {
-          categoryId: await testCategory(),
-          mediaId: 'a'.repeat(64),
-          description: '',
-          usageNote: '',
-        },
-      ],
+      categoryId: await testCategory(),
+      description: '',
+      mediaId: 'a'.repeat(64),
     });
     expect(refused.ok, 'lokasi dengan media yang tidak ada seharusnya ditolak').toBe(false);
     if (!refused.ok) {
-      expect(refused.reason).toBe('no-backgrounds');
+      expect(refused.reason).toBe('no-image');
     }
 
     // Yang berkasnya benar-benar ada tetap dapat dipungut.

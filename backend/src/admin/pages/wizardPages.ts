@@ -218,18 +218,21 @@ export async function wizardStep2(ctx: AdminPageContext, worldId: string): Promi
   /*
    * Pilihan latar dibangun dari MASTER, bukan dari unggahan.
    *
-   * Yang ditawarkan adalah pasangan (lokasi, kategori) yang benar-benar punya
-   * gambar — bukan dua daftar terpisah yang harus dicocokkan admin sendiri.
-   * Dengan satu daftar, pilihan yang tidak ada tidak dapat terpilih sama sekali,
-   * dan halaman ini tidak memerlukan JavaScript untuk saling menyesuaikan.
+   * Yang ditawarkan adalah LOKASI, dikelompokkan menurut kategorinya (era).
+   * Mengelompokkan dengan `<optgroup>` memakai elemen bawaan HTML, jadi daftar
+   * era-nya terbaca tanpa satu baris pun JavaScript — dan karena setiap lokasi
+   * pasti punya gambar (dijamin master), tidak ada pilihan yang bisa gagal.
    */
-  const masterLocations = await ctx.locations.list();
-  const picks = masterLocations.flatMap((location) =>
-    location.backgrounds.map((background) => ({
-      value: `${location.locationId}|${background.categoryId}`,
-      label: `${location.name} — ${background.categoryName}`,
-    })),
-  );
+  const [masterLocations, masterCategories] = await Promise.all([
+    ctx.locations.list(),
+    ctx.locations.listCategories(),
+  ]);
+  const groups = masterCategories
+    .map((category) => ({
+      name: category.name,
+      locations: masterLocations.filter((location) => location.categoryId === category.categoryId),
+    }))
+    .filter((group) => group.locations.length > 0);
 
   const items = backgrounds.map((background, index) => backgroundItem(background, draft, index, backgrounds.length));
 
@@ -256,12 +259,12 @@ ${
   Batas ${String(MAX_BACKGROUNDS)} latar belakang sudah tercapai. Hapus salah satu
   untuk menambah yang baru.
 </div>`
-    : picks.length === 0
+    : groups.length === 0
       ? html`<div class="card" style="border-color:var(--warn)">
   <p class="sub" style="margin-top:0">
-    <strong>Master lokasi belum punya satu pun latar bergambar.</strong> Latar dipungut
-    dari sana, jadi isi <a href="/admin/locations">master lokasi</a> lebih dulu:
-    tambahkan tempat, lalu unggah gambarnya untuk tiap kategori (era).
+    <strong>Master lokasi masih kosong.</strong> Latar dipungut dari sana, jadi isi
+    <a href="/admin/locations">master lokasi</a> lebih dulu: tambahkan tempat, pilih
+    kategorinya, lalu unggah gambarnya.
   </p>
   <p style="margin-bottom:0">
     Kategori (era) — mis. <em>fantasy</em>, <em>masa kini</em>, <em>era dinasti</em> —
@@ -272,16 +275,21 @@ ${
   <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
   <label><span>Pilih latar dari master lokasi</span>
     <select name="pick" required>
-      ${picks.map(
-        (pick) => html`<option value="${inputValue(pick.value)}">${esc(pick.label)}</option>`,
+      ${groups.map(
+        (group) => html`<optgroup label="${esc(group.name)}">
+        ${group.locations.map(
+          (location) =>
+            html`<option value="${inputValue(location.locationId)}">${esc(location.name)}</option>`,
+        )}
+      </optgroup>`,
       )}
     </select>
   </label>
   <p class="sub" style="margin-top:0">
-    Daftarnya memuat <strong>lokasi &times; kategori (era)</strong> yang benar-benar punya
-    gambar, jadi pilihan yang tidak ada tidak dapat terpilih. Setelah ditambahkan,
-    keterangan, blur, titik fokus, dan peluang kemunculannya boleh disesuaikan untuk
-    dunia ini — <strong>master tidak ikut berubah</strong>.
+    Daftarnya dikelompokkan menurut <strong>kategori (era)</strong>, dan setiap lokasi
+    pasti sudah punya gambar di master. Setelah ditambahkan, keterangan, blur, titik
+    fokus, dan peluang kemunculannya boleh disesuaikan untuk dunia ini —
+    <strong>master tidak ikut berubah</strong>.
     Tersisa ${String(MAX_BACKGROUNDS - backgrounds.length)} tempat.
   </p>
   <div class="wizard-actions">
