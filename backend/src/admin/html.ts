@@ -235,6 +235,16 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: '/admin/location-categories',
+    label: 'Kategori lokasi',
+    key: 'locationCategories',
+    from: '#32ade6',
+    to: '#0b6fa4',
+    icon: navIcon(
+      '<path d="M2.6 3.4h10.8l-4.2 4.6v4.6l-2.4 1.4V8z"/>',
+    ),
+  },
+  {
     href: '/admin/genres',
     label: 'Genre',
     key: 'genres',
@@ -857,6 +867,10 @@ h2 span{font-weight:500}
    diunggah, supaya wajah tidak terpotong di tengah dahi. */
 .list__thumb{flex:none;width:36px;height:54px;object-fit:cover;object-position:top center;
   border-radius:var(--radius-xs);border:1px solid var(--line);background:var(--field)}
+
+/* Latar mini pada daftar lokasi. Nisbahnya 16:9, sama seperti latar yang
+   diunggah — memakai nisbah potret akan memotong bagian tengah gambarnya. */
+.list__thumb--wide{width:64px;height:36px;object-position:center}
 
 /* ---------------- Tabel ---------------- */
 /*

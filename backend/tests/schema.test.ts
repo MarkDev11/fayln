@@ -39,6 +39,7 @@ describe('migrasi', () => {
     '008_asset_metadata.sql',
     '009_genres.sql',
     '010_characters.sql',
+    '011_locations.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
@@ -308,6 +309,150 @@ describe('batasan yang menegakkan aturan domain', () => {
         `INSERT INTO character_expressions (character_id, position, expression, media_id)
          VALUES ('char_ok', 0, 'netral', 'm_uji')`,
       ),
+    ).resolves.toBeDefined();
+  });
+
+  /**
+   * Master lokasi: latar WAJIB punya gambar, kategori, dan satu gambar per era.
+   *
+   * Sama seperti ekspresi karakter, latar tanpa gambar adalah data mati — klien
+   * tidak dapat merendernya dan mesin cerita dapat memilihnya. Aturan itu sudah
+   * ditegakkan di repository; di sini ia ditegakkan basis data, supaya tidak ada
+   * jalur simpan lain yang dapat menyelundupkannya.
+   *
+   * Setiap uji menyiapkan sendiri bahannya. Uji yang bergantung pada uji
+   * sebelumnya lulus atau gagal menurut URUTAN, bukan menurut kebenaran — dan
+   * kegagalannya baru terlihat ketika seseorang menjalankan satu uji saja.
+   */
+  async function seedLocationMaster(
+    suffix: string,
+  ): Promise<{ category: string; location: string; media: string }> {
+    const category = `cat_${suffix}`;
+    const location = `loc_${suffix}`;
+    const media = `m_${suffix}`;
+
+    await ctx.db.query(
+      `INSERT INTO location_categories (category_id, name, position) VALUES ($1, 'era uji', 1)`,
+      [category],
+    );
+    await ctx.db.query(
+      `INSERT INTO locations (location_id, name, position) VALUES ($1, 'Aula', 1)`,
+      [location],
+    );
+    await ctx.db.query(
+      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64)
+       VALUES ($1, 'image/png', 68, 1, 1, 'iVBORw0KGgo=')`,
+      [media],
+    );
+
+    return { category, location, media };
+  }
+
+  it('menolak latar master tanpa gambar', async () => {
+    const { category, location } = await seedLocationMaster('tanpa_gambar');
+
+    await expect(
+      ctx.db.query(
+        `INSERT INTO location_backgrounds (location_id, category_id, media_id)
+         VALUES ($1, $2, null)`,
+        [location, category],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menolak latar master yang menunjuk gambar tidak ada', async () => {
+    const { category, location } = await seedLocationMaster('media_hantu');
+
+    await expect(
+      ctx.db.query(
+        `INSERT INTO location_backgrounds (location_id, category_id, media_id)
+         VALUES ($1, $2, 'm_tidak_ada')`,
+        [location, category],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menolak latar master yang kategorinya tidak ada', async () => {
+    const { location, media } = await seedLocationMaster('kategori_hantu');
+
+    await expect(
+      ctx.db.query(
+        `INSERT INTO location_backgrounds (location_id, category_id, media_id)
+         VALUES ($1, 'cat_hantu', $2)`,
+        [location, media],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menolak dua latar untuk lokasi dan kategori yang sama', async () => {
+    const { category, location, media } = await seedLocationMaster('kembar');
+
+    await expect(
+      ctx.db.query(
+        `INSERT INTO location_backgrounds (location_id, category_id, media_id)
+         VALUES ($1, $2, $3)`,
+        [location, category, media],
+      ),
+    ).resolves.toBeDefined();
+
+    // Kunci utamanya pasangan (lokasi, kategori): satu tempat punya SATU gambar
+    // per era. Kembar akan membuat pemilih latar menjadi ambigu.
+    await expect(
+      ctx.db.query(
+        `INSERT INTO location_backgrounds (location_id, category_id, media_id)
+         VALUES ($1, $2, $3)`,
+        [location, category, media],
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menolak menghapus kategori master yang masih dipakai latar', async () => {
+    const { category, location, media } = await seedLocationMaster('restrict');
+    await ctx.db.query(
+      `INSERT INTO location_backgrounds (location_id, category_id, media_id)
+       VALUES ($1, $2, $3)`,
+      [location, category, media],
+    );
+
+    // ON DELETE RESTRICT: menghapus kategori akan memutus gambar di SEMUA lokasi
+    // sekaligus, jadi basis data menolaknya lebih dulu.
+    await expect(
+      ctx.db.query(`DELETE FROM location_categories WHERE category_id = $1`, [category]),
+    ).rejects.toThrow();
+  });
+
+  /**
+   * Tautan dari sisi dunia: latar yang dipungut menunjuk master, dan kunci
+   * asingnya MENAHAN penghapusan. Tanpa ini, menghapus lokasi master akan
+   * memutus latar di cerita yang sudah terbit.
+   */
+  it('menahan penghapusan lokasi master yang sudah dipungut dunia', async () => {
+    const { category, location, media } = await seedLocationMaster('dipakai');
+    await ctx.db.query(
+      `INSERT INTO location_backgrounds (location_id, category_id, media_id)
+       VALUES ($1, $2, $3)`,
+      [location, category, media],
+    );
+    await ctx.db.query(
+      `INSERT INTO world_assets (
+         world_id, world_version, asset_id, kind, label, uri,
+         master_location_id, master_category_id
+       ) VALUES ('w_bosku-mantan', 7, 'bg_pungut', 'background', 'Aula', 'asset://x', $1, $2)`,
+      [location, category],
+    );
+
+    await expect(
+      ctx.db.query(`DELETE FROM locations WHERE location_id = $1`, [location]),
+    ).rejects.toThrow();
+
+    // Setelah latarnya dibuang, lokasinya boleh dihapus — `CASCADE` sengaja
+    // tidak dipakai di sini, jadi urutannya memang harus begitu.
+    await ctx.db.query(
+      `DELETE FROM world_assets WHERE world_id = 'w_bosku-mantan' AND asset_id = 'bg_pungut'`,
+    );
+    await ctx.db.query(`DELETE FROM location_backgrounds WHERE location_id = $1`, [location]);
+    await expect(
+      ctx.db.query(`DELETE FROM locations WHERE location_id = $1`, [location]),
     ).resolves.toBeDefined();
   });
 

@@ -87,6 +87,15 @@ export type BackgroundRow = {
   width: number | null;
   height: number | null;
   position: number;
+  /**
+   * Lokasi dan kategori (era) master asal latar ini.
+   *
+   * `null` berarti aset lama yang diunggah sebelum master lokasi ada — dan itu
+   * memang benar: ia tidak berasal dari master mana pun. Dibaca halaman langkah 2
+   * untuk memberi tahu admin latar ini datang dari mana.
+   */
+  masterLocationId: string | null;
+  masterCategoryId: string | null;
 };
 
 export type BackgroundInput = {
@@ -100,6 +109,17 @@ export type BackgroundInput = {
   focalY: number;
   width: number | null;
   height: number | null;
+  /**
+   * Lokasi dan kategori master asal latar ini.
+   *
+   * SENGAJA opsional: hanya `addBackground` yang menulisnya, dan
+   * `updateBackground` memang tidak menyentuhnya — menyunting keterangan atau
+   * blur sebuah latar tidak boleh mengubah asalnya. Menjadikannya wajib akan
+   * memaksa pemanggil `updateBackground` mengirim nilai yang tidak dipakai,
+   * dan nilai itu justru mengundang orang mengira ia berpengaruh.
+   */
+  masterLocationId?: string | null;
+  masterCategoryId?: string | null;
 };
 
 export type NpcExpressionRow = {
@@ -303,10 +323,12 @@ export class WorldDraftRepository {
       width: number | null;
       height: number | null;
       position: number;
+      master_location_id: string | null;
+      master_category_id: string | null;
     }>(
       `SELECT asset_id, media_id, uri, label, description, usage_note,
               encounter_likelihood, blur_strength, focal_x, focal_y,
-              width, height, position
+              width, height, position, master_location_id, master_category_id
        FROM world_assets
        WHERE world_id = $1 AND world_version = $2 AND kind = 'background'
        ORDER BY position ASC, asset_id ASC`,
@@ -327,6 +349,8 @@ export class WorldDraftRepository {
       width: row.width,
       height: row.height,
       position: row.position,
+      masterLocationId: row.master_location_id,
+      masterCategoryId: row.master_category_id,
     }));
   }
 
@@ -365,8 +389,9 @@ export class WorldDraftRepository {
         `INSERT INTO world_assets (
            world_id, world_version, asset_id, kind, label, uri, media_id,
            description, usage_note, encounter_likelihood,
-           blur_strength, focal_x, focal_y, width, height, position
-         ) VALUES ($1,$2,$3,'background',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+           blur_strength, focal_x, focal_y, width, height, position,
+           master_location_id, master_category_id
+         ) VALUES ($1,$2,$3,'background',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
         [
           worldId,
           worldVersion,
@@ -383,6 +408,8 @@ export class WorldDraftRepository {
           input.width,
           input.height,
           position,
+          input.masterLocationId ?? null,
+          input.masterCategoryId ?? null,
         ],
       );
 
@@ -482,6 +509,58 @@ export class WorldDraftRepository {
           [worldId, worldVersion, row.asset_id, position + 1],
         );
       }
+    });
+  }
+
+  /* ---------------------------------------------------------------- */
+  /* Lokasi dunia (diisi dari master)                                  */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Memastikan sebuah lokasi master terdaftar di dunia ini.
+   *
+   * Daftar lokasi dunia tidak lagi diketik admin satu per satu; ia TUMBUH dari
+   * latar yang dipungut di langkah 2. Karena itu setiap pemungutan latar wajib
+   * melewati sini, dan sifatnya idempoten: memungut dua latar dari lokasi yang
+   * sama tidak boleh menghasilkan dua baris.
+   *
+   * `location_id` SENGAJA sama persis dengan id master. Satu tempat punya satu
+   * identitas di seluruh sistem, sehingga "latar ini dari lokasi mana" dapat
+   * dijawab tanpa tabel penghubung — dan mesin cerita tetap menyebut tempat
+   * dengan id yang sama seperti yang dilihat panel.
+   *
+   * Labelnya masih boleh berbeda per dunia: dunia yang menamai ulang sebuah
+   * tempat tidak mengubah master. Karena itu label hanya ditulis saat barisnya
+   * BARU, bukan setiap kali latar dipungut — kalau tidak, menamai ulang akan
+   * dibatalkan diam-diam oleh pemungutan latar berikutnya.
+   */
+  async ensureLocation(
+    worldId: string,
+    worldVersion: number,
+    locationId: string,
+    label: string,
+  ): Promise<void> {
+    await this.db.transaction(async (client) => {
+      const { rows: existing } = await client.query<{ location_id: string }>(
+        `SELECT location_id FROM world_locations
+         WHERE world_id = $1 AND world_version = $2 AND location_id = $3 LIMIT 1`,
+        [worldId, worldVersion, locationId],
+      );
+      if (existing.length > 0) {
+        return;
+      }
+
+      const { rows: posRows } = await client.query<{ next_position: number }>(
+        `SELECT coalesce(max(position), 0)::int + 1 AS next_position
+         FROM world_locations WHERE world_id = $1 AND world_version = $2`,
+        [worldId, worldVersion],
+      );
+
+      await client.query(
+        `INSERT INTO world_locations (world_id, world_version, location_id, label, position)
+         VALUES ($1,$2,$3,$4,$5)`,
+        [worldId, worldVersion, locationId, clamp(label, MAX_NAME), posRows[0]?.next_position ?? 1],
+      );
     });
   }
 

@@ -23,6 +23,8 @@ import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository, GENRE_ID_PATTERN } from '../src/admin/genresRepository';
+import { CharactersRepository } from '../src/admin/charactersRepository';
+import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
@@ -93,6 +95,8 @@ async function buildTestApp(): Promise<FastifyInstance> {
     models: new ModelsRepository(ctx.db),
     drafts: new WorldDraftRepository(ctx.db),
     genres,
+    characters: new CharactersRepository(ctx.db),
+    locations: new LocationsRepository(ctx.db),
     media: new MediaRepository(ctx.db),
   };
 

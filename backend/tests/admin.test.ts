@@ -26,6 +26,7 @@ import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
+import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { hashPassword, verifyPassword } from '../src/admin/password';
@@ -53,6 +54,7 @@ let admins: AdminRepository;
 let promotions: PromotionsRepository;
 let catalogAdmin: CatalogAdminRepository;
 let characters: CharactersRepository;
+let locations: LocationsRepository;
 
 const ADMIN_USERNAME = 'operator';
 const ADMIN_PASSWORD = 'kata-sandi-uji-123';
@@ -81,6 +83,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
   promotions = new PromotionsRepository(ctx.db);
   catalogAdmin = new CatalogAdminRepository(ctx.db);
   characters = new CharactersRepository(ctx.db);
+  locations = new LocationsRepository(ctx.db);
 
   const pages: AdminPageContext = {
     admins,
@@ -92,6 +95,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     drafts: new WorldDraftRepository(ctx.db),
     genres: new GenresRepository(ctx.db),
     characters,
+    locations,
     media: new MediaRepository(ctx.db),
   };
 
@@ -2042,91 +2046,303 @@ describe('siklus hidup dunia', () => {
 
 /* ------------------------------------------------------------------ */
 
-describe('lokasi', () => {
-  it('menambah, mengubah, dan menghapus lokasi', async () => {
+/**
+ * Master lokasi.
+ *
+ * Lokasi tidak lagi hidup di dalam satu versi dunia: nama tempat dan gambar
+ * latarnya berdiri sendiri, dan dunia MEMUNGUTNYA di langkah 2 wizard. Karena
+ * itu uji di sini tidak memeriksa "versi baru dibuat", melainkan empat aturan
+ * yang membuat master ini aman: gambar wajib ada, satu kategori hanya boleh
+ * dipakai sekali per lokasi, kategori yang masih dipakai tidak dapat dihapus,
+ * dan lokasi yang sudah dipungut dunia tidak dapat dihapus.
+ */
+describe('master lokasi', () => {
+  /** Membuat satu kategori (era) lewat HTTP dan mengembalikan id yang dibuat. */
+  async function addCategory(cookie: string, name: string): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/location-categories',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ name }),
+    });
+    expect(response.statusCode).toBe(302);
+
+    const { rows } = await ctx.db.query<{ category_id: string }>(
+      'SELECT category_id FROM location_categories WHERE name = $1',
+      [name],
+    );
+    expect(rows[0]?.category_id, 'kategori tidak dibuat').toBeTruthy();
+    return rows[0]!.category_id;
+  }
+
+  /** Menyimpan master lokasi lewat HTTP dan mengembalikan alamat tujuan. */
+  async function saveLocation(
+    cookie: string,
+    payload: Record<string, string | string[]>,
+  ): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/locations',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form(payload),
+    });
+    expect(response.statusCode).toBe(302);
+    return String(response.headers.location ?? '');
+  }
+
+  it('menyimpan satu latar per kategori, lalu mengubah dan menghapusnya', async () => {
     const cookie = await login();
-    const worldId = await createWorld(cookie, 'Dunia Lokasi');
-    const startVersion = (await catalogAdmin.findWorld(worldId))?.worldVersion ?? 1;
+    const fantasi = await addCategory(cookie, 'fantasy');
+    const modern = await addCategory(cookie, 'masa kini');
 
-    await app.inject({
-      method: 'POST',
-      url: '/admin/locations',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, locationId: '', label: 'Ruang Rapat Kecil' }),
+    const bgFantasi = await upload(cookie, png(1280, 720, 'loc-fantasy'));
+    const bgModern = await upload(cookie, png(1280, 720, 'loc-modern'));
+
+    const created = await saveLocation(cookie, {
+      locationId: '',
+      name: 'Aula Kantor',
+      backgroundCategory: [fantasi, modern],
+      backgroundMedia: [bgFantasi, bgModern],
+      backgroundDescription: ['Aula zaman kerajaan', 'Aula kantor modern'],
+      backgroundUsage: ['', ''],
     });
+    expect(created).toContain('notice=created');
 
-    const world = await catalogAdmin.findWorld(worldId);
-    const added = await catalogAdmin.listLocations(worldId, world!.worldVersion);
-    const created = added.find((row) => row.label === 'Ruang Rapat Kecil');
-    expect(created).toBeDefined();
-    // ID diturunkan dari labelnya supaya terbaca, bukan deretan acak.
-    expect(created?.locationId).toBe('loc_ruang_rapat_kecil');
-    expect(world?.worldVersion).toBe(startVersion + 1);
+    const [row] = await locations.list();
+    expect(row?.name).toBe('Aula Kantor');
+    // Urutan latar mengikuti urutan KATEGORI, bukan urutan penyimpanan.
+    expect(row?.backgrounds.map((item) => item.categoryName)).toEqual(['fantasy', 'masa kini']);
+    expect(row?.backgrounds.map((item) => item.mediaId)).toEqual([bgFantasi, bgModern]);
 
-    await app.inject({
-      method: 'POST',
-      url: '/admin/locations',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, locationId: created!.locationId, label: 'Ruang Rapat Besar' }),
+    // Menyunting daftar berarti menggantinya: menghapus satu baris cukup dengan
+    // mengirim sisanya, tanpa aksi hapus tersendiri.
+    const saved = await saveLocation(cookie, {
+      locationId: row!.locationId,
+      name: 'Aula Kantor Utama',
+      backgroundCategory: [fantasi],
+      backgroundMedia: [bgFantasi],
+      backgroundDescription: ['Aula zaman kerajaan'],
+      backgroundUsage: [''],
     });
+    expect(saved).toContain('notice=saved');
 
-    const afterEdit = await catalogAdmin.findWorld(worldId);
-    const edited = await catalogAdmin.listLocations(worldId, afterEdit!.worldVersion);
-    expect(edited.find((row) => row.locationId === created!.locationId)?.label).toBe('Ruang Rapat Besar');
+    const after = await locations.find(row!.locationId);
+    expect(after?.name).toBe('Aula Kantor Utama');
+    expect(after?.backgrounds).toHaveLength(1);
 
     await app.inject({
       method: 'POST',
       url: '/admin/locations/delete',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, locationId: created!.locationId }),
+      payload: form({ locationId: row!.locationId }),
     });
-
-    const afterDelete = await catalogAdmin.findWorld(worldId);
-    const remaining = await catalogAdmin.listLocations(worldId, afterDelete!.worldVersion);
-    expect(remaining.find((row) => row.locationId === created!.locationId)).toBeUndefined();
+    expect(await locations.find(row!.locationId)).toBeNull();
   });
 
-  it('mencatat perubahan lokasi di audit', async () => {
+  it('menolak lokasi yang latarnya belum diunggah', async () => {
     const cookie = await login();
-    const worldId = await createWorld(cookie, 'Dunia Lokasi Audit');
+    const fantasi = await addCategory(cookie, 'fantasy');
 
-    await app.inject({
-      method: 'POST',
-      url: '/admin/locations',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, locationId: '', label: 'Lobi Utama' }),
+    // Baris ada, gambarnya belum: itu pekerjaan yang belum jadi, bukan data.
+    const tanpaGambar = await saveLocation(cookie, {
+      locationId: '',
+      name: 'Tempat Kosong',
+      backgroundCategory: [fantasi],
+      backgroundMedia: [''],
     });
-    await app.inject({
+    expect(tanpaGambar).toContain('notice=location-no-background');
+    expect(await locations.list()).toHaveLength(0);
+
+    // Gambar ada, kategori belum dipilih: ini pekerjaan yang akan HILANG kalau
+    // dibuang diam-diam, jadi penolakannya berbeda dan menyebut sebabnya.
+    const tanpaKategori = await saveLocation(cookie, {
+      locationId: '',
+      name: 'Tempat Tanpa Kategori',
+      backgroundCategory: [''],
+      backgroundMedia: [await upload(cookie, png(1280, 720, 'loc-nocat'))],
+    });
+    expect(tanpaKategori).toContain('notice=location-category-invalid');
+    expect(await locations.list()).toHaveLength(0);
+  });
+
+  it('menolak kategori yang dipakai lebih dari sekali pada satu lokasi', async () => {
+    const cookie = await login();
+    const fantasi = await addCategory(cookie, 'fantasy');
+    const a = await upload(cookie, png(1280, 720, 'loc-dup-a'));
+    const b = await upload(cookie, png(1280, 720, 'loc-dup-b'));
+
+    // Kunci utama `location_backgrounds` adalah (lokasi, kategori), jadi baris
+    // kembar akan muncul sebagai galat kunci utama yang tidak terbaca admin.
+    // Penolakan ini terjadi SEBELUM basis data, dan menyebut kategorinya.
+    const response = await saveLocation(cookie, {
+      locationId: '',
+      name: 'Tempat Kembar',
+      backgroundCategory: [fantasi, fantasi],
+      backgroundMedia: [a, b],
+    });
+    expect(response).toContain('notice=location-duplicate-category');
+    expect(decodeURIComponent(response)).toContain('fantasy');
+    expect(await locations.list()).toHaveLength(0);
+  });
+
+  it('menolak menghapus kategori yang masih dipakai latar', async () => {
+    const cookie = await login();
+    const fantasi = await addCategory(cookie, 'fantasy');
+    await saveLocation(cookie, {
+      locationId: '',
+      name: 'Aula Kantor',
+      backgroundCategory: [fantasi],
+      backgroundMedia: [await upload(cookie, png(1280, 720, 'loc-inuse'))],
+    });
+
+    const response = await app.inject({
       method: 'POST',
-      url: '/admin/locations/delete',
+      url: '/admin/location-categories/delete',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, locationId: 'loc_lobi_utama' }),
+      payload: form({ categoryId: fantasi }),
+    });
+    expect(String(response.headers.location ?? '')).toContain('notice=category-in-use');
+
+    // Masih ada, dan latarnya masih utuh.
+    expect(await locations.findCategory(fantasi)).not.toBeNull();
+    expect((await locations.list())[0]?.backgrounds).toHaveLength(1);
+  });
+
+  it('mencatat pembuatan lokasi dan kategori di audit', async () => {
+    const cookie = await login();
+    const fantasi = await addCategory(cookie, 'fantasy');
+    await saveLocation(cookie, {
+      locationId: '',
+      name: 'Lobi Utama',
+      backgroundCategory: [fantasi],
+      backgroundMedia: [await upload(cookie, png(1280, 720, 'loc-audit'))],
     });
 
     const { rows } = await ctx.db.query<{ action: string }>(
-      "SELECT action FROM admin_audit_log WHERE target_kind = 'location' ORDER BY created_at ASC",
+      `SELECT action FROM admin_audit_log
+       WHERE target_kind IN ('location', 'locationCategory')
+       ORDER BY created_at ASC`,
     );
-    expect(rows.map((row) => row.action)).toEqual(['location.create', 'location.delete']);
+    expect(rows.map((row) => row.action)).toEqual([
+      'locationCategory.create',
+      'location.create',
+    ]);
   });
 
-  it('merender halaman lokasi sebagai tabel, bukan teks markup', async () => {
+  it('merender halaman master lokasi dan kategori sebagai markup, bukan teks', async () => {
     const cookie = await login();
-    const worldId = await createWorld(cookie, 'Dunia Halaman Lokasi');
-    await app.inject({
-      method: 'POST',
-      url: '/admin/locations',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, locationId: '', label: 'Teras Belakang' }),
+    const fantasi = await addCategory(cookie, 'fantasy');
+    await saveLocation(cookie, {
+      locationId: '',
+      name: 'Teras Belakang',
+      backgroundCategory: [fantasi],
+      backgroundMedia: [await upload(cookie, png(1280, 720, 'loc-render'))],
     });
 
     const page = await app.inject({
       method: 'GET',
-      url: `/admin/locations?world=${encodeURIComponent(worldId)}`,
+      url: '/admin/locations',
       headers: { cookie },
     });
     expect(page.statusCode).toBe(200);
-    // Bukan 500, dan markupnya benar-benar tersusun.
-    expectRenderedMarkup(page.body, ['<table', '<td', 'loc_teras_belakang', '/admin/locations']);
+    expectRenderedMarkup(page.body, ['<h1', 'Teras Belakang', '/admin/locations-form']);
+
+    const categories = await app.inject({
+      method: 'GET',
+      url: '/admin/location-categories',
+      headers: { cookie },
+    });
+    expect(categories.statusCode).toBe(200);
+    expectRenderedMarkup(categories.body, ['<table', '<td', 'fantasy', '/admin/location-categories']);
+
+    // Halaman formulir memakai WIZARD_CSS/WIZARD_JS: tanpa itu, baris latar yang
+    // dapat ditambah hanya tampak sebagai formulir biasa yang tombolnya diam.
+    const formPage = await app.inject({
+      method: 'GET',
+      url: '/admin/locations-form',
+      headers: { cookie },
+    });
+    expect(formPage.statusCode).toBe(200);
+    expectRenderedMarkup(formPage.body, [
+      '<template data-expression-template>',
+      'data-expression-scope',
+      'data-upload="background"',
+    ]);
+  });
+
+  /**
+   * Tautan ke master harus SELAMAT saat versi dunia disalin.
+   *
+   * `copyVersionInto` menyalin setiap tabel anak dengan DAFTAR KOLOM TETAP.
+   * Kolom yang terlewat tidak menghasilkan galat apa pun — latarnya tetap ada,
+   * hanya asalnya yang hilang, dan itu baru terlihat ketika seseorang bertanya
+   * "latar ini dari lokasi mana" atau mencoba menghapus lokasi masternya.
+   */
+  it('mempertahankan tautan master saat versi dunia disalin', async () => {
+    const cookie = await login();
+    const worldId = await createWorld(cookie, 'Dunia Salin Lokasi');
+    const fantasi = await addCategory(cookie, 'fantasy');
+    const mediaId = await upload(cookie, png(1280, 720, 'loc-copy'));
+
+    await saveLocation(cookie, {
+      locationId: '',
+      name: 'Aula Kantor',
+      backgroundCategory: [fantasi],
+      backgroundMedia: [mediaId],
+    });
+    const [location] = await locations.list();
+
+    // Latar dipungut ke dunia, persis seperti yang dilakukan langkah 2 wizard.
+    const world = await catalogAdmin.findWorld(worldId);
+    const drafts = new WorldDraftRepository(ctx.db);
+    const picked = await drafts.addBackground(worldId, world!.worldVersion, {
+      mediaId,
+      label: 'Aula Kantor',
+      description: '',
+      usageNote: '',
+      encounterLikelihood: null,
+      blurStrength: 0,
+      focalX: 0.5,
+      focalY: 0.5,
+      width: 1280,
+      height: 720,
+      masterLocationId: location!.locationId,
+      masterCategoryId: fantasi,
+    });
+    expect(picked).not.toBeNull();
+
+    // Menyimpan dunia membuka versi baru, dan versi baru diisi dengan menyalin.
+    await catalogAdmin.saveWorld({
+      worldId,
+      title: 'Dunia Salin Lokasi (revisi)',
+      synopsis: 'S',
+      premise: 'P',
+      coverAssetId: 'a_cover_lentera',
+      contentRating: 'all',
+      status: 'draft',
+      genres: ['drama'],
+      locales: ['id-ID'],
+    });
+
+    const { rows } = await ctx.db.query<{
+      world_version: number;
+      master_location_id: string | null;
+      master_category_id: string | null;
+    }>(
+      `SELECT world_version, master_location_id, master_category_id
+       FROM world_assets WHERE world_id = $1 AND kind = 'background'
+       ORDER BY world_version ASC`,
+      [worldId],
+    );
+
+    expect(rows.length, 'latar tidak ikut tersalin ke versi baru').toBeGreaterThan(1);
+    for (const row of rows) {
+      expect(
+        row.master_location_id,
+        `tautan lokasi master hilang pada versi ${String(row.world_version)}`,
+      ).toBe(location!.locationId);
+      expect(row.master_category_id).toBe(fantasi);
+    }
   });
 });
 

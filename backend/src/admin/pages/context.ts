@@ -14,6 +14,7 @@ import type { ModelsRepository } from '../modelsRepository';
 import type { WorldDraftRepository } from '../worldDraftRepository';
 import type { GenresRepository } from '../genresRepository';
 import type { CharactersRepository } from '../charactersRepository';
+import type { LocationsRepository } from '../locationsRepository';
 import type { MediaRepository } from '../../repositories/mediaRepository';
 
 export type AdminPageContext = {
@@ -43,6 +44,16 @@ export type AdminPageContext = {
    * tinggal di `world_characters`.
    */
   characters: CharactersRepository;
+  /**
+   * Master lokasi — kategori (era/setting), tempat, dan latar belakangnya.
+   *
+   * Berdiri sendiri dengan alasan yang sama seperti genre dan karakter: nama
+   * tempat dan gambar latarnya tidak khas satu dunia, jadi mengubahnya tidak
+   * boleh membuat versi dunia baru. Yang khas dunia (keterangan yang dibaca
+   * mesin cerita, blur, titik fokus, peluang kemunculan) tetap tinggal di
+   * `world_assets`, dan wizard hanya MEMUNGUT latar dari sini.
+   */
+  locations: LocationsRepository;
   /** Berkas gambar unggahan; dipakai halaman Aset untuk menghitung pemakaian. */
   media: MediaRepository;
 };

@@ -218,110 +218,30 @@ export const WIZARD_JS = `
     });
   }
 
-  /* ---------------- Unggah banyak latar belakang (langkah 2) ---------------- */
+  /* ---------------- Unggah satu gambar ke satu slot ---------------- */
 
-  function bindBackgroundBatch(input) {
-    var form = input.closest('form');
-    var status = form && form.querySelector('[data-batch-status]');
-    var list = form && form.querySelector('[data-batch-list]');
-    var submit = form && form.querySelector('[data-batch-submit]');
-
-    if (submit) { submit.disabled = true; }
-
-    input.addEventListener('change', function () {
-      var files = Array.prototype.slice.call(input.files || []);
-      if (files.length === 0) { return; }
-
-      if (list) { list.innerHTML = ''; }
-      if (submit) { submit.disabled = true; }
-
-      var done = 0;
-      var failed = 0;
-
-      /* Dijalankan berurutan, bukan serentak: sepuluh unggahan bersamaan pada
-         koneksi yang lambat membuat semuanya tampak menggantung sekaligus. */
-      var chain = Promise.resolve();
-      files.forEach(function (file, index) {
-        chain = chain.then(function () {
-          setStatus(status, 'working', 'Mengunggah ' + (index + 1) + ' dari ' + files.length + '...');
-          return uploadFile(file, 'background').then(function (result) {
-            done += 1;
-            appendUploaded(form, result);
-            if (list) { list.appendChild(rowFor(result)); }
-          }).catch(function (error) {
-            failed += 1;
-            if (list) { list.appendChild(failedRow(file.name, error.message)); }
-          });
-        });
-      });
-
-      chain.then(function () {
-        if (failed === 0) {
-          setStatus(status, 'ok', done + ' gambar siap ditambahkan.');
-        } else {
-          setStatus(status, 'error', done + ' berhasil, ' + failed + ' gagal. Yang gagal tidak diikutkan.');
-        }
-        if (submit) { submit.disabled = done === 0; }
-      });
-    });
-  }
-
-  /* Bidang tersembunyi yang dibaca server. Nama berulang menjadi LARIK di sisi
-     server — itulah cara beberapa gambar dikirim dalam satu formulir.
-
-     Hanya id berkas yang dikirim. Dimensinya TIDAK ikut: server sudah
-     menyimpannya saat unggahan, jadi mengirimkannya lagi hanya menambah angka
-     yang bisa berselisih dengan yang benar. */
-  function appendUploaded(form, result) {
-    var field = document.createElement('input');
-    field.type = 'hidden';
-    field.name = 'mediaId';
-    field.value = result.mediaId;
-    form.appendChild(field);
-  }
-
-  function rowFor(result) {
-    var row = document.createElement('div');
-    row.className = 'upload-row';
-
-    var image = document.createElement('img');
-    image.src = result.url;
-    image.alt = '';
-    image.className = 'upload-thumb';
-
-    var text = document.createElement('span');
-    text.textContent = result.width + '\\u00d7' + result.height + ' \\u00b7 siap';
-
-    row.appendChild(image);
-    row.appendChild(text);
-    return row;
-  }
-
-  function failedRow(name, message) {
-    var row = document.createElement('div');
-    row.className = 'upload-row upload-row--error';
-
-    var text = document.createElement('span');
-    text.textContent = name + ' \\u2014 ' + message;
-
-    row.appendChild(text);
-    return row;
-  }
-
-  /* ---------------- Unggah satu potret (langkah 3) ---------------- */
-
-  function bindPortrait(input) {
-    var scope = input.closest('[data-portrait-scope]');
-    var status = scope && scope.querySelector('[data-portrait-status]');
-    var hidden = scope && scope.querySelector('[data-portrait-media]');
-    var preview = scope && scope.querySelector('[data-portrait-preview]');
+  /*
+   * Satu slot gambar = satu baris yang punya pratinjau, keterangan status, dan
+   * satu bidang tersembunyi berisi id berkas. Dipakai baris ekspresi karakter
+   * (potret) dan baris latar master lokasi.
+   *
+   * Awalan atributnya BERBEDA karena ukuran simpannya berbeda: potret 512x768
+   * dan menyimpan alfa, latar 1280x720 dan tidak. Memakai simpan potret untuk
+   * latar akan memperkecil gambar latar ke ukuran potret - tanpa galat apa pun,
+   * hanya gambar yang jelek.
+   */
+  function bindImageSlot(input, kind, prefix) {
+    var scope = input.closest('[data-' + prefix + '-scope]');
+    var status = scope && scope.querySelector('[data-' + prefix + '-status]');
+    var hidden = scope && scope.querySelector('[data-' + prefix + '-media]');
+    var preview = scope && scope.querySelector('[data-' + prefix + '-preview]');
 
     input.addEventListener('change', function () {
       var file = input.files && input.files[0];
       if (!file) { return; }
 
       setStatus(status, 'working', 'Mengunggah...');
-      uploadFile(file, 'portrait').then(function (result) {
+      uploadFile(file, kind).then(function (result) {
         if (hidden) { hidden.value = result.mediaId; }
         if (preview) {
           preview.src = result.url;
@@ -367,7 +287,7 @@ export const WIZARD_JS = `
 
   function prepareRow(row) {
     var input = row.querySelector('input[type=file]');
-    if (input) { bindPortrait(input); }
+    if (input) { bindImageSlot(input, 'portrait', 'portrait'); }
     var remove = row.querySelector('[data-expression-remove]');
     if (remove) {
       remove.addEventListener('click', function (event) {
@@ -406,8 +326,12 @@ export const WIZARD_JS = `
 
   function start() {
     Array.prototype.forEach.call(document.querySelectorAll('[data-upload=cover]'), bindCover);
-    Array.prototype.forEach.call(document.querySelectorAll('[data-upload=background-batch]'), bindBackgroundBatch);
-    Array.prototype.forEach.call(document.querySelectorAll('[data-upload=portrait]'), bindPortrait);
+    Array.prototype.forEach.call(document.querySelectorAll('[data-upload=portrait]'), function (input) {
+      bindImageSlot(input, 'portrait', 'portrait');
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('[data-upload=background]'), function (input) {
+      bindImageSlot(input, 'background', 'background');
+    });
     Array.prototype.forEach.call(document.querySelectorAll('[data-preview-scope]'), function (scope) {
       bindPreview(scope);
       bindBlur(scope);
@@ -464,8 +388,6 @@ export const WIZARD_CSS = `
 .upload-status[data-state=working]{color:var(--warn)}
 .upload-status[data-state=ok]{color:var(--ok)}
 .upload-status[data-state=error]{color:var(--danger)}
-.upload-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12.5px}
-.upload-row--error{color:var(--danger)}
 .upload-thumb{width:56px;height:32px;object-fit:cover;border-radius:var(--radius-xs);
   border:1px solid var(--line);background:var(--field)}
 .focal-stage{position:relative;display:inline-block;line-height:0;cursor:crosshair;

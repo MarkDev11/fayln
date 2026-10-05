@@ -215,15 +215,33 @@ export async function wizardStep2(ctx: AdminPageContext, worldId: string): Promi
   const backgrounds = await ctx.drafts.listBackgrounds(draft.worldId, draft.worldVersion);
   const full = backgrounds.length >= MAX_BACKGROUNDS;
 
+  /*
+   * Pilihan latar dibangun dari MASTER, bukan dari unggahan.
+   *
+   * Yang ditawarkan adalah pasangan (lokasi, kategori) yang benar-benar punya
+   * gambar — bukan dua daftar terpisah yang harus dicocokkan admin sendiri.
+   * Dengan satu daftar, pilihan yang tidak ada tidak dapat terpilih sama sekali,
+   * dan halaman ini tidak memerlukan JavaScript untuk saling menyesuaikan.
+   */
+  const masterLocations = await ctx.locations.list();
+  const picks = masterLocations.flatMap((location) =>
+    location.backgrounds.map((background) => ({
+      value: `${location.locationId}|${background.categoryId}`,
+      label: `${location.name} — ${background.categoryName}`,
+    })),
+  );
+
   const items = backgrounds.map((background, index) => backgroundItem(background, draft, index, backgrounds.length));
 
   return html`<h1>Latar belakang — Langkah 2 dari 3</h1>
 ${wizardSteps(2, worldId, stepOfDraft(draft))}
 <p class="sub">
-  Tempat cerita berlangsung. Setiap gambar punya <strong>keterangan</strong> yang dibaca
-  manusia dan <strong>pemakaian</strong> yang membimbing AI. Angka <em>peluang bertemu</em>
-  sengaja terpisah dari catatan bebas: ia dipakai mesin cerita untuk memutuskan, dan
-  apa pun yang dipakai untuk memutuskan harus berupa nilai, bukan kalimat.
+  Tempat cerita berlangsung. Latar <strong>dipungut dari master lokasi</strong> — pilih
+  tempat beserta kategorinya (era), dan gambarnya masuk ke dunia ini. Setiap latar punya
+  <strong>keterangan</strong> yang dibaca manusia dan <strong>pemakaian</strong> yang
+  membimbing AI. Angka <em>peluang bertemu</em> sengaja terpisah dari catatan bebas: ia
+  dipakai mesin cerita untuk memutuskan, dan apa pun yang dipakai untuk memutuskan harus
+  berupa nilai, bukan kalimat.
 </p>
 
 <div class="grid" style="margin-bottom:18px">
@@ -238,21 +256,37 @@ ${
   Batas ${String(MAX_BACKGROUNDS)} latar belakang sudah tercapai. Hapus salah satu
   untuk menambah yang baru.
 </div>`
-    : html`<form method="post" action="/admin/worlds-wizard/2/backgrounds" class="card">
+    : picks.length === 0
+      ? html`<div class="card" style="border-color:var(--warn)">
+  <p class="sub" style="margin-top:0">
+    <strong>Master lokasi belum punya satu pun latar bergambar.</strong> Latar dipungut
+    dari sana, jadi isi <a href="/admin/locations">master lokasi</a> lebih dulu:
+    tambahkan tempat, lalu unggah gambarnya untuk tiap kategori (era).
+  </p>
+  <p style="margin-bottom:0">
+    Kategori (era) — mis. <em>fantasy</em>, <em>masa kini</em>, <em>era dinasti</em> —
+    dikelola di <a href="/admin/location-categories">halaman kategori lokasi</a>.
+  </p>
+</div>`
+      : html`<form method="post" action="/admin/worlds-wizard/2/backgrounds/pick" class="card">
   <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
-  <label><span>Unggah beberapa gambar sekaligus</span>
-    <input type="file" accept="image/png,image/jpeg,image/webp" multiple data-upload="background-batch">
+  <label><span>Pilih latar dari master lokasi</span>
+    <select name="pick" required>
+      ${picks.map(
+        (pick) => html`<option value="${inputValue(pick.value)}">${esc(pick.label)}</option>`,
+      )}
+    </select>
   </label>
   <p class="sub" style="margin-top:0">
-    Gambar diperkecil di peramban sebelum diunggah (maksimal 1280&times;720). Setelah
-    masuk, keterangan dan penyetelannya diatur pada daftar di bawah.
+    Daftarnya memuat <strong>lokasi &times; kategori (era)</strong> yang benar-benar punya
+    gambar, jadi pilihan yang tidak ada tidak dapat terpilih. Setelah ditambahkan,
+    keterangan, blur, titik fokus, dan peluang kemunculannya boleh disesuaikan untuk
+    dunia ini — <strong>master tidak ikut berubah</strong>.
     Tersisa ${String(MAX_BACKGROUNDS - backgrounds.length)} tempat.
   </p>
-  <div class="upload-status" data-batch-status></div>
-  <div data-batch-list></div>
   <div class="wizard-actions">
     <span class="spacer"></span>
-    <button type="submit" data-batch-submit disabled>Tambahkan ke daftar</button>
+    <button type="submit">Tambahkan ke daftar</button>
   </div>
 </form>`
 }
@@ -260,7 +294,7 @@ ${
 <h2>Daftar latar belakang</h2>
 ${
   backgrounds.length === 0
-    ? html`<div class="empty">Belum ada latar belakang. Unggah minimal satu untuk melanjutkan.</div>`
+    ? html`<div class="empty">Belum ada latar belakang. Pungut minimal satu dari master untuk melanjutkan.</div>`
     : html`<div class="card">${items}</div>`
 }
 

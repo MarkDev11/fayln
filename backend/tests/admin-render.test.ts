@@ -33,6 +33,7 @@ import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
+import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
@@ -103,6 +104,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     drafts: new WorldDraftRepository(ctx.db),
     genres: new GenresRepository(ctx.db),
     characters: new CharactersRepository(ctx.db),
+    locations: new LocationsRepository(ctx.db),
     media: new MediaRepository(ctx.db),
   };
 
@@ -205,6 +207,40 @@ function formWith(body: string, marker: string): string {
   expect(end, `</form> setelah "${marker}" tidak ditemukan`).toBeGreaterThan(-1);
   return body.slice(open, end);
 }
+
+/**
+ * Menyisipkan satu berkas media agar sebuah baris bergambar dapat dirender.
+ *
+ * Berkasnya PNG 1×1 yang SAH, dan `byte_size` dihitung dari isinya — bukan
+ * angka yang dikarang. `MediaRepository.readBytes` menolak baris yang
+ * `byte_size`-nya tidak sama dengan panjang isi yang didekode, jadi baris yang
+ * tidak konsisten akan menghasilkan 404 tanpa penjelasan: gambarnya tampak
+ * terpasang di markup, tetapi tidak pernah dapat dimuat.
+ *
+ * Hanya baris media-nya yang disiapkan begini; isi masternya tetap dibuat lewat
+ * repositori sungguhan. Jalur unggahannya sendiri sudah diuji di `admin.test.ts`
+ * dan `wizard.test.ts`.
+ */
+async function seedMedia(mediaId: string): Promise<void> {
+  const bytes = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+    'base64',
+  );
+  await ctx.db.query(
+    `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64)
+     VALUES ($1, 'image/png', $2, 1, 1, $3)`,
+    [mediaId, bytes.length, bytes.toString('base64')],
+  );
+}
+
+/**
+ * Id media yang sah: SHA-256 heksadesimal, sama seperti hasil unggahan.
+ *
+ * Bentuknya penting. Penyaji berkas menolak bentuk lain, jadi id yang dikarang
+ * bebas akan menghasilkan gambar yang terpasang di markup tetapi selalu gagal
+ * dimuat — dan uji yang memakai id karangan tidak akan pernah menangkapnya.
+ */
+const MEDIA_ID = `${'a1'.repeat(32)}`;
 
 beforeEach(async () => {
   ctx = await createTestDatabase();
@@ -337,40 +373,6 @@ describe('sapuan render: tidak ada markup yang tampil sebagai teks', () => {
  * kosongnya hidup. Keduanya karena itu diperiksa berpasangan.
  */
 describe('master karakter: keadaan kosong dan berisi', () => {
-  /**
-   * Menyisipkan satu berkas media agar sebuah ekspresi punya gambar.
-   *
-   * Berkasnya PNG 1×1 yang SAH, dan `byte_size` dihitung dari isinya — bukan
-   * angka yang dikarang. `MediaRepository.readBytes` menolak baris yang
-   * `byte_size`-nya tidak sama dengan panjang isi yang didekode, jadi baris
-   * yang tidak konsisten akan menghasilkan 404 tanpa penjelasan: potretnya
-   * tampak terpasang di markup, tetapi tidak pernah dapat dimuat.
-   *
-   * Hanya baris media-nya yang disiapkan begini; pembuatan karakternya tetap
-   * lewat repositori sungguhan. Jalur unggahannya sendiri sudah diuji di
-   * `admin.test.ts` dan `wizard.test.ts`.
-   */
-  async function seedMedia(mediaId: string): Promise<void> {
-    const bytes = Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
-      'base64',
-    );
-    await ctx.db.query(
-      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64)
-       VALUES ($1, 'image/png', $2, 1, 1, $3)`,
-      [mediaId, bytes.length, bytes.toString('base64')],
-    );
-  }
-
-  /**
-   * Id media yang sah: SHA-256 heksadesimal, sama seperti hasil unggahan.
-   *
-   * Bentuknya penting. Penyaji berkas menolak bentuk lain, jadi id yang dikarang
-   * bebas akan menghasilkan potret yang terpasang di markup tetapi selalu gagal
-   * dimuat — dan uji yang memakai id karangan tidak akan pernah menangkapnya.
-   */
-  const MEDIA_ID = `${'a1'.repeat(32)}`;
-
   it('menampilkan pesan kosong saat belum ada karakter', async () => {
     const cookie = await login();
     const body = await sweep(cookie, '/admin/characters');
@@ -406,6 +408,101 @@ describe('master karakter: keadaan kosong dan berisi', () => {
     const image = await app.inject({ method: 'GET', url: `/v1/media/${MEDIA_ID}` });
     expect(image.statusCode, 'potret yang dipasang daftar tidak dapat dimuat').toBe(200);
     expect(image.headers['content-type']).toBe('image/png');
+  });
+});
+
+/**
+ * Master lokasi — pasangan "kosong" dan "berisi", dengan alasan yang sama
+ * seperti master karakter.
+ *
+ * Yang khas halaman ini: pemilih latar di langkah 2 wizard HANYA dirender bila
+ * master punya latar bergambar. Jadi halaman itu punya dua cabang, dan
+ * keduanya harus dibuktikan — bukan hanya cabang yang kebetulan tampak di
+ * produksi saat datanya sudah terisi.
+ */
+describe('master lokasi: keadaan kosong dan berisi', () => {
+  /** Membuat satu kategori dan satu lokasi bergambar, lalu mengembalikan idnya. */
+  async function seedLocation(name: string, categoryName: string): Promise<void> {
+    const category = await pages.locations.createCategory(categoryName);
+    if (!category.ok) {
+      throw new Error(`kategori uji gagal dibuat: ${category.reason}`);
+    }
+    const created = await pages.locations.create({
+      name,
+      backgrounds: [
+        {
+          categoryId: category.categoryId,
+          mediaId: MEDIA_ID,
+          description: '',
+          usageNote: '',
+        },
+      ],
+    });
+    if (!created.ok) {
+      throw new Error(`lokasi uji gagal dibuat: ${created.reason}`);
+    }
+  }
+
+  it('menampilkan pesan kosong saat belum ada lokasi', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/locations');
+
+    expect(body).toContain('Belum ada lokasi');
+    // Dan memperingatkan bahwa kategori belum ada: tanpa kategori, latar tidak
+    // dapat diunggah sama sekali — halaman yang diam saja akan menyesatkan.
+    expect(body).toContain('Belum ada kategori');
+    expect(body).not.toContain('class="list__item"');
+    expect(body).not.toContain('&lt;div');
+  });
+
+  it('menampilkan baris sungguhan beserta jumlah eranya saat ada isi', async () => {
+    const cookie = await login();
+    await seedMedia(MEDIA_ID);
+    await seedLocation('Aula Kantor', 'masa kini');
+
+    const body = await sweep(cookie, '/admin/locations');
+
+    expect(body, 'pesan kosong masih tampil padahal ada lokasi').not.toContain('Belum ada lokasi');
+    expect(body).toContain('class="list__item"');
+    expect(body).toContain('Aula Kantor');
+    expect(body).toContain('1 era');
+    // Latarnya benar-benar dipasang di markup...
+    expect(body).toContain(`src="/v1/media/${MEDIA_ID}"`);
+
+    // ...dan alamat itu benar-benar menyajikan gambar. Tanpa pemeriksaan ini,
+    // markupnya dapat menunjuk berkas yang tidak pernah dapat dimuat — cacat
+    // yang hanya terlihat sebagai gambar rusak di layar admin.
+    const image = await app.inject({ method: 'GET', url: `/v1/media/${MEDIA_ID}` });
+    expect(image.statusCode, 'latar yang dipasang daftar tidak dapat dimuat').toBe(200);
+  });
+
+  it('tidak menawarkan pemilih di langkah 2 selama master belum punya latar', async () => {
+    const cookie = await login();
+    const { worldId } = await pages.drafts.createDraft();
+    const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/2`);
+
+    // Menawarkan pemilih kosong berarti admin menekan Simpan dan tidak terjadi
+    // apa-apa — bentuk kegagalan senyap yang paling mudah lolos.
+    expect(body).not.toContain('<select name="pick"');
+    expect(body, 'halaman diam saja padahal master masih kosong').toContain(
+      'Master lokasi belum punya satu pun latar',
+    );
+    expect(body).toContain('/admin/locations');
+  });
+
+  it('menawarkan pemilih berisi pasangan lokasi-kategori saat master sudah diisi', async () => {
+    const cookie = await login();
+    await seedMedia(MEDIA_ID);
+    await seedLocation('Aula Kerajaan', 'era dinasti');
+
+    const { worldId } = await pages.drafts.createDraft();
+    const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/2`);
+
+    expect(body, 'pemilih latar tidak dirender').toContain('<select name="pick"');
+    expect(body, 'pasangan lokasi-kategori tidak muncul sebagai pilihan').toContain(
+      'Aula Kerajaan — era dinasti',
+    );
+    expect(body).not.toContain('Master lokasi belum punya satu pun latar');
   });
 });
 
@@ -463,7 +560,7 @@ describe('bilah sisi ala System Settings', () => {
     const body = await sweep(cookie, '/admin');
 
     const icons = body.match(/class="nav__icon"/g) ?? [];
-    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(12);
+    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(13);
     expect(body).toContain('--i-a:#0a84ff;--i-b:#0055c4');
     expect(body).toMatch(/nav__icon[^>]*>\s*<svg/);
     expect(body, 'ikon tidak boleh dimuat dari jaringan').not.toMatch(/<img[^>]+src="https?:/);
@@ -700,6 +797,53 @@ describe('templat baris ekspresi berada di dalam formulirnya', () => {
     expect(body, 'skrip unggahan tidak ikut dimuat').toContain("'/admin/media'");
     expect(body, 'kolom unggahan tidak dirender').toContain('data-upload="portrait"');
     expect(body, 'bidang tersembunyi id media tidak dirender').toContain('data-portrait-media');
+  });
+
+  it('pada halaman master lokasi', async () => {
+    const cookie = await login();
+
+    // Kategori dibuat lebih dulu: tanpa kategori, halaman formulir menampilkan
+    // peringatan dan tidak merender satu baris pun — sehingga ujinya akan lulus
+    // secara palsu tanpa pernah memeriksa letak templatnya.
+    const category = await pages.locations.createCategory('masa kini');
+    expect(category.ok).toBe(true);
+
+    const body = await sweep(cookie, '/admin/locations-form');
+
+    const form = formWith(body, 'data-expression-scope');
+    expect(form, 'daftar latar berada di luar formulir').toContain('data-expression-list');
+    expect(form, 'tombol tambah latar berada di luar formulir').toContain('data-expression-add');
+    expect(
+      form,
+      'templat latar berada di luar formulir — tombol "+ Tambah latar" tidak akan bekerja',
+    ).toContain('data-expression-template');
+  });
+
+  it('memuat skrip unggahan dan slot gambar latar di halaman master lokasi', async () => {
+    const cookie = await login();
+    await pages.locations.createCategory('masa kini');
+    const body = await sweep(cookie, '/admin/locations-form');
+
+    // Tanpa skrip ini, memilih berkas tidak mengunggah apa pun dan bidang
+    // tersembunyinya tetap kosong. Halaman tetap tampak benar; yang terjadi
+    // hanyalah Simpan menolak karena tidak ada gambar.
+    expect(body, 'skrip unggahan tidak ikut dimuat').toContain("'/admin/media'");
+    expect(body, 'kolom unggahan latar tidak dirender').toContain('data-upload="background"');
+    expect(body, 'bidang tersembunyi id media latar tidak dirender').toContain(
+      'data-background-media',
+    );
+    // Slot latar memakai awalan sendiri: memakai slot potret akan memperkecil
+    // gambar latar ke ukuran potret, tanpa galat apa pun.
+    expect(body, 'slot latar memakai awalan potret').not.toContain('data-portrait-media');
+  });
+
+  it('menghidupkan pesan "tidak ditemukan" saat id lokasi tidak ada', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/locations-form?location=loc_tidak_ada');
+
+    expect(body).toContain('Tidak ditemukan');
+    expect(body).toContain('Kembali ke daftar lokasi');
+    expect(body).not.toContain('&lt;div');
   });
 
   it('menghidupkan pesan "tidak ditemukan" saat id karakter tidak ada', async () => {

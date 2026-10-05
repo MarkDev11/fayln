@@ -20,7 +20,11 @@ import { assetsList } from './pages/assetPages';
 import { charactersForm, charactersList } from './pages/characterPages';
 import { worldsForm, worldsList } from './pages/catalogPages';
 import { auditList, dashboard, settingsList } from './pages/dashboardPages';
-import { locationsList } from './pages/locationPages';
+import {
+  locationCategoriesList,
+  locationsForm,
+  locationsList,
+} from './pages/locationPages';
 import { genresList } from './pages/genrePages';
 import { wizardStep1, wizardStep2, wizardStep3 } from './pages/wizardPages';
 import { WIZARD_CSS, WIZARD_JS } from './wizardClient';
@@ -31,6 +35,7 @@ import { ACCEPTED_IMAGE_TYPES, inspectImage } from '../media/imageFile';
 import { isMediaId, type MediaRepository } from '../repositories/mediaRepository';
 import { BASE_EXPRESSION, isRelationStatus } from './worldDraftRepository';
 import type { CharacterFailure } from './charactersRepository';
+import type { CategoryFailure, LocationFailure } from './locationsRepository';
 import { html, inputValue, layout } from './html';
 import { validatePassword, verifyPassword } from './password';
 import {
@@ -73,7 +78,9 @@ type AdminPages = {
     ctx: AdminPageContext,
     filter: { username: string; action: string },
   ) => Promise<SafeHtml>;
-  locationsList: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
+  locationsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
+  locationsForm: (ctx: AdminPageContext, locationId: string | null) => Promise<SafeHtml>;
+  locationCategoriesList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   genresList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   assetsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   wizardStep1: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
@@ -97,6 +104,8 @@ const DEFAULT_PAGES: AdminPages = {
   adminsList,
   auditList,
   locationsList,
+  locationsForm,
+  locationCategoriesList,
   genresList,
   assetsList,
   wizardStep1,
@@ -207,10 +216,21 @@ const characterBody = z.object({
   expressionUsage: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
-const locationBody = z.object({
-  worldId: z.string().trim().min(1).max(120),
+/**
+ * Isian master lokasi.
+ *
+ * Bidang yang berulang (kategori, gambar, keterangan) datang sebagai satu nilai
+ * ATAU larik, karena formulir mengirim satu baris pun sebagai larik sementara
+ * satu baris yang dihapus admin dapat tersisa sebagai nilai tunggal. `toArray()`
+ * menyeragamkannya; memasangkannya berdasarkan indeks.
+ */
+const locationMasterBody = z.object({
   locationId: z.string().optional().default(''),
-  label: z.string().trim().min(1).max(120),
+  name: z.string().max(200).optional().default(''),
+  backgroundCategory: z.union([z.string(), z.array(z.string())]).optional(),
+  backgroundMedia: z.union([z.string(), z.array(z.string())]).optional(),
+  backgroundDescription: z.union([z.string(), z.array(z.string())]).optional(),
+  backgroundUsage: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 /**
@@ -508,13 +528,32 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     send(reply, request, 'Detail akun', await pages.accountDetail(ctx, request.params.accountId), 'accounts'),
   );
 
-  app.get<{ Querystring: { world?: string } }>('/admin/locations', async (request, reply) =>
-    send(
+  app.get('/admin/locations', async (request, reply) =>
+    send(reply, request, 'Lokasi', await pages.locationsList(ctx), 'locations'),
+  );
+
+  /*
+   * Formulir master memakai `sendWizard`, bukan `send`: baris latar yang dapat
+   * ditambah dan dihapus membutuhkan WIZARD_CSS dan WIZARD_JS — mekanisme yang
+   * sama dipakai baris ekspresi karakter dan langkah 3 wizard.
+   */
+  app.get<{ Querystring: { location?: string } }>('/admin/locations-form', async (request, reply) =>
+    sendWizard(
       reply,
       request,
       'Lokasi',
-      await pages.locationsList(ctx, request.query.world ?? null),
+      await pages.locationsForm(ctx, request.query.location ?? null),
       'locations',
+    ),
+  );
+
+  app.get('/admin/location-categories', async (request, reply) =>
+    send(
+      reply,
+      request,
+      'Kategori lokasi',
+      await pages.locationCategoriesList(ctx),
+      'locationCategories',
     ),
   );
 
@@ -689,7 +728,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
     if (!result.ok) {
       return reply.redirect(
-        characterRedirect(base, characterNotice(result.reason), result.detail),
+        noticeRedirect(base, characterNotice(result.reason), result.detail),
         302,
       );
     }
@@ -705,7 +744,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     });
 
     return reply.redirect(
-      characterRedirect(
+      noticeRedirect(
         `/admin/characters-form?character=${encodeURIComponent(result.characterId)}`,
         isNew ? 'created' : 'saved',
       ),
@@ -745,51 +784,40 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
   app.post('/admin/locations', async (request, reply) => {
     const session = request.adminSession;
-    const parsed = locationBody.safeParse(request.body);
+    const parsed = locationMasterBody.safeParse(request.body);
     if (!parsed.success) {
       return reply.redirect('/admin/locations?notice=invalid-input', 302);
     }
+    const data = parsed.data;
 
-    try {
-      const saved = await ctx.catalog.saveLocation({
-        worldId: parsed.data.worldId,
-        locationId: parsed.data.locationId || null,
-        label: parsed.data.label,
-      });
-      await admins.recordAudit({
-        adminId: session?.adminId ?? null,
-        username: session?.username ?? '',
-        action: parsed.data.locationId ? 'location.update' : 'location.create',
-        targetKind: 'location',
-        targetId: `${parsed.data.worldId}/${saved.locationId}`,
-        detail: { worldVersion: saved.worldVersion, label: parsed.data.label },
-        ipAddress: request.ip,
-      });
-    } catch {
-      // Dunia belum punya versi: tidak ada tempat untuk menaruh lokasi.
-      return reply.redirect('/admin/locations?notice=not-found', 302);
-    }
+    // Larik paralel: nama bidang yang berulang menjadi LARIK di sisi server,
+    // dan posisinya yang memasangkannya. Pola yang sama seperti master karakter.
+    const categories = toArray(data.backgroundCategory);
+    const mediaIds = toArray(data.backgroundMedia);
+    const descriptions = toArray(data.backgroundDescription);
+    const usages = toArray(data.backgroundUsage);
 
-    return reply.redirect(
-      `/admin/locations?world=${encodeURIComponent(parsed.data.worldId)}&notice=saved`,
-      302,
-    );
-  });
+    const backgrounds = categories.map((categoryId, index) => ({
+      categoryId,
+      mediaId: mediaIds[index] ?? '',
+      description: descriptions[index] ?? '',
+      usageNote: usages[index] ?? '',
+    }));
 
-  app.post('/admin/locations/delete', async (request, reply) => {
-    const session = request.adminSession;
-    const body = z
-      .object({ worldId: z.string().trim().min(1), locationId: z.string().trim().min(1) })
-      .safeParse(request.body);
-    if (!body.success) {
-      return reply.redirect('/admin/locations?notice=invalid-input', 302);
-    }
+    const isNew = data.locationId.length === 0;
+    const input = { name: data.name, backgrounds };
 
-    try {
-      await ctx.catalog.deleteLocation(body.data.worldId, body.data.locationId);
-    } catch {
+    const result = isNew
+      ? await ctx.locations.create(input)
+      : await ctx.locations.update(data.locationId, input);
+
+    const base = isNew
+      ? '/admin/locations'
+      : `/admin/locations-form?location=${encodeURIComponent(data.locationId)}`;
+
+    if (!result.ok) {
       return reply.redirect(
-        `/admin/locations?world=${encodeURIComponent(body.data.worldId)}&notice=not-found`,
+        noticeRedirect(base, locationNotice(result.reason), result.detail),
         302,
       );
     }
@@ -797,16 +825,148 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     await admins.recordAudit({
       adminId: session?.adminId ?? null,
       username: session?.username ?? '',
-      action: 'location.delete',
+      action: isNew ? 'location.create' : 'location.update',
       targetKind: 'location',
-      targetId: `${body.data.worldId}/${body.data.locationId}`,
+      targetId: result.locationId,
+      detail: { name: data.name, backgrounds: backgrounds.length },
       ipAddress: request.ip,
     });
 
     return reply.redirect(
-      `/admin/locations?world=${encodeURIComponent(body.data.worldId)}&notice=deleted`,
+      noticeRedirect(
+        `/admin/locations-form?location=${encodeURIComponent(result.locationId)}`,
+        isNew ? 'created' : 'saved',
+      ),
       302,
     );
+  });
+
+  app.post('/admin/locations/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z.object({ locationId: z.string().trim().min(1) }).safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/locations?notice=invalid-input', 302);
+    }
+
+    const result = await ctx.locations.remove(body.data.locationId);
+    if (!result.ok) {
+      const code = result.reason === 'in-use' ? 'location-in-use' : 'not-found';
+      return reply.redirect(noticeRedirect('/admin/locations', code), 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'location.delete',
+      targetKind: 'location',
+      targetId: body.data.locationId,
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/locations?notice=deleted', 302);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Perubahan: master kategori lokasi                                 */
+  /* ---------------------------------------------------------------- */
+
+  app.post('/admin/location-categories', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({ name: z.string().max(80).optional().default('') })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/location-categories?notice=invalid-input', 302);
+    }
+
+    const result = await ctx.locations.createCategory(body.data.name);
+    if (!result.ok) {
+      return reply.redirect(
+        `/admin/location-categories?notice=${categoryNotice(result.reason)}`,
+        302,
+      );
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'locationCategory.create',
+      targetKind: 'locationCategory',
+      targetId: result.categoryId,
+      detail: { name: body.data.name },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/location-categories?notice=created', 302);
+  });
+
+  app.post('/admin/location-categories/rename', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({ categoryId: z.string().trim().min(1), name: z.string().max(80).optional().default('') })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/location-categories?notice=invalid-input', 302);
+    }
+
+    const result = await ctx.locations.renameCategory(body.data.categoryId, body.data.name);
+    if (!result.ok) {
+      return reply.redirect(
+        `/admin/location-categories?notice=${categoryNotice(result.reason)}`,
+        302,
+      );
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'locationCategory.rename',
+      targetKind: 'locationCategory',
+      targetId: body.data.categoryId,
+      detail: { name: body.data.name },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/location-categories?notice=saved', 302);
+  });
+
+  app.post('/admin/location-categories/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z.object({ categoryId: z.string().trim().min(1) }).safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/location-categories?notice=invalid-input', 302);
+    }
+
+    const result = await ctx.locations.removeCategory(body.data.categoryId);
+    if (!result.ok) {
+      return reply.redirect(
+        `/admin/location-categories?notice=${categoryNotice(result.reason)}`,
+        302,
+      );
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'locationCategory.delete',
+      targetKind: 'locationCategory',
+      targetId: body.data.categoryId,
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/location-categories?notice=deleted', 302);
+  });
+
+  app.post('/admin/location-categories/move', async (request, reply) => {
+    const body = z
+      .object({ categoryId: z.string().trim().min(1), direction: z.enum(['up', 'down']) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/location-categories?notice=invalid-input', 302);
+    }
+
+    await ctx.locations.moveCategory(body.data.categoryId, body.data.direction);
+    return reply.redirect('/admin/location-categories', 302);
   });
 
   /* ---------------------------------------------------------------- */
@@ -1072,20 +1232,29 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   });
 
   /**
-   * Menambahkan sekumpulan latar belakang yang sudah diunggah.
+   * Memungut satu latar dari master lokasi ke dalam draf dunia.
    *
-   * Dimensinya dibaca dari basis data, BUKAN dari angka yang dikirim klien.
-   * Server sudah menyimpannya saat unggahan, jadi tidak ada alasan memercayai
-   * salinan yang bisa saja salah — dan angka itu dipakai untuk menghitung titik
-   * fokus, sehingga kesalahannya akan terlihat sebagai gambar yang tidak pada
+   * Gambar dan keterangannya DISALIN, bukan dirujuk: dunia boleh menyesuaikan
+   * keterangan, blur, dan peluang kemunculannya tanpa mengubah master, dan versi
+   * dunia lama tidak boleh ikut berubah ketika master disunting. Yang tetap
+   * menunjuk master adalah `master_location_id`/`master_category_id` — itulah
+   * yang membuat "latar ini dari lokasi dan era mana" dapat dijawab, dan yang
+   * membuat lokasi serta kategori yang masih dipakai tidak dapat dihapus.
+   *
+   * Dimensi gambar dibaca dari basis data media, BUKAN dari angka kiriman klien:
+   * server sudah menyimpannya saat unggahan, dan angka itu dipakai menghitung
+   * titik fokus — salahnya akan terlihat sebagai gambar yang tidak pada
    * tempatnya.
    */
-  app.post('/admin/worlds-wizard/2/backgrounds', async (request, reply) => {
+  app.post('/admin/worlds-wizard/2/backgrounds/pick', async (request, reply) => {
     const session = request.adminSession;
     const body = z
       .object({
         worldId: z.string().trim().min(1),
-        mediaId: z.union([z.string(), z.array(z.string())]).optional(),
+        // Satu nilai "locationId|categoryId": halaman menawarkan pasangan yang
+        // benar-benar punya gambar, jadi dua bidang terpisah hanya akan
+        // memindahkan pekerjaan mencocokkan itu ke admin.
+        pick: z.string().trim().min(3),
       })
       .safeParse(request.body);
     if (!body.success) {
@@ -1097,55 +1266,74 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       return reply.redirect('/admin/worlds?notice=not-draft', 302);
     }
 
-    let added = 0;
-    let refused = 0;
+    const base = `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2`;
 
-    for (const mediaId of toArray(body.data.mediaId)) {
-      if (!isMediaId(mediaId)) {
-        continue;
-      }
-      const media = await ctx.media.findById(mediaId);
-      if (!media) {
-        continue;
-      }
+    const separator = body.data.pick.indexOf('|');
+    if (separator < 1) {
+      return reply.redirect(`${base}?notice=invalid-input`, 302);
+    }
+    const locationId = body.data.pick.slice(0, separator);
+    const categoryId = body.data.pick.slice(separator + 1);
 
-      const created = await ctx.drafts.addBackground(draft.worldId, draft.worldVersion, {
-        mediaId,
-        label: '',
-        description: '',
-        usageNote: '',
-        encounterLikelihood: null,
-        blurStrength: 0,
-        focalX: 0.5,
-        focalY: 0.5,
-        width: media.width,
-        height: media.height,
-      });
-
-      if (created) {
-        added += 1;
-      } else {
-        refused += 1;
-      }
+    const [location, background] = await Promise.all([
+      ctx.locations.find(locationId),
+      ctx.locations.findBackground(locationId, categoryId),
+    ]);
+    if (!location || !background) {
+      return reply.redirect(`${base}?notice=not-found`, 302);
     }
 
-    if (added > 0) {
-      await admins.recordAudit({
-        adminId: session?.adminId ?? null,
-        username: session?.username ?? '',
-        action: 'world.background.add',
-        targetKind: 'world',
-        targetId: draft.worldId,
-        detail: { added, refused },
-        ipAddress: request.ip,
-      });
+    const media = await ctx.media.findById(background.mediaId);
+    if (!media) {
+      return reply.redirect(`${base}?notice=not-found`, 302);
     }
 
-    const notice = refused > 0 ? 'limit' : 'created';
-    return reply.redirect(
-      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2?notice=${notice}`,
-      302,
+    const created = await ctx.drafts.addBackground(draft.worldId, draft.worldVersion, {
+      mediaId: background.mediaId,
+      label: location.name,
+      description: background.description,
+      usageNote: background.usageNote,
+      encounterLikelihood: background.encounterLikelihood,
+      blurStrength: background.blurStrength,
+      focalX: background.focalX,
+      focalY: background.focalY,
+      width: media.width,
+      height: media.height,
+      masterLocationId: location.locationId,
+      masterCategoryId: background.categoryId,
+    });
+
+    if (!created) {
+      return reply.redirect(`${base}?notice=limit`, 302);
+    }
+
+    /*
+     * Daftar lokasi dunia TUMBUH dari latar yang dipungut — ia tidak lagi
+     * diketik admin. Satu tempat punya satu identitas di seluruh sistem, jadi
+     * id-nya sama persis dengan id master.
+     */
+    await ctx.drafts.ensureLocation(
+      draft.worldId,
+      draft.worldVersion,
+      location.locationId,
+      location.name,
     );
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'world.background.pick',
+      targetKind: 'world',
+      targetId: draft.worldId,
+      detail: {
+        assetId: created.assetId,
+        locationId: location.locationId,
+        categoryId: background.categoryId,
+      },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect(`${base}?notice=picked`, 302);
   });
 
   app.post('/admin/worlds-wizard/2/background', async (request, reply) => {
@@ -2012,6 +2200,12 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
         'Isian Anda sudah tersimpan sebagai draf.',
     },
     limit: { kind: 'error', text: 'Batas jumlah tercapai. Hapus salah satu sebelum menambah.' },
+    picked: {
+      kind: 'ok',
+      text:
+        'Latar ditambahkan dari master lokasi. Keterangan, blur, titik fokus, dan ' +
+        'peluang kemunculannya boleh disesuaikan untuk dunia ini tanpa mengubah master.',
+    },
     'genre-invalid': {
       kind: 'error',
       text:
@@ -2049,6 +2243,48 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
       text:
         'Ada nama ekspresi yang dipakai lebih dari sekali. Dalam satu karakter, ' +
         'setiap ekspresi harus punya nama yang berbeda.',
+    },
+    'category-name-invalid': {
+      kind: 'error',
+      text: 'Nama kategori tidak boleh kosong.',
+    },
+    'category-in-use': {
+      kind: 'error',
+      // Menyebutkan jalan keluarnya, bukan hanya penolakannya.
+      text:
+        'Kategori ini masih dipakai latar sebuah lokasi, jadi tidak dihapus — ' +
+        'menghapusnya akan memutus gambar di seluruh lokasi sekaligus. Pindahkan ' +
+        'latar itu ke kategori lain lebih dulu.',
+    },
+    'location-name-invalid': {
+      kind: 'error',
+      text: 'Nama lokasi tidak boleh kosong.',
+    },
+    'location-no-background': {
+      kind: 'error',
+      text:
+        'Setiap lokasi harus punya minimal satu latar bergambar. Baris yang gambarnya ' +
+        'belum diunggah tidak ikut tersimpan — tunggu sampai statusnya "Tersimpan", ' +
+        'lalu simpan lagi.',
+    },
+    'location-category-invalid': {
+      kind: 'error',
+      // Keadaan ini berarti kategori yang dipilih sudah dihapus di tab lain.
+      text:
+        'Ada latar yang kategorinya belum dipilih, atau kategorinya sudah dihapus di ' +
+        'tab lain. Pilih ulang kategorinya — gambarnya tidak ikut hilang.',
+    },
+    'location-duplicate-category': {
+      kind: 'error',
+      text:
+        'Ada kategori yang dipakai lebih dari sekali pada lokasi ini. Satu kategori ' +
+        'memegang satu gambar latar; pilih kategori yang berbeda untuk baris kedua.',
+    },
+    'location-in-use': {
+      kind: 'error',
+      text:
+        'Lokasi ini sudah dipungut sebuah dunia, jadi tidak dihapus — menghapusnya ' +
+        'akan memutus latar di cerita itu. Hapus latarnya dari dunia tersebut lebih dulu.',
     },
   };
 
@@ -2101,7 +2337,7 @@ ${error ? html`<div class="notice err">${error}</div>` : ''}
  * kembar. Tanpa itu, pesannya hanya dapat berkata "ada yang kembar", dan admin
  * harus mencarinya sendiri di antara baris-baris yang ia ketik.
  */
-function characterRedirect(base: string, code: string, detail?: string): string {
+function noticeRedirect(base: string, code: string, detail?: string): string {
   const separator = base.includes('?') ? '&' : '?';
   const extra = detail ? `&detail=${encodeURIComponent(detail)}` : '';
   return `${base}${separator}notice=${code}${extra}`;
@@ -2116,6 +2352,36 @@ function characterNotice(reason: CharacterFailure): string {
       return 'character-no-expression';
     case 'duplicate-expression':
       return 'character-duplicate-expression';
+    case 'not-found':
+      return 'not-found';
+  }
+}
+
+/** Kode notifikasi untuk tiap sebab penolakan master kategori lokasi. */
+function categoryNotice(reason: CategoryFailure): string {
+  switch (reason) {
+    case 'invalid-name':
+      return 'category-name-invalid';
+    case 'in-use':
+      return 'category-in-use';
+    case 'not-found':
+      return 'not-found';
+  }
+}
+
+/** Kode notifikasi untuk tiap sebab penolakan master lokasi. */
+function locationNotice(reason: LocationFailure): string {
+  switch (reason) {
+    case 'invalid-name':
+      return 'location-name-invalid';
+    case 'no-backgrounds':
+      return 'location-no-background';
+    case 'invalid-category':
+      return 'location-category-invalid';
+    case 'duplicate-category':
+      return 'location-duplicate-category';
+    case 'in-use':
+      return 'location-in-use';
     case 'not-found':
       return 'not-found';
   }
