@@ -21,7 +21,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Database, DbClient } from '../db/pool';
-import type { ContentRating, GenreId, RelationStatus, ResponseLocale } from '../contracts/types';
+import type { ContentRating, GenreId, ResponseLocale } from '../contracts/types';
 
 /**
  * Empat keadaan dunia, sesuai CHECK constraint pada `world_versions`.
@@ -73,20 +73,6 @@ export type WorldAdminRow = {
   journeyCount: number;
 };
 
-export type CharacterAdminRow = {
-  worldId: string;
-  worldVersion: number;
-  npcId: string;
-  name: string;
-  role: string;
-  publicBackstory: string;
-  initialRelation: RelationStatus;
-  defaultPortraitAssetId: string;
-  position: number;
-  traits: string[];
-  expressions: string[];
-};
-
 export type LocationAdminRow = {
   locationId: string;
   label: string;
@@ -116,18 +102,6 @@ export type WorldSaveInput = {
   status: WorldStatus;
   genres: GenreId[];
   locales: ResponseLocale[];
-};
-
-export type CharacterSaveInput = {
-  worldId: string;
-  npcId: string | null;
-  name: string;
-  role: string;
-  publicBackstory: string;
-  initialRelation: RelationStatus;
-  defaultPortraitAssetId: string;
-  traits: string[];
-  expressions: string[];
 };
 
 export type LocationSaveInput = {
@@ -433,197 +407,6 @@ export class CatalogAdminRepository {
 
     await this.db.query('DELETE FROM worlds WHERE world_id = $1', [worldId]);
     return { ok: true };
-  }
-
-  /* ---------------------------------------------------------------- */
-  /* Karakter                                                          */
-  /* ---------------------------------------------------------------- */
-
-  async listCharacters(worldId: string): Promise<CharacterAdminRow[]> {
-    const world = await this.findWorld(worldId);
-    if (!world) {
-      return [];
-    }
-
-    const { rows } = await this.db.query<{
-      npc_id: string;
-      name: string;
-      role: string;
-      public_backstory: string;
-      initial_relation: string;
-      default_portrait_asset_id: string;
-      position: number;
-    }>(
-      `SELECT npc_id, name, role, public_backstory, initial_relation,
-              default_portrait_asset_id, position
-       FROM world_characters
-       WHERE world_id = $1 AND world_version = $2
-       ORDER BY position ASC, npc_id ASC`,
-      [worldId, world.worldVersion],
-    );
-
-    const traits = await this.characterStrings(worldId, world.worldVersion, 'world_character_traits', 'trait');
-    const expressions = await this.characterStrings(
-      worldId,
-      world.worldVersion,
-      'world_character_expressions',
-      'expression',
-    );
-
-    return rows.map((row) => ({
-      worldId,
-      worldVersion: world.worldVersion,
-      npcId: row.npc_id,
-      name: row.name,
-      role: row.role,
-      publicBackstory: row.public_backstory,
-      initialRelation: row.initial_relation as RelationStatus,
-      defaultPortraitAssetId: row.default_portrait_asset_id,
-      position: row.position,
-      traits: traits.get(row.npc_id) ?? [],
-      expressions: expressions.get(row.npc_id) ?? [],
-    }));
-  }
-
-  async findCharacter(worldId: string, npcId: string): Promise<CharacterAdminRow | null> {
-    const all = await this.listCharacters(worldId);
-    return all.find((row) => row.npcId === npcId) ?? null;
-  }
-
-  /**
-   * Menyimpan karakter.
-   *
-   * Penyuntingan karakter pada dunia yang sudah terbit tetap membuat versi baru
-   * dunia: satu baris `world_characters` berkunci asing ke (world_id,
-   * world_version), jadi mustahil mengubah karakter tanpa versi baru.
-   * Inilah alasan operasi ini menyalin versi lebih dulu.
-   */
-  async saveCharacter(input: CharacterSaveInput): Promise<{ npcId: string; worldVersion: number }> {
-    return this.db.transaction(async (client) => {
-      const next = await this.openNextVersion(client, input.worldId);
-      if (!next) {
-        throw new Error('Dunia belum punya versi. Buat dunianya lebih dulu.');
-      }
-      const { worldVersion, inheritedStatus, previousStatus } = next;
-      const npcId = input.npcId ?? `npc_${slug(randomUUID())}`;
-
-      const { rows: posRows } = await client.query<{ next_position: number }>(
-        `SELECT coalesce(max(position), 0)::int + 1 AS next_position
-         FROM world_characters WHERE world_id = $1 AND world_version = $2`,
-        [input.worldId, worldVersion],
-      );
-      const position = posRows[0]?.next_position ?? 1;
-
-      await client.query(
-        `INSERT INTO world_characters (
-           world_id, world_version, npc_id, name, role, public_backstory,
-           initial_relation, default_portrait_asset_id, position
-         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-         ON CONFLICT (world_id, world_version, npc_id) DO UPDATE SET
-           name = $4, role = $5, public_backstory = $6,
-           initial_relation = $7, default_portrait_asset_id = $8`,
-        [
-          input.worldId,
-          worldVersion,
-          npcId,
-          input.name,
-          input.role,
-          input.publicBackstory,
-          input.initialRelation,
-          input.defaultPortraitAssetId,
-          position,
-        ],
-      );
-
-      await client.query(
-        'DELETE FROM world_character_traits WHERE world_id = $1 AND world_version = $2 AND npc_id = $3',
-        [input.worldId, worldVersion, npcId],
-      );
-      let traitPosition = 0;
-      for (const trait of input.traits) {
-        await client.query(
-          `INSERT INTO world_character_traits (world_id, world_version, npc_id, position, trait)
-           VALUES ($1,$2,$3,$4,$5)`,
-          [input.worldId, worldVersion, npcId, traitPosition, trait],
-        );
-        traitPosition += 1;
-      }
-
-      await client.query(
-        'DELETE FROM world_character_expressions WHERE world_id = $1 AND world_version = $2 AND npc_id = $3',
-        [input.worldId, worldVersion, npcId],
-      );
-      let expressionPosition = 0;
-      for (const expression of input.expressions) {
-        await client.query(
-          `INSERT INTO world_character_expressions (world_id, world_version, npc_id, position, expression)
-           VALUES ($1,$2,$3,$4,$5)`,
-          [input.worldId, worldVersion, npcId, expressionPosition, expression],
-        );
-        expressionPosition += 1;
-      }
-
-      await this.archivePublishedVersion(
-        client,
-        input.worldId,
-        worldVersion,
-        previousStatus,
-        inheritedStatus,
-      );
-
-      return { npcId, worldVersion };
-    });
-  }
-
-  /**
-   * Menghapus karakter dari dunia.
-   *
-   * Menghapus karakter bukan `DELETE` pada versi yang sedang dipakai: karakter
-   * berkunci asing ke (world_id, world_version), dan perjalanan pemain
-   * menunjuk versi itu. Karena itu penghapusan berarti membuat versi baru tanpa
-   * karakter ini — persis seperti menyuntingnya.
-   *
-   * Mengembalikan `null` bila dunia atau karakternya tidak ada, supaya route
-   * dapat membedakan "tidak ketemu" dari "berhasil".
-   *
-   * Keberadaan karakter DIPERIKSA SEBELUM versi baru dibuka, bukan setelah.
-   * Mengandalkan ROLLBACK untuk membatalkan versi yang terlanjur dibuat lebih
-   * rapuh: ia berjalan di PostgreSQL, tetapi tidak dapat diandalkan di mesin
-   * in-memory yang dipakai pengujian — dan kegagalannya berbentuk versi dunia
-   * yang naik tanpa alasan, tanpa satu pun galat yang muncul.
-   */
-  async deleteCharacter(worldId: string, npcId: string): Promise<{ worldVersion: number } | null> {
-    const latest = await this.findWorld(worldId);
-    if (!latest) {
-      return null;
-    }
-
-    const { rows } = await this.db.query<{ npc_id: string }>(
-      `SELECT npc_id FROM world_characters
-       WHERE world_id = $1 AND world_version = $2 AND npc_id = $3 LIMIT 1`,
-      [worldId, latest.worldVersion, npcId],
-    );
-    if (rows.length === 0) {
-      return null;
-    }
-
-    return this.db.transaction(async (client) => {
-      const next = await this.openNextVersion(client, worldId);
-      if (!next) {
-        return null;
-      }
-      const { worldVersion, inheritedStatus, previousStatus } = next;
-
-      // Sifat dan ekspresi ikut terhapus lewat ON DELETE CASCADE pada kunci
-      // asingnya — tidak perlu dihapus satu per satu.
-      await client.query(
-        'DELETE FROM world_characters WHERE world_id = $1 AND world_version = $2 AND npc_id = $3',
-        [worldId, worldVersion, npcId],
-      );
-
-      await this.archivePublishedVersion(client, worldId, worldVersion, previousStatus, inheritedStatus);
-      return { worldVersion };
-    });
   }
 
   /* ---------------------------------------------------------------- */
@@ -1058,27 +841,6 @@ export class CatalogAdminRepository {
     return result;
   }
 
-  /** Sama, tetapi berkunci tiga tingkat: (world_id, version, npc_id). */
-  private async characterStrings(
-    worldId: string,
-    worldVersion: number,
-    table: string,
-    column: string,
-  ): Promise<Map<string, string[]>> {
-    const { rows } = await this.db.query<{ npc_id: string; value: string }>(
-      `SELECT npc_id, ${column} AS value FROM ${table}
-       WHERE world_id = $1 AND world_version = $2 ORDER BY position ASC`,
-      [worldId, worldVersion],
-    );
-
-    const result = new Map<string, string[]>();
-    for (const row of rows) {
-      const list = result.get(row.npc_id) ?? [];
-      list.push(row.value);
-      result.set(row.npc_id, list);
-    }
-    return result;
-  }
 }
 
 /**

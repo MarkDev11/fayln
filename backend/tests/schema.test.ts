@@ -38,6 +38,7 @@ describe('migrasi', () => {
     '007_media.sql',
     '008_asset_metadata.sql',
     '009_genres.sql',
+    '010_characters.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
@@ -261,8 +262,56 @@ describe('batasan yang menegakkan aturan domain', () => {
     ).rejects.toThrow();
   });
 
-  it('menolak penagihan dua kali untuk operasi yang sama (FR-52)', async () => {
+  /**
+   * Master karakter: ekspresi WAJIB punya gambar.
+   *
+   * Nama ekspresi tanpa gambar adalah data mati — klien tidak dapat
+   * merendernya, dan mesin cerita dapat memilih ekspresi yang tidak punya
+   * gambar sama sekali. Aturan itu sudah ditegakkan di kode pada jalur wizard;
+   * di sini ia ditegakkan basis data, supaya tidak ada jalur simpan lain yang
+   * dapat menyelundupkannya.
+   */
+  it('menolak ekspresi master yang gambarnya kosong', async () => {
     await ctx.db.query(
+      `INSERT INTO characters (character_id, name, position) VALUES ('char_uji', 'Uji', 1)`,
+    );
+    await expect(
+      ctx.db.query(
+        `INSERT INTO character_expressions (character_id, position, expression)
+         VALUES ('char_uji', 0, 'netral')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menolak ekspresi master yang menunjuk gambar tidak ada', async () => {
+    await ctx.db.query(
+      `INSERT INTO characters (character_id, name, position) VALUES ('char_uji2', 'Uji', 1)`,
+    );
+    await expect(
+      ctx.db.query(
+        `INSERT INTO character_expressions (character_id, position, expression, media_id)
+         VALUES ('char_uji2', 0, 'netral', 'm_tidak_ada')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menerima ekspresi master bila gambarnya benar-benar tersimpan', async () => {
+    await ctx.db.query(
+      `INSERT INTO characters (character_id, name, position) VALUES ('char_ok', 'Ok', 1)`,
+    );
+    await ctx.db.query(
+      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64)
+       VALUES ('m_uji', 'image/png', 68, 1, 1, 'iVBORw0KGgo=')`,
+    );
+    await expect(
+      ctx.db.query(
+        `INSERT INTO character_expressions (character_id, position, expression, media_id)
+         VALUES ('char_ok', 0, 'netral', 'm_uji')`,
+      ),
+    ).resolves.toBeDefined();
+  });
+
+  it('menolak penagihan dua kali untuk operasi yang sama (FR-52)', async () => {    await ctx.db.query(
       `INSERT INTO operations (operation_id, account_id, kind, state)
        VALUES ('op_sama', 'acc_demo', 'submit_choice', 'running')`,
     );
@@ -335,5 +384,35 @@ describe('kaskade penghapusan', () => {
     ]);
     expect(beats.rows).toHaveLength(0);
     expect(baseline.rows).toHaveLength(0);
+  });
+
+  /**
+   * Kaskade pada master karakter — diuji untuk MENGETAHUI, bukan untuk dipakai.
+   *
+   * `charactersRepository.remove()` membuang baris ekspresi lebih dulu di dalam
+   * satu transaksi, tidak mengandalkan cascade. Uji ini memastikan apakah
+   * cascade benar-benar bekerja di pg-mem; bila tidak, itu justru menegaskan
+   * mengapa kode tidak boleh bergantung padanya.
+   */
+  it('menghapus ekspresi saat karakter master dihapus', async () => {
+    await ctx.db.query(
+      `INSERT INTO characters (character_id, name, position) VALUES ('char_hapus', 'Hapus', 1)`,
+    );
+    await ctx.db.query(
+      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64)
+       VALUES ('m_hapus', 'image/png', 68, 1, 1, 'iVBORw0KGgo=')`,
+    );
+    await ctx.db.query(
+      `INSERT INTO character_expressions (character_id, position, expression, media_id)
+       VALUES ('char_hapus', 0, 'netral', 'm_hapus')`,
+    );
+
+    await ctx.db.query('DELETE FROM characters WHERE character_id = $1', ['char_hapus']);
+
+    const expressions = await ctx.db.query(
+      'SELECT expression FROM character_expressions WHERE character_id = $1',
+      ['char_hapus'],
+    );
+    expect(expressions.rows).toHaveLength(0);
   });
 });

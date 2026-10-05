@@ -13,6 +13,7 @@ import type { PromotionsRepository } from '../promotionsRepository';
 import type { ModelsRepository } from '../modelsRepository';
 import type { WorldDraftRepository } from '../worldDraftRepository';
 import type { GenresRepository } from '../genresRepository';
+import type { CharactersRepository } from '../charactersRepository';
 import type { MediaRepository } from '../../repositories/mediaRepository';
 
 export type AdminPageContext = {
@@ -33,6 +34,15 @@ export type AdminPageContext = {
    * MEMBACA daftarnya; yang menulis adalah halaman Genre.
    */
   genres: GenresRepository;
+  /**
+   * Master karakter — nama dan gambar-gambar ekspresinya.
+   *
+   * Berdiri sendiri dengan alasan yang sama seperti genre: nama dan gambar
+   * ekspresi tidak khas satu dunia, jadi mengubahnya tidak boleh membuat versi
+   * dunia baru. Yang khas dunia (peran, latar belakang, hubungan awal) tetap
+   * tinggal di `world_characters`.
+   */
+  characters: CharactersRepository;
   /** Berkas gambar unggahan; dipakai halaman Aset untuk menghitung pemakaian. */
   media: MediaRepository;
 };

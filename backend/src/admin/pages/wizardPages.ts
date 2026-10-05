@@ -472,9 +472,17 @@ ${
     <span class="spacer"></span>
     <button type="submit">Tambah karakter</button>
   </div>
-</form>
 
-<template data-expression-template>
+  <!--
+    Templat ini HARUS berada di dalam formulir, bukan sesudahnya.
+    Skrip klien mencarinya dengan scope.querySelector, dan scope-nya adalah
+    elemen ber-atribut data-npc-scope di atas. Templat yang menjadi SAUDARA
+    formulir tidak akan ditemukan; fungsinya keluar lebih awal tanpa satu pun
+    galat, dan tombol "+ Tambah ekspresi" hanya diam ketika ditekan — sehingga
+    karakter dengan lebih dari satu ekspresi mustahil dibuat lewat wizard.
+    admin-render.test.ts menjaga letak ini.
+  -->
+  <template data-expression-template>
   <div class="expression-row" data-expression-row data-portrait-scope>
     <div class="expression-row__fields">
       <div class="two">
@@ -494,7 +502,8 @@ ${
     </div>
     <button class="danger" type="button" data-expression-remove>Hapus baris</button>
   </div>
-</template>
+  </template>
+</form>
 
 <form method="post" action="/admin/worlds-wizard/3" class="card">
   <input type="hidden" name="worldId" value="${inputValue(worldId)}">

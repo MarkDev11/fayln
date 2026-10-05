@@ -24,6 +24,7 @@ import { PromotionsRepository } from './admin/promotionsRepository';
 import { SettingsRepository } from './admin/settingsRepository';
 import { WorldDraftRepository } from './admin/worldDraftRepository';
 import { GenresRepository } from './admin/genresRepository';
+import { CharactersRepository } from './admin/charactersRepository';
 import { validatePassword } from './admin/password';
 import type { AdminPageContext } from './admin/pages/context';
 import { parseConfig } from './config';
@@ -111,6 +112,7 @@ async function main(): Promise<void> {
     models: new ModelsRepository(db),
     drafts: new WorldDraftRepository(db),
     genres: new GenresRepository(db),
+    characters: new CharactersRepository(db),
     media: mediaRepository,
   };
 

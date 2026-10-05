@@ -853,6 +853,10 @@ h2 span{font-weight:500}
 .list__meta{color:var(--muted);font-size:12px;line-height:1.45;margin-top:3px}
 .list__side{flex:none;display:flex;align-items:center;gap:14px;color:var(--muted);font-size:12px}
 .list__chev{flex:none;color:var(--muted);display:grid;place-items:center;opacity:.8}
+/* Potret mini pada daftar karakter. Nisbahnya 2:3, sama seperti potret yang
+   diunggah, supaya wajah tidak terpotong di tengah dahi. */
+.list__thumb{flex:none;width:36px;height:54px;object-fit:cover;object-position:top center;
+  border-radius:var(--radius-xs);border:1px solid var(--line);background:var(--field)}
 
 /* ---------------- Tabel ---------------- */
 /*

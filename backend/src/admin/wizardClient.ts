@@ -338,6 +338,18 @@ export const WIZARD_JS = `
 
   function bindExpressionRows(scope) {
     var list = scope.querySelector('[data-expression-list]');
+    /*
+     * Templat dicari DI DALAM scope, bukan di seluruh dokumen.
+     *
+     * Konsekuensinya: templat HARUS berada di dalam elemen ber-atribut scope.
+     * Templat yang diletakkan sebagai saudara formulir tidak akan ditemukan,
+     * dan fungsi ini keluar lebih awal TANPA galat — tombol "+ Tambah ekspresi"
+     * hanya diam. Itu pernah terjadi pada langkah 3 wizard; admin-render.test.ts
+     * kini menjaganya.
+     *
+     * Jangan menulis backtick di dalam berkas ini: seluruh isinya adalah satu
+     * string JavaScript, dan satu backtick memutusnya di tengah kalimat.
+     */
     var template = scope.querySelector('[data-expression-template]');
     var addButton = scope.querySelector('[data-expression-add]');
     if (!list || !template || !addButton) { return; }
@@ -400,7 +412,19 @@ export const WIZARD_JS = `
       bindPreview(scope);
       bindBlur(scope);
     });
-    Array.prototype.forEach.call(document.querySelectorAll('[data-npc-scope]'), bindExpressionRows);
+    /*
+     * Dua nama atribut, satu perilaku.
+     *
+     * data-npc-scope adalah nama asli dari langkah 3 wizard; halaman master
+     * karakter memakai data-expression-scope karena ia tidak berbicara tentang
+     * NPC. Nama lama SENGAJA tidak diganti: mengganti atribut HTML tidak
+     * diperiksa TypeScript, jadi satu tempat yang terlewat berarti tombol yang
+     * diam tanpa galat. Menerima keduanya tidak berbiaya apa pun.
+     */
+    Array.prototype.forEach.call(
+      document.querySelectorAll('[data-npc-scope], [data-expression-scope]'),
+      bindExpressionRows
+    );
     bindUnsavedGuard();
   }
 

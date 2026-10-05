@@ -25,6 +25,7 @@ import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
+import { CharactersRepository } from '../src/admin/charactersRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { hashPassword, verifyPassword } from '../src/admin/password';
@@ -51,6 +52,7 @@ let app: FastifyInstance;
 let admins: AdminRepository;
 let promotions: PromotionsRepository;
 let catalogAdmin: CatalogAdminRepository;
+let characters: CharactersRepository;
 
 const ADMIN_USERNAME = 'operator';
 const ADMIN_PASSWORD = 'kata-sandi-uji-123';
@@ -78,6 +80,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
   admins = new AdminRepository(ctx.db);
   promotions = new PromotionsRepository(ctx.db);
   catalogAdmin = new CatalogAdminRepository(ctx.db);
+  characters = new CharactersRepository(ctx.db);
 
   const pages: AdminPageContext = {
     admins,
@@ -88,6 +91,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     models: new ModelsRepository(ctx.db),
     drafts: new WorldDraftRepository(ctx.db),
     genres: new GenresRepository(ctx.db),
+    characters,
     media: new MediaRepository(ctx.db),
   };
 
@@ -211,6 +215,31 @@ function form(payload: Record<string, string | string[]>): string {
     }
   }
   return parts.join('&');
+}
+
+/** PNG minimal yang cukup untuk dikenali `inspectImage`. */
+function png(width: number, height: number, marker = ''): Buffer {
+  const head = Buffer.alloc(33);
+  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).copy(head, 0);
+  head.writeUInt32BE(13, 8);
+  head.write('IHDR', 12, 'latin1');
+  head.writeUInt32BE(width, 16);
+  head.writeUInt32BE(height, 20);
+  head[24] = 8;
+  head[25] = 6; // RGBA
+  return marker.length > 0 ? Buffer.concat([head, Buffer.from(marker, 'latin1')]) : head;
+}
+
+/** Mengunggah satu berkas gambar dan mengembalikan id medianya. */
+async function upload(cookie: string, bytes: Buffer): Promise<string> {
+  const response = await app.inject({
+    method: 'POST',
+    url: '/admin/media',
+    headers: { cookie, 'content-type': 'image/png' },
+    payload: bytes,
+  });
+  expect(response.statusCode).toBe(200);
+  return response.json().mediaId as string;
 }
 
 beforeEach(async () => {
@@ -946,136 +975,226 @@ describe('CRUD dunia', () => {
 
 /* ------------------------------------------------------------------ */
 
-describe('CRUD karakter', () => {
-  it('menambah karakter dan menaikkan versi dunianya', async () => {
-    const cookie = await login();
-    const worldId = await createWorld(cookie);
-
-    await app.inject({
+/**
+ * Master karakter.
+ *
+ * Berbeda dari uji wizard — yang menguji karakter DI DALAM sebuah versi dunia —
+ * uji di sini menguji karakter sebagai data yang berdiri sendiri: nama dan
+ * gambar-gambar ekspresinya, tanpa dunia. Perilaku "menambah karakter membuat
+ * versi baru dunianya" sudah tidak ada di sini karena memang sudah tidak ada di
+ * produk: itu pekerjaan wizard, dan diujikan di `wizard.test.ts`.
+ */
+describe('master karakter', () => {
+  /** Mengirim formulir master dan mengembalikan URL pengalihannya. */
+  async function createCharacter(
+    cookie: string,
+    name: string,
+    expressions: { name: string; mediaId: string; usage?: string }[],
+  ): Promise<string> {
+    const response = await app.inject({
       method: 'POST',
       url: '/admin/characters',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
       payload: form({
-        worldId,
-        npcId: '',
-        name: 'Sari',
-        role: 'penjaga lentera',
-        publicBackstory: 'Menjaga lentera sejak ayahnya meninggal.',
-        initialRelation: 'normal',
-        defaultPortraitAssetId: 'p_penjaga_netral',
-        traits: 'tenang\ntegas',
-        expressions: 'netral\nlelah',
+        characterId: '',
+        name,
+        expression: expressions.map((item) => item.name),
+        expressionMedia: expressions.map((item) => item.mediaId),
+        expressionUsage: expressions.map((item) => item.usage ?? ''),
       }),
     });
+    expect(response.statusCode).toBe(302);
+    return String(response.headers.location);
+  }
 
-    const characters = await catalogAdmin.listCharacters(worldId);
-    const sari = characters.find((npc) => npc.name === 'Sari');
-    expect(sari).toBeDefined();
-    expect(sari?.traits).toEqual(['tenang', 'tegas']);
-    expect(sari?.expressions).toEqual(['netral', 'lelah']);
+  it('membuat karakter dari nama dan gambar ekspresinya', async () => {
+    const cookie = await login();
+    const netral = await upload(cookie, png(512, 768, 'netral'));
+    const senyum = await upload(cookie, png(512, 768, 'senyum'));
 
-    // Dunia naik versi; karakter hidup di versi baru, bukan menimpa versi lama.
-    const world = await catalogAdmin.findWorld(worldId);
-    expect(world?.worldVersion).toBe(2);
+    const location = await createCharacter(cookie, 'Elysia', [
+      { name: 'netral', mediaId: netral, usage: 'dipakai saat tenang' },
+      { name: 'senyum', mediaId: senyum },
+    ]);
+    expect(location).toContain('notice=created');
+
+    const elysia = (await characters.list()).find((row) => row.name === 'Elysia');
+    expect(elysia).toBeDefined();
+    expect(elysia?.expressions.map((item) => item.expression)).toEqual(['netral', 'senyum']);
+    expect(elysia?.expressions[0]?.mediaId).toBe(netral);
+    expect(elysia?.expressions[0]?.usageNote).toBe('dipakai saat tenang');
+    // Urutan bermakna: ekspresi pertama menjadi potret bawaan.
+    expect(elysia?.expressions.map((item) => item.position)).toEqual([0, 1]);
   });
 
-  it('menyunting karakter tidak menimpa karakter di versi lama', async () => {
+  it('menolak ekspresi yang gambarnya belum diunggah', async () => {
     const cookie = await login();
-    const worldId = await createWorld(cookie);
+    const location = await createCharacter(cookie, 'Tanpa Gambar', [
+      { name: 'netral', mediaId: '' },
+    ]);
+    expect(location).toContain('notice=character-no-expression');
+    expect(await characters.list()).toHaveLength(0);
+  });
 
-    await app.inject({
-      method: 'POST',
-      url: '/admin/characters',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({
-        worldId,
-        npcId: '',
-        name: 'Nama Awal',
-        role: 'peran',
-        publicBackstory: 'latar',
-        initialRelation: 'normal',
-        defaultPortraitAssetId: 'p_penjaga_netral',
-        traits: 'sabar',
-        expressions: 'netral',
-      }),
-    });
+  it('menolak id media yang bentuknya tidak sah, walau barisnya ada', async () => {
+    const cookie = await login();
 
-    const created = (await catalogAdmin.listCharacters(worldId)).find((npc) => npc.name === 'Nama Awal');
+    // Baris ini sengaja disisipkan langsung, meniru baris yang bentuknya salah.
+    // Id media selalu SHA-256 heksadesimal, dan penyaji berkas menolak bentuk
+    // lain — jadi baris seperti ini akan menghasilkan potret yang terpasang di
+    // markup tetapi tidak pernah dapat dimuat. Keberadaannya saja tidak cukup;
+    // bentuknya harus diperiksa.
+    await ctx.db.query(
+      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64)
+       VALUES ('m_bukan_hash', 'image/png', 8, 1, 1, 'iVBORw0KGgo=')`,
+    );
+
+    const location = await createCharacter(cookie, 'Bentuk Salah', [
+      { name: 'netral', mediaId: 'm_bukan_hash' },
+    ]);
+    expect(location).toContain('notice=character-no-expression');
+    expect(await characters.list()).toHaveLength(0);
+  });
+
+  it('menolak dua ekspresi bernama sama, dan menyebut nama yang kembar', async () => {
+    const cookie = await login();
+    const first = await upload(cookie, png(512, 768, 'a'));
+    const second = await upload(cookie, png(512, 768, 'b'));
+
+    // Bedanya HANYA huruf besar-kecil. Dua baris "netral" dan "Netral" tampak
+    // sama bagi pembaca, dan pemilih ekspresi menjadi ambigu — jadi
+    // perbandingannya sengaja tidak membedakan huruf besar-kecil.
+    const location = await createCharacter(cookie, 'Kembar', [
+      { name: 'netral', mediaId: first },
+      { name: 'Netral', mediaId: second },
+    ]);
+    expect(location).toContain('notice=character-duplicate-expression');
+    // Perinciannya menyebut nama yang kembar, bukan sekadar "ada yang kembar".
+    // Yang disebut adalah baris KEDUA — baris yang memperkenalkan kembarnya,
+    // dan itulah baris yang perlu diubah atau dihapus admin.
+    expect(location).toContain('detail=Netral');
+    expect(await characters.list()).toHaveLength(0);
+  });
+
+  it('menolak nama kosong', async () => {
+    const cookie = await login();
+    const media = await upload(cookie, png(512, 768, 'c'));
+    const location = await createCharacter(cookie, '   ', [{ name: 'netral', mediaId: media }]);
+    expect(location).toContain('notice=character-name-invalid');
+    expect(await characters.list()).toHaveLength(0);
+  });
+
+  it('mengganti seluruh daftar ekspresi saat disunting, bukan menumpuknya', async () => {
+    const cookie = await login();
+    const a = await upload(cookie, png(512, 768, 'x'));
+    const b = await upload(cookie, png(512, 768, 'y'));
+
+    await createCharacter(cookie, 'Awal', [{ name: 'netral', mediaId: a }]);
+    const created = (await characters.list())[0];
     expect(created).toBeDefined();
 
-    await app.inject({
+    const response = await app.inject({
       method: 'POST',
       url: '/admin/characters',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
       payload: form({
-        worldId,
-        npcId: created!.npcId,
-        name: 'Nama Sudah Diubah',
-        role: 'peran',
-        publicBackstory: 'latar',
-        initialRelation: 'dekat',
-        defaultPortraitAssetId: 'p_penjaga_netral',
-        traits: 'sabar',
-        expressions: 'netral',
+        characterId: created!.characterId,
+        name: 'Sudah Diubah',
+        expression: ['tenang', 'marah'],
+        expressionMedia: [a, b],
+        expressionUsage: ['', ''],
       }),
     });
+    expect(response.statusCode).toBe(302);
+    expect(String(response.headers.location)).toContain('notice=saved');
 
-    // Versi tempat karakter pertama dibuat tetap memuat nama lama.
-    const { rows } = await ctx.db.query<{ name: string }>(
-      'SELECT name FROM world_characters WHERE world_id = $1 AND world_version = 2 AND npc_id = $2',
-      [worldId, created!.npcId],
+    const list = await characters.list();
+    expect(list).toHaveLength(1);
+    expect(list[0]?.name).toBe('Sudah Diubah');
+    // Daftar lama DIGANTI: 'netral' tidak boleh tersisa di samping yang baru.
+    expect(list[0]?.expressions.map((item) => item.expression)).toEqual(['tenang', 'marah']);
+  });
+
+  it('menghapus karakter beserta baris ekspresinya', async () => {
+    const cookie = await login();
+    const media = await upload(cookie, png(512, 768, 'z'));
+    await createCharacter(cookie, 'Akan Dihapus', [{ name: 'netral', mediaId: media }]);
+
+    const created = (await characters.list())[0];
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/characters/delete',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ characterId: created!.characterId }),
+    });
+    expect(response.statusCode).toBe(302);
+    expect(String(response.headers.location)).toContain('notice=deleted');
+    expect(await characters.list()).toHaveLength(0);
+
+    // Baris ekspresinya ikut hilang — tidak boleh ada sisa yang menunjuk
+    // karakter yang sudah tidak ada.
+    const { rows } = await ctx.db.query<{ total: number }>(
+      'SELECT count(*)::int AS total FROM character_expressions',
     );
-    expect(rows[0]?.name).toBe('Nama Awal');
-
-    const latest = await catalogAdmin.findCharacter(worldId, created!.npcId);
-    expect(latest?.name).toBe('Nama Sudah Diubah');
-    expect(latest?.initialRelation).toBe('dekat');
+    expect(rows[0]?.total).toBe(0);
   });
 
-  it('menolak hubungan awal yang tidak ada dalam daftar', async () => {
+  it('mencatat penghapusan karakter di audit, dengan id karakternya', async () => {
     const cookie = await login();
-    const worldId = await createWorld(cookie);
+    const media = await upload(cookie, png(512, 768, 'audit'));
+    await createCharacter(cookie, 'Beraudit', [{ name: 'netral', mediaId: media }]);
 
+    const created = (await characters.list())[0];
     await app.inject({
       method: 'POST',
-      url: '/admin/characters',
+      url: '/admin/characters/delete',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({
-        worldId,
-        npcId: '',
-        name: 'Karakter Tidak Sah',
-        role: 'peran',
-        publicBackstory: 'latar',
-        initialRelation: 'sangat-mesra',
-        defaultPortraitAssetId: 'p_penjaga_netral',
-      }),
+      payload: form({ characterId: created!.characterId }),
     });
 
-    const characters = await catalogAdmin.listCharacters(worldId);
-    expect(characters.find((npc) => npc.name === 'Karakter Tidak Sah')).toBeUndefined();
+    const { rows } = await ctx.db.query<{ action: string; target_id: string }>(
+      "SELECT action, target_id FROM admin_audit_log WHERE action = 'character.delete'",
+    );
+    expect(rows).toHaveLength(1);
+    // Sasaran audit adalah id KARAKTER, bukan gabungan dunia/karakter seperti
+    // dulu — master karakter tidak hidup di dalam dunia mana pun.
+    expect(rows[0]?.target_id).toBe(created!.characterId);
   });
 
-  it('menolak karakter tanpa potret bawaan', async () => {
+  it('melaporkan karakter yang tidak ada saat dihapus, tanpa membuat baris baru', async () => {
     const cookie = await login();
-    const worldId = await createWorld(cookie);
-
-    await app.inject({
+    const response = await app.inject({
       method: 'POST',
-      url: '/admin/characters',
+      url: '/admin/characters/delete',
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({
-        worldId,
-        npcId: '',
-        name: 'Tanpa Wajah',
-        role: 'peran',
-        publicBackstory: 'latar',
-        initialRelation: 'normal',
-        defaultPortraitAssetId: '',
-      }),
+      payload: form({ characterId: 'char_tidak_pernah_ada' }),
     });
+    expect(response.statusCode).toBe(302);
+    expect(String(response.headers.location)).toContain('notice=not-found');
+    expect(await characters.list()).toHaveLength(0);
+  });
 
-    const characters = await catalogAdmin.listCharacters(worldId);
-    expect(characters.find((npc) => npc.name === 'Tanpa Wajah')).toBeUndefined();
+  it('menyajikan daftar dan formulir master sebagai halaman yang hidup', async () => {
+    const cookie = await login();
+    const media = await upload(cookie, png(512, 768, 'w'));
+    await createCharacter(cookie, 'Tampil', [{ name: 'netral', mediaId: media }]);
+
+    const list = await app.inject({ method: 'GET', url: '/admin/characters', headers: { cookie } });
+    expect(list.statusCode).toBe(200);
+    expect(list.body).toContain('Tampil');
+    expect(list.body).toContain('1 ekspresi');
+
+    const created = (await characters.list())[0];
+    const formPage = await app.inject({
+      method: 'GET',
+      url: `/admin/characters-form?character=${created!.characterId}`,
+      headers: { cookie },
+    });
+    expect(formPage.statusCode).toBe(200);
+    // Baris ekspresi yang sudah ada dirender LENGKAP dengan gambarnya, bukan
+    // sebagai kotak kosong yang menuntut unggahan ulang.
+    expect(formPage.body).toContain(`value="${media}"`);
+    expect(formPage.body).toContain('data-expression-scope');
   });
 });
 
@@ -1918,115 +2037,6 @@ describe('siklus hidup dunia', () => {
     expect(history[1]?.status).toBe('retired');
     expect(history[1]?.title).toBe('Dunia Berversi');
     expect(history[0]?.title).toBe('Dunia Berversi (revisi)');
-  });
-});
-
-/* ------------------------------------------------------------------ */
-
-describe('ubah dan hapus karakter', () => {
-  /** Membuat dunia dan satu karakter di dalamnya. */
-  async function createCharacter(cookie: string, name: string): Promise<{ worldId: string; npcId: string }> {
-    const worldId = await createWorld(cookie, 'Dunia Hapus Karakter');
-    await app.inject({
-      method: 'POST',
-      url: '/admin/characters',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({
-        worldId,
-        npcId: '',
-        name,
-        role: 'peran',
-        publicBackstory: 'latar',
-        initialRelation: 'normal',
-        defaultPortraitAssetId: 'p_penjaga_netral',
-        traits: 'sabar',
-        expressions: 'netral',
-      }),
-    });
-    const npcId = (await catalogAdmin.listCharacters(worldId)).find((npc) => npc.name === name)?.npcId ?? '';
-    return { worldId, npcId };
-  }
-
-  it('membuka formulir karakter dengan isian yang sudah terpasang', async () => {
-    const cookie = await login();
-    const { worldId, npcId } = await createCharacter(cookie, 'Karakter Terpasang');
-
-    const page = await app.inject({
-      method: 'GET',
-      url: `/admin/characters-form?world=${encodeURIComponent(worldId)}&npc=${encodeURIComponent(npcId)}`,
-      headers: { cookie },
-    });
-    expect(page.statusCode).toBe(200);
-    expectRenderedMarkup(page.body, ['Ubah karakter', '<input']);
-    // Isian terpasang dari versi terbaru, bukan kosong.
-    expect(page.body).toContain('value="Karakter Terpasang"');
-    expect(page.body).toContain(`value="${npcId}"`);
-  });
-
-  it('menghapus karakter lewat versi baru tanpa menyentuh versi lama', async () => {
-    const cookie = await login();
-    const { worldId, npcId } = await createCharacter(cookie, 'Karakter Dihapus');
-
-    const before = await catalogAdmin.findWorld(worldId);
-    expect(before?.worldVersion).toBe(2);
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/admin/characters/delete',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, npcId }),
-    });
-    expect(response.statusCode).toBe(302);
-
-    const characters = await catalogAdmin.listCharacters(worldId);
-    expect(characters.find((npc) => npc.npcId === npcId)).toBeUndefined();
-
-    // Versi lama tetap memuat karakternya — itulah janji kepada pemain yang
-    // sedang membaca versi itu.
-    const { rows } = await ctx.db.query<{ name: string }>(
-      'SELECT name FROM world_characters WHERE world_id = $1 AND world_version = 2 AND npc_id = $2',
-      [worldId, npcId],
-    );
-    expect(rows[0]?.name).toBe('Karakter Dihapus');
-
-    const after = await catalogAdmin.findWorld(worldId);
-    expect(after?.worldVersion).toBe(3);
-  });
-
-  it('mencatat penghapusan karakter di audit', async () => {
-    const cookie = await login();
-    const { worldId, npcId } = await createCharacter(cookie, 'Karakter Beraudit');
-
-    await app.inject({
-      method: 'POST',
-      url: '/admin/characters/delete',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, npcId }),
-    });
-
-    const { rows } = await ctx.db.query<{ action: string; target_id: string }>(
-      "SELECT action, target_id FROM admin_audit_log WHERE action = 'character.delete'",
-    );
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.target_id).toBe(`${worldId}/${npcId}`);
-  });
-
-  it('menolak menghapus karakter yang tidak ada tanpa menaikkan versi', async () => {
-    const cookie = await login();
-    const worldId = await createWorld(cookie, 'Dunia Tanpa Karakter');
-    const before = await catalogAdmin.findWorld(worldId);
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/admin/characters/delete',
-      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
-      payload: form({ worldId, npcId: 'npc_tidak_pernah_ada' }),
-    });
-    expect(response.statusCode).toBe(302);
-
-    // Versi tidak boleh naik hanya karena permintaan yang tidak berlaku.
-    const after = await catalogAdmin.findWorld(worldId);
-    expect(after?.worldVersion).toBe(before?.worldVersion);
   });
 });
 

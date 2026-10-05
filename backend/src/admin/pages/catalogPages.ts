@@ -1,5 +1,10 @@
 /**
- * Halaman: dunia dan karakter.
+ * Halaman: dunia.
+ *
+ * Karakter TIDAK lagi ada di berkas ini. Ia dulu hidup di sini sebagai daftar
+ * per dunia, dengan formulir yang menyalin nama dan gambar ke setiap versi.
+ * Sejak karakter menjadi master yang berdiri sendiri, halamannya pindah ke
+ * `characterPages.ts` — dan berkas ini kembali berbicara tentang satu hal saja.
  *
  * Dua hal yang HARUS terlihat admin dari layar ini, bukan dari dokumentasi:
  *
@@ -11,7 +16,6 @@
 
 import type { SafeHtml } from '../html';
 import { CHEVRON, esc, escOr, formatTime, html, inputValue, safe, selected, statusPill, table } from '../html';
-import { RELATION_STATUSES } from '../../contracts/types';
 import { worldStatusLabel, type WorldStatus } from '../catalogAdminRepository';
 import type { AdminPageContext } from './context';
 import { draftResumePanel } from './wizardPages';
@@ -306,159 +310,3 @@ ${deleteCard}
 ${historyCard}`;
 }
 
-export async function charactersList(ctx: AdminPageContext): Promise<SafeHtml> {
-  const worlds = await ctx.catalog.listWorlds();
-
-  const sections = await Promise.all(
-    worlds.map(async (world) => {
-      const characters = await ctx.catalog.listCharacters(world.worldId);
-      const rows = characters.map(
-        (npc) =>
-          html`<tr>
-  <td>
-    <a href="/admin/characters-form?world=${esc(world.worldId)}&npc=${esc(npc.npcId)}">${esc(npc.name)}</a>
-    <div class="muted mono" style="font-size:11px">${npc.npcId}</div>
-  </td>
-  <td>${esc(npc.role)}</td>
-  <td class="muted">${npc.traits.join(', ') || '—'}</td>
-  <td>${statusPill(npc.initialRelation)}</td>
-  <td class="muted mono">${escOr(npc.defaultPortraitAssetId, '—')}</td>
-</tr>`,
-      );
-
-      return html`<h2>${esc(world.title)} <span class="muted" style="text-transform:none;letter-spacing:0">v${String(world.worldVersion)}</span></h2>
-<div class="card">
-  ${table(['Nama', 'Peran', 'Sifat', 'Hubungan awal', 'Potret bawaan'], rows, 'Belum ada karakter di dunia ini.')}
-  <div style="margin-top:14px">
-    <a href="/admin/characters-form?world=${esc(world.worldId)}"><button type="button" class="ghost">Tambah karakter</button></a>
-  </div>
-</div>`;
-    }),
-  );
-
-  return html`<h1>Karakter</h1>
-<p class="sub">
-  Menambah atau mengubah karakter membuat <strong>versi baru</strong> pada dunianya.
-  Versi lama tetap utuh untuk perjalanan yang sedang berjalan.
-</p>
-${worlds.length === 0 ? html`<div class="empty">Belum ada dunia, jadi belum ada karakter.</div>` : sections}`;
-}
-
-export async function charactersForm(
-  ctx: AdminPageContext,
-  worldId: string | null,
-  npcId: string | null,
-): Promise<SafeHtml> {
-  const worlds = await ctx.catalog.listWorlds();
-  if (worlds.length === 0) {
-    return html`<h1>Tidak ada dunia</h1>
-<div class="card"><p>Buat dunia lebih dulu sebelum menambahkan karakter.</p>
-<p><a href="/admin/worlds-new">Buat dunia</a></p></div>`;
-  }
-
-  const activeWorldId = worldId ?? worlds[0]?.worldId ?? '';
-  const world = worlds.find((item) => item.worldId === activeWorldId);
-  const character = npcId && world ? await ctx.catalog.findCharacter(activeWorldId, npcId) : null;
-
-  // Sama seperti di `worldsForm`: kirim LARIK ke `html()`, jangan `.join('')`.
-  const worldOptions = worlds.map(
-    (item) =>
-      `<option value="${inputValue(item.worldId)}"${selected(activeWorldId, item.worldId)}>${esc(
-        item.title,
-      )} (v${String(item.worldVersion)})</option>`,
-  );
-
-  const assets = await ctx.catalog.listAssets();
-  // Potret disaring ke yang memang milik dunia ini bila ada; kalau tidak, semua
-  // potret ditampilkan supaya admin dapat memakai ulang yang sudah ada.
-  const ownPortraits = assets.portraits.filter((_asset) => true);
-  const portraitOptions = ownPortraits.map(
-    (asset) =>
-      `<option value="${inputValue(asset.assetId)}"${selected(character?.defaultPortraitAssetId, asset.assetId)}>${esc(
-        asset.label,
-      )} — ${esc(asset.assetId)}</option>`,
-  );
-
-  const relationOptions = RELATION_STATUSES.map(
-    (relation) =>
-      `<option value="${esc(relation)}"${selected(character?.initialRelation, relation)}>${esc(relation)}</option>`,
-  );
-
-  return html`<h1>${character ? 'Ubah karakter' : 'Karakter baru'}</h1>
-<p class="sub">
-  ${
-    world
-      ? html`Dunia: ${esc(world.title)} · menyimpan akan menaikkan versinya ke v${String(
-          character ? world.worldVersion + 1 : world.worldVersion + 1,
-        )}.`
-      : ''
-  }
-</p>
-<form method="post" action="/admin/characters" class="card">
-  <label><span>Dunia</span>
-    <select name="worldId" required onchange="location.href='/admin/characters-form?world='+encodeURIComponent(this.value)">
-      ${worldOptions}
-    </select>
-  </label>
-  <input type="hidden" name="npcId" value="${inputValue(character?.npcId ?? '')}">
-  <div class="two">
-    <label><span>Nama</span>
-      <input name="name" required maxlength="80" value="${inputValue(character?.name ?? '')}">
-    </label>
-    <label><span>Peran dalam cerita</span>
-      <input name="role" required maxlength="80" placeholder="mis. atasan, sahabat, penjaga"
-             value="${inputValue(character?.role ?? '')}">
-    </label>
-  </div>
-  <label><span>Latar belakang yang boleh diketahui pemain</span>
-    <textarea name="publicBackstory" required maxlength="1200">${esc(character?.publicBackstory ?? '')}</textarea>
-  </label>
-  <div class="two">
-    <label><span>Hubungan awal terhadap pemain</span>
-      <select name="initialRelation">${relationOptions}</select>
-    </label>
-    <label><span>Potret bawaan</span>
-      <select name="defaultPortraitAssetId" required>
-        <option value="">— pilih potret —</option>
-        ${portraitOptions}
-      </select>
-    </label>
-  </div>
-  <label><span>Sifat (satu per baris)</span>
-    <textarea name="traits" placeholder="tenang&#10;tegas">${esc(character?.traits.join('\n') ?? '')}</textarea>
-  </label>
-  <label><span>Ekspresi yang tersedia (satu per baris)</span>
-    <textarea name="expressions" placeholder="netral&#10;tersenyum&#10;kesal">${esc(
-      character?.expressions.join('\n') ?? '',
-    )}</textarea>
-  </label>
-  <div class="row">
-    <button type="submit">Simpan</button>
-    <a href="/admin/characters"><button class="ghost" type="button">Batal</button></a>
-    ${
-      character
-        ? html`<form method="post" action="/admin/characters/delete" class="inline"
-      data-confirm="Hapus karakter “${esc(character.name)}” dari dunia ini? Dunia akan mendapat versi baru tanpa karakter tersebut."
-      data-confirm-title="Hapus karakter"
-      data-confirm-ok="Hapus karakter">
-      <input type="hidden" name="worldId" value="${inputValue(activeWorldId)}">
-      <input type="hidden" name="npcId" value="${inputValue(character.npcId)}">
-      <button class="danger" type="submit">Hapus karakter</button>
-    </form>`
-        : ''
-    }
-  </div>
-</form>
-${
-  character
-    ? html`<h2>Menghapus karakter</h2>
-<div class="card">
-  <p class="sub" style="margin-top:0">
-    Karakter tidak pernah dihapus dari versi yang sedang dipakai pemain.
-    Menghapusnya membuat <strong>versi baru</strong> dunianya tanpa karakter ini,
-    sedangkan versi lama tetap utuh bersama perjalanan yang sudah berjalan.
-  </p>
-</div>`
-    : ''
-}`;
-}

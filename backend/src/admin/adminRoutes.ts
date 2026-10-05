@@ -17,7 +17,8 @@ import type { AdminPageContext } from './pages/context';
 import { accountDetail, accountsList } from './pages/accountPages';
 import { adminsList, type AdminViewer } from './pages/adminPages';
 import { assetsList } from './pages/assetPages';
-import { charactersForm, charactersList, worldsForm, worldsList } from './pages/catalogPages';
+import { charactersForm, charactersList } from './pages/characterPages';
+import { worldsForm, worldsList } from './pages/catalogPages';
 import { auditList, dashboard, settingsList } from './pages/dashboardPages';
 import { locationsList } from './pages/locationPages';
 import { genresList } from './pages/genrePages';
@@ -29,7 +30,8 @@ import type { SafeHtml } from './html';
 import { ACCEPTED_IMAGE_TYPES, inspectImage } from '../media/imageFile';
 import { isMediaId, type MediaRepository } from '../repositories/mediaRepository';
 import { BASE_EXPRESSION, isRelationStatus } from './worldDraftRepository';
-import { esc, html, inputValue, layout, safe } from './html';
+import type { CharacterFailure } from './charactersRepository';
+import { html, inputValue, layout } from './html';
 import { validatePassword, verifyPassword } from './password';
 import {
   clearSessionCookie,
@@ -58,7 +60,7 @@ type AdminPages = {
   worldsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   worldsForm: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
   charactersList: (ctx: AdminPageContext) => Promise<SafeHtml>;
-  charactersForm: (ctx: AdminPageContext, worldId: string | null, npcId: string | null) => Promise<SafeHtml>;
+  charactersForm: (ctx: AdminPageContext, characterId: string | null) => Promise<SafeHtml>;
   accountsList: (ctx: AdminPageContext, query: { search: string }) => Promise<SafeHtml>;
   accountDetail: (ctx: AdminPageContext, accountId: string) => Promise<SafeHtml>;
   modelsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
@@ -184,25 +186,25 @@ const worldBody = z.object({
   locales: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
+/**
+ * Isian master karakter.
+ *
+ * Nama dan gambar ekspresi dikirim sebagai LARIK sejajar: `expression[0]`,
+ * `expressionMedia[0]`, dan `expressionUsage[0]` adalah satu baris yang sama.
+ * Itu cara HTML mengirim beberapa nilai dari satu formulir, dan cara yang sama
+ * dipakai unggahan latar belakang pada wizard.
+ *
+ * `name` sengaja TIDAK wajib di sini. Nama kosong ditolak oleh repositori, yang
+ * dapat mengembalikan sebab yang tepat (`invalid-name`) — sesuatu yang tidak
+ * dapat dilakukan skema Zod tanpa mengubah pesannya menjadi "isian tidak
+ * sesuai" yang tidak menjelaskan apa pun.
+ */
 const characterBody = z.object({
-  worldId: z.string().trim().min(1).max(120),
-  npcId: z.string().optional().default(''),
-  name: z.string().trim().min(1).max(80),
-  role: z.string().trim().min(1).max(80),
-  publicBackstory: z.string().trim().min(1).max(1200),
-  initialRelation: z.enum([
-    'normal',
-    'hangat',
-    'waspada',
-    'tegang',
-    'renggang',
-    'dekat',
-    'sayang',
-    'cinta',
-  ]),
-  defaultPortraitAssetId: z.string().trim().min(1).max(120),
-  traits: z.string().optional(),
-  expressions: z.string().optional(),
+  characterId: z.string().optional().default(''),
+  name: z.string().max(200).optional().default(''),
+  expression: z.union([z.string(), z.array(z.string())]).optional(),
+  expressionMedia: z.union([z.string(), z.array(z.string())]).optional(),
+  expressionUsage: z.union([z.string(), z.array(z.string())]).optional(),
 });
 
 const locationBody = z.object({
@@ -468,18 +470,26 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   // pemilik alamat. Mendaftarkannya dua kali membuat Fastify menolak seluruh
   // aplikasi saat dibangun.
 
+  /*
+   * Halaman master karakter dikirim lewat `sendWizard`, bukan `send`.
+   *
+   * Bukan karena ia bagian dari wizard, melainkan karena keduanya membutuhkan
+   * hal yang sama: potongan gaya dan skrip unggahan. Skrip itulah yang
+   * memperkecil gambar di peramban, mengunggahnya satu per satu, dan mengisi
+   * bidang tersembunyi yang dibaca server.
+   */
   app.get('/admin/characters', async (request, reply) =>
-    send(reply, request, 'Karakter', await pages.charactersList(ctx), 'characters'),
+    sendWizard(reply, request, 'Karakter', await pages.charactersList(ctx), 'characters'),
   );
 
-  app.get<{ Querystring: { world?: string; npc?: string } }>(
+  app.get<{ Querystring: { character?: string } }>(
     '/admin/characters-form',
     async (request, reply) =>
-      send(
+      sendWizard(
         reply,
         request,
         'Karakter',
-        await pages.charactersForm(ctx, request.query.world ?? null, request.query.npc ?? null),
+        await pages.charactersForm(ctx, request.query.character ?? null),
         'characters',
       ),
   );
@@ -640,39 +650,65 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   /* Perubahan: karakter                                               */
   /* ---------------------------------------------------------------- */
 
+  /**
+   * Menyimpan master karakter: nama, lalu seluruh baris ekspresinya.
+   *
+   * Baris ekspresi dibaca sebagai tiga larik sejajar. Indeks yang sama berarti
+   * baris yang sama — jadi larik yang lebih pendek dari yang lain hanya berarti
+   * baris itu tidak lengkap, dan repositori yang memutuskan apa yang terjadi
+   * padanya (dibuang, karena ekspresi tanpa gambar tidak dapat dirender).
+   */
   app.post('/admin/characters', async (request, reply) => {
     const session = request.adminSession;
     const parsed = characterBody.safeParse(request.body);
     if (!parsed.success) {
       return reply.redirect('/admin/characters?notice=invalid-input', 302);
     }
+    const data = parsed.data;
 
-    const result = await ctx.catalog.saveCharacter({
-      worldId: parsed.data.worldId,
-      npcId: parsed.data.npcId || null,
-      name: parsed.data.name,
-      role: parsed.data.role,
-      publicBackstory: parsed.data.publicBackstory,
-      initialRelation: parsed.data.initialRelation,
-      defaultPortraitAssetId: parsed.data.defaultPortraitAssetId,
-      traits: toLines(parsed.data.traits),
-      expressions: toLines(parsed.data.expressions),
-    });
+    const names = toArray(data.expression);
+    const mediaIds = toArray(data.expressionMedia);
+    const usages = toArray(data.expressionUsage);
+
+    const expressions = names.map((expression, index) => ({
+      expression,
+      mediaId: mediaIds[index] ?? '',
+      usageNote: usages[index] ?? '',
+    }));
+
+    const isNew = data.characterId.length === 0;
+    const input = { name: data.name, expressions };
+
+    const result = isNew
+      ? await ctx.characters.create(input)
+      : await ctx.characters.update(data.characterId, input);
+
+    const base = isNew
+      ? '/admin/characters'
+      : `/admin/characters-form?character=${encodeURIComponent(data.characterId)}`;
+
+    if (!result.ok) {
+      return reply.redirect(
+        characterRedirect(base, characterNotice(result.reason), result.detail),
+        302,
+      );
+    }
 
     await admins.recordAudit({
       adminId: session?.adminId ?? null,
       username: session?.username ?? '',
-      action: parsed.data.npcId ? 'character.update' : 'character.create',
+      action: isNew ? 'character.create' : 'character.update',
       targetKind: 'character',
-      targetId: `${parsed.data.worldId}/${result.npcId}`,
-      detail: { worldVersion: result.worldVersion, name: parsed.data.name },
+      targetId: result.characterId,
+      detail: { name: data.name, expressions: expressions.length },
       ipAddress: request.ip,
     });
 
     return reply.redirect(
-      `/admin/characters-form?world=${encodeURIComponent(parsed.data.worldId)}&npc=${encodeURIComponent(result.npcId)}&notice=${
-        result.worldVersion > 1 ? 'saved' : 'created'
-      }`,
+      characterRedirect(
+        `/admin/characters-form?character=${encodeURIComponent(result.characterId)}`,
+        isNew ? 'created' : 'saved',
+      ),
       302,
     );
   });
@@ -680,18 +716,14 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   app.post('/admin/characters/delete', async (request, reply) => {
     const session = request.adminSession;
     const body = z
-      .object({ worldId: z.string().trim().min(1), npcId: z.string().trim().min(1) })
+      .object({ characterId: z.string().trim().min(1) })
       .safeParse(request.body);
     if (!body.success) {
       return reply.redirect('/admin/characters?notice=invalid-input', 302);
     }
 
-    try {
-      // Penghapusan membuat versi baru dunianya — bukan menghapus baris yang
-      // sedang dipakai perjalanan pemain. Versi lama tetap utuh.
-      await ctx.catalog.deleteCharacter(body.data.worldId, body.data.npcId);
-    } catch {
-      // Dunia tanpa versi, atau karakter yang sudah tidak ada di versi terbaru.
+    const result = await ctx.characters.remove(body.data.characterId);
+    if (!result.ok) {
       return reply.redirect('/admin/characters?notice=not-found', 302);
     }
 
@@ -700,7 +732,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       username: session?.username ?? '',
       action: 'character.delete',
       targetKind: 'character',
-      targetId: `${body.data.worldId}/${body.data.npcId}`,
+      targetId: body.data.characterId,
       ipAddress: request.ip,
     });
 
@@ -2000,8 +2032,36 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
       kind: 'error',
       text: 'Dunia ini sudah pernah diterbitkan, jadi tidak dapat disunting lewat wizard.',
     },
+    'character-name-invalid': {
+      kind: 'error',
+      text: 'Nama karakter tidak boleh kosong.',
+    },
+    'character-no-expression': {
+      kind: 'error',
+      // Menyebut SYARATNYA, bukan hanya penolakannya: yang paling sering
+      // terjadi adalah gambar yang belum selesai diunggah saat Simpan ditekan.
+      text:
+        'Setiap ekspresi harus punya gambar. Baris yang gambarnya belum diunggah ' +
+        'tidak ikut tersimpan — tunggu sampai statusnya "Tersimpan", lalu simpan lagi.',
+    },
+    'character-duplicate-expression': {
+      kind: 'error',
+      text:
+        'Ada nama ekspresi yang dipakai lebih dari sekali. Dalam satu karakter, ' +
+        'setiap ekspresi harus punya nama yang berbeda.',
+    },
   };
-  return MAP[raw] ?? null;
+
+  const entry = MAP[raw];
+  if (!entry) {
+    return null;
+  }
+
+  // Perincian opsional, mis. nama ekspresi yang kembar. Nilainya dari query
+  // string, jadi ia diperlakukan sebagai teks biasa — `layout()` meng-escape
+  // seluruh isi notifikasi.
+  const detail = (request.query as { detail?: string } | undefined)?.detail;
+  return detail ? { kind: entry.kind, text: `${entry.text} (${detail})` } : entry;
 }
 
 function renderLogin(request: FastifyRequest, error: string | null): string {
@@ -2034,6 +2094,33 @@ ${error ? html`<div class="notice err">${error}</div>` : ''}
 /* ------------------------------------------------------------------ */
 
 /** Formulir HTML mengirim satu nilai sebagai teks, banyak nilai sebagai larik. */
+/**
+ * URL halaman master dengan notifikasi, beserta perinciannya bila ada.
+ *
+ * Perincian dipakai untuk menyebut hal yang spesifik — mis. nama ekspresi yang
+ * kembar. Tanpa itu, pesannya hanya dapat berkata "ada yang kembar", dan admin
+ * harus mencarinya sendiri di antara baris-baris yang ia ketik.
+ */
+function characterRedirect(base: string, code: string, detail?: string): string {
+  const separator = base.includes('?') ? '&' : '?';
+  const extra = detail ? `&detail=${encodeURIComponent(detail)}` : '';
+  return `${base}${separator}notice=${code}${extra}`;
+}
+
+/** Kode notifikasi untuk tiap sebab penolakan master karakter. */
+function characterNotice(reason: CharacterFailure): string {
+  switch (reason) {
+    case 'invalid-name':
+      return 'character-name-invalid';
+    case 'no-expressions':
+      return 'character-no-expression';
+    case 'duplicate-expression':
+      return 'character-duplicate-expression';
+    case 'not-found':
+      return 'not-found';
+  }
+}
+
 function toArray(value: string | string[] | undefined): string[] {
   if (value === undefined) {
     return [];
@@ -2058,17 +2145,6 @@ function toArray(value: string | string[] | undefined): string[] {
 const LOCALE_SET = new Set(['id-ID', 'en-US']);
 function isLocale(value: string): value is 'id-ID' | 'en-US' {
   return LOCALE_SET.has(value);
-}
-
-/** Memecah textarea menjadi baris tak kosong. */
-function toLines(value: string | undefined): string[] {
-  if (!value) {
-    return [];
-  }
-  return value
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0);
 }
 
 /** Mengurai nilai `<input type="datetime-local">` menjadi Date, atau null. */

@@ -32,9 +32,9 @@ import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
+import { CharactersRepository } from '../src/admin/charactersRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
-import { charactersList } from '../src/admin/pages/catalogPages';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
 import { SettingsRepository } from '../src/admin/settingsRepository';
 import { WorldDraftRepository } from '../src/admin/worldDraftRepository';
@@ -102,6 +102,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     models: new ModelsRepository(ctx.db),
     drafts: new WorldDraftRepository(ctx.db),
     genres: new GenresRepository(ctx.db),
+    characters: new CharactersRepository(ctx.db),
     media: new MediaRepository(ctx.db),
   };
 
@@ -185,6 +186,24 @@ async function sweep(cookie: string, url: string): Promise<string> {
   expect(response.statusCode, `${url} mengembalikan ${response.statusCode}`).toBe(200);
   expectLiveMarkup(response.body, url);
   return response.body;
+}
+
+/**
+ * Isi sebuah formulir, dari tag pembukanya sampai `</form>` pertamanya.
+ *
+ * Dipakai untuk membuktikan letak sebuah potongan DI DALAM formulir — hal yang
+ * tidak dapat dibuktikan oleh pencarian biasa, karena `toContain` juga cocok
+ * untuk potongan yang berada di luar formulir.
+ */
+function formWith(body: string, marker: string): string {
+  const start = body.indexOf(marker);
+  expect(start, `penanda "${marker}" tidak ditemukan di halaman`).toBeGreaterThan(-1);
+  // Penanda berada di dalam tag pembuka; mundur ke awal tag itu.
+  const open = body.lastIndexOf('<form', start);
+  expect(open, `tag <form> sebelum "${marker}" tidak ditemukan`).toBeGreaterThan(-1);
+  const end = body.indexOf('</form>', start);
+  expect(end, `</form> setelah "${marker}" tidak ditemukan`).toBeGreaterThan(-1);
+  return body.slice(open, end);
 }
 
 beforeEach(async () => {
@@ -309,22 +328,84 @@ describe('sapuan render: tidak ada markup yang tampil sebagai teks', () => {
   });
 });
 
-describe('cabang yang hanya aktif saat basis data kosong', () => {
+/**
+ * Pasangan "kosong" dan "ada isi".
+ *
+ * Halaman bersyarat adalah tempat cacat bersembunyi: memeriksa halaman saat
+ * datanya KOSONG tidak membuktikan bahwa daftarnya benar-benar terbentuk saat
+ * ada isi — dan sebaliknya, memeriksa saat ada isi tidak membuktikan cabang
+ * kosongnya hidup. Keduanya karena itu diperiksa berpasangan.
+ */
+describe('master karakter: keadaan kosong dan berisi', () => {
   /**
-   * Halaman karakter tidak menerima parameter kueri: ia selalu memuat seluruh
-   * dunia. Artinya cabang "belum ada dunia" tidak dapat dipicu lewat HTTP pada
-   * basis data yang sudah terseed, dan justru cabang itulah yang pernah salah.
-   * Karena itu fungsinya dipanggil langsung dengan konteks yang dipalsukan.
+   * Menyisipkan satu berkas media agar sebuah ekspresi punya gambar.
+   *
+   * Berkasnya PNG 1×1 yang SAH, dan `byte_size` dihitung dari isinya — bukan
+   * angka yang dikarang. `MediaRepository.readBytes` menolak baris yang
+   * `byte_size`-nya tidak sama dengan panjang isi yang didekode, jadi baris
+   * yang tidak konsisten akan menghasilkan 404 tanpa penjelasan: potretnya
+   * tampak terpasang di markup, tetapi tidak pernah dapat dimuat.
+   *
+   * Hanya baris media-nya yang disiapkan begini; pembuatan karakternya tetap
+   * lewat repositori sungguhan. Jalur unggahannya sendiri sudah diuji di
+   * `admin.test.ts` dan `wizard.test.ts`.
    */
-  it('menghidupkan pesan "belum ada dunia" alih-alih menuliskan tag-nya', async () => {
-    const kosong = {
-      catalog: { listWorlds: async () => [] },
-    } as unknown as AdminPageContext;
+  async function seedMedia(mediaId: string): Promise<void> {
+    const bytes = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8DwHwAFAAH/q842iQAAAABJRU5ErkJggg==',
+      'base64',
+    );
+    await ctx.db.query(
+      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64)
+       VALUES ($1, 'image/png', $2, 1, 1, $3)`,
+      [mediaId, bytes.length, bytes.toString('base64')],
+    );
+  }
 
-    const body = String(await charactersList(kosong));
+  /**
+   * Id media yang sah: SHA-256 heksadesimal, sama seperti hasil unggahan.
+   *
+   * Bentuknya penting. Penyaji berkas menolak bentuk lain, jadi id yang dikarang
+   * bebas akan menghasilkan potret yang terpasang di markup tetapi selalu gagal
+   * dimuat — dan uji yang memakai id karangan tidak akan pernah menangkapnya.
+   */
+  const MEDIA_ID = `${'a1'.repeat(32)}`;
 
-    expect(body).toContain('<div class="empty">Belum ada dunia, jadi belum ada karakter.</div>');
+  it('menampilkan pesan kosong saat belum ada karakter', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/characters');
+
+    expect(body).toContain('Belum ada karakter');
+    // Pesannya harus hidup sebagai elemen, bukan tertulis sebagai tag.
     expect(body).not.toContain('&lt;div');
+    expect(body).not.toContain('class="list__item"');
+  });
+
+  it('menampilkan baris sungguhan beserta jumlah ekspresinya saat ada isi', async () => {
+    const cookie = await login();
+    await seedMedia(MEDIA_ID);
+    await pages.characters.create({
+      name: 'Elysia',
+      expressions: [{ expression: 'netral', mediaId: MEDIA_ID, usageNote: '' }],
+    });
+
+    const body = await sweep(cookie, '/admin/characters');
+
+    expect(body, 'pesan kosong masih tampil padahal ada karakter').not.toContain(
+      'Belum ada karakter',
+    );
+    expect(body).toContain('class="list__item"');
+    expect(body).toContain('Elysia');
+    expect(body).toContain('1 ekspresi');
+    // Potretnya benar-benar dipasang, bukan kotak kosong.
+    expect(body).toContain(`src="/v1/media/${MEDIA_ID}"`);
+
+    // Dan alamat itu benar-benar menyajikan gambar. Tanpa pemeriksaan ini,
+    // markup-nya dapat menunjuk berkas yang tidak pernah dapat dimuat — cacat
+    // yang hanya terlihat sebagai potret rusak di layar admin.
+    const image = await app.inject({ method: 'GET', url: `/v1/media/${MEDIA_ID}` });
+    expect(image.statusCode, 'potret yang dipasang daftar tidak dapat dimuat').toBe(200);
+    expect(image.headers['content-type']).toBe('image/png');
   });
 });
 
@@ -565,6 +646,69 @@ describe('sheet konfirmasi', () => {
 
     const body = await sweep(cookie, '/admin/genres');
     expect(body).toMatch(/data-confirm="Hapus genre “[^”]+”\?/);
+  });
+});
+
+/**
+ * Cacat yang tidak melempar galat dan tidak terlihat pada tangkapan layar.
+ *
+ * Skrip unggahan mencari templat baris lewat `scope.querySelector`, dengan
+ * `scope` adalah elemen ber-`data-*-scope`. Templat yang diletakkan sebagai
+ * SAUDARA formulir tidak akan pernah ditemukan; fungsinya keluar lebih awal
+ * tanpa satu pun galat, dan tombol "+ Tambah ekspresi" hanya diam ketika
+ * ditekan. Halaman tetap sah, uji "tidak ada tag hidup" tetap lulus, dan
+ * tangkapan layarnya tampak normal — yang hilang hanya kemampuan menambah
+ * ekspresi kedua, sehingga karakter berekspresi banyak mustahil dibuat.
+ */
+describe('templat baris ekspresi berada di dalam formulirnya', () => {
+  it('pada wizard langkah 3', async () => {
+    const cookie = await login();
+    const { worldId } = await pages.drafts.createDraft();
+    const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/3`);
+
+    const form = formWith(body, 'data-npc-scope');
+    expect(form, 'daftar ekspresi berada di luar formulir').toContain('data-expression-list');
+    expect(form, 'tombol tambah ekspresi berada di luar formulir').toContain('data-expression-add');
+    expect(
+      form,
+      'templat ekspresi berada di luar formulir — tombol "+ Tambah ekspresi" tidak akan bekerja',
+    ).toContain('data-expression-template');
+  });
+
+  it('pada halaman master karakter', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/characters-form');
+
+    // Halaman master memakai atribut scope yang berbeda dari wizard, jadi ia
+    // harus diuji sendiri — skrip unggahan menerima keduanya.
+    const form = formWith(body, 'data-expression-scope');
+    expect(form, 'daftar ekspresi berada di luar formulir').toContain('data-expression-list');
+    expect(form, 'tombol tambah ekspresi berada di luar formulir').toContain('data-expression-add');
+    expect(
+      form,
+      'templat ekspresi berada di luar formulir — tombol "+ Tambah ekspresi" tidak akan bekerja',
+    ).toContain('data-expression-template');
+  });
+
+  it('memuat skrip unggahan di halaman master', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/characters-form');
+
+    // Tanpa skrip ini, memilih berkas tidak mengunggah apa pun dan bidang
+    // tersembunyinya tetap kosong. Halaman tetap tampak benar; yang terjadi
+    // hanyalah Simpan menolak karena tidak ada gambar.
+    expect(body, 'skrip unggahan tidak ikut dimuat').toContain("'/admin/media'");
+    expect(body, 'kolom unggahan tidak dirender').toContain('data-upload="portrait"');
+    expect(body, 'bidang tersembunyi id media tidak dirender').toContain('data-portrait-media');
+  });
+
+  it('menghidupkan pesan "tidak ditemukan" saat id karakter tidak ada', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/characters-form?character=char_tidak_ada');
+
+    expect(body).toContain('Tidak ditemukan');
+    expect(body).toContain('Kembali ke daftar karakter');
+    expect(body).not.toContain('&lt;div');
   });
 });
 
