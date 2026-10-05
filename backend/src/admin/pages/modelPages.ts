@@ -30,6 +30,7 @@ import { CHEVRON, esc, escOr, formatTime, html, inputValue, pill, safe, selected
 import { formatNumber } from './dashboardPages';
 import { API_TYPES, API_TYPE_LABELS, type ProviderRow } from '../providersRepository';
 import { resolvedModelId, type ModelConfigRow } from '../modelsRepository';
+import { secretsKeyConfigured } from '../secretBox';
 import type { AdminPageContext } from './context';
 
 /* ------------------------------------------------------------------ */
@@ -50,6 +51,11 @@ type FieldBase = {
   hint: string | SafeHtml;
   required?: boolean;
 };
+
+/** Apakah variabel lingkungan yang disebut benar-benar terpasang. */
+function isKeySet(provider: ProviderRow): boolean {
+  return provider.keySource === 'env';
+}
 
 /** Bantuan selalu ber-id dan ditunjuk `aria-describedby` oleh kontrolnya. */
 function hintFor(id: string, hint: string | SafeHtml, required: boolean | undefined): SafeHtml {
@@ -131,8 +137,8 @@ function checkboxField(
 
 export async function providersList(ctx: AdminPageContext): Promise<SafeHtml> {
   const providers = await ctx.providers.list();
-  const missingKey = providers.filter((row) => row.apiKeyEnv.length === 0).length;
-  const notSet = providers.filter((row) => row.apiKeyEnv.length > 0 && !row.keyPresent).length;
+  const missingKey = providers.filter((row) => !row.keyPresent).length;
+  const notSet = missingKey;
 
   const rows = providers.map(
     (provider, index) =>
@@ -197,18 +203,18 @@ ${
 ${
     missingKey > 0
       ? html`<div class="notice err" style="margin-top:18px">
-  Ada provider yang belum menyebut <strong>nama variabel lingkungan</strong> untuk kuncinya.
-  Provider seperti itu belum dapat dipanggil.
+  Ada provider yang belum punya kunci — baik tersimpan maupun lewat variabel
+  lingkungan. Provider seperti itu belum dapat dipanggil.
 </div>`
       : ''
   }
 
 <div class="notice err" style="margin-top:18px">
-  <strong>Kunci API tidak disimpan di basis data.</strong> Yang disimpan hanya
-  <strong>nama variabel lingkungannya</strong>, dan panel memeriksa apakah variabel itu
-  terpasang tanpa pernah menampilkan nilainya. Cadangan malam menyimpan isi basis data,
-  dan panel ini punya peran <span class="mono">support</span> — rahasia tidak boleh ada
-  di keduanya.
+  Kunci API yang disimpan <strong>dienkripsi</strong> dengan kunci yang hidup di variabel
+  lingkungan <span class="mono">FAYLN_SECRETS_KEY</span> — bukan di basis data dan bukan
+  di repositori. Nilainya <strong>tidak pernah ditampilkan lagi</strong> setelah disimpan,
+  dan tidak pernah masuk catatan audit. Kalau variabel itu hilang, seluruh kunci tersimpan
+  tidak terbaca; perlakukan ia seperti kunci brankas.
 </div>`;
 }
 
@@ -220,16 +226,29 @@ ${
  * yang pertama menjadi "belum siap" akan menyembunyikan hal yang justru perlu
  * ditindaklanjuti admin.
  */
+/**
+ * Penanda keadaan kunci.
+ *
+ * Tiga keadaan, dan ketiganya berbeda artinya: tersimpan terenkripsi, diambil
+ * dari variabel lingkungan, dan tidak ada sama sekali. Menggabungkan dua yang
+ * pertama menjadi "siap" akan menutupi hal yang perlu diketahui saat kunci
+ * tiba-tiba tidak bisa dipakai — dari mana asalnya menentukan ke mana harus
+ * mencari.
+ */
 function keyBadge(provider: ProviderRow): SafeHtml {
-  if (provider.apiKeyEnv.length === 0) {
-    return pill('belum disebut', 'off');
+  if (provider.keySource === 'stored') {
+    return html`${pill('tersimpan', 'ok')}
+    <div class="muted" style="font-size:11px;margin-top:4px">terenkripsi</div>`;
   }
-  if (!provider.keyPresent) {
+  if (provider.keySource === 'env') {
+    return html`${pill('lingkungan', 'ok')}
+    <div class="muted mono" style="font-size:11px;margin-top:4px">${esc(provider.apiKeyEnv)}</div>`;
+  }
+  if (provider.apiKeyEnv.length > 0) {
     return html`${pill('variabel kosong', 'draft')}
     <div class="muted mono" style="font-size:11px;margin-top:4px">${esc(provider.apiKeyEnv)}</div>`;
   }
-  return html`${pill('terpasang', 'ok')}
-  <div class="muted mono" style="font-size:11px;margin-top:4px">${esc(provider.apiKeyEnv)}</div>`;
+  return pill('belum ada', 'off');
 }
 
 export async function providerForm(
@@ -242,6 +261,10 @@ export async function providerForm(
 <div class="card"><p>Provider <span class="mono">${esc(providerId)}</span> tidak terdaftar.</p>
 <p><a href="/admin/providers">Kembali ke daftar provider</a></p></div>`;
   }
+
+  // Tanpa kunci enkripsi, bidang kunci tidak ditawarkan sama sekali — lebih
+  // baik tidak bisa menyimpan daripada menyimpan tanpa enkripsi.
+  const secretsReady = secretsKeyConfigured();
 
   return html`<h1>${provider ? 'Ubah provider' : 'Provider baru'}</h1>
 <p class="sub">
@@ -296,11 +319,53 @@ export async function providerForm(
     value: provider?.baseUrl ?? '',
   })}
 
+  ${
+    secretsReady
+      ? html`${textField({
+          id: 'p-api-key',
+          name: 'apiKey',
+          label: 'Kunci API',
+          type: 'password',
+          /*
+           * Nilainya SENGAJA tidak pernah diisi kembali. Bidang sandi yang
+           * berisi nilai lama mengirimkannya ke mana-mana: ke DOM, ke riwayat
+           * peramban, dan ke tangkapan layar. Yang ditampilkan hanya keadaannya.
+           */
+          hint: html`Dienkripsi sebelum disimpan, dan <strong>tidak pernah ditampilkan lagi</strong>. Kosongkan bila hanya mengubah hal lain.`,
+          placeholder: provider?.hasStoredKey ? 'biarkan kosong bila tidak diganti' : 'mis. sk-…',
+          maxlength: 2000,
+          value: '',
+        })}`
+      : html`<div class="notice err" style="margin-bottom:20px">
+  Kunci API belum dapat disimpan karena <span class="mono">FAYLN_SECRETS_KEY</span> belum
+  terpasang di lingkungan server. Tanpa itu kunci tidak dapat dienkripsi — dan
+  menyimpannya tanpa enkripsi lebih buruk daripada tidak menyimpannya sama
+  sekali. Sementara ini pakai nama variabel lingkungan di bawah.
+</div>`
+  }
+
+  ${
+    provider?.hasStoredKey
+      ? html`<div class="notice ok" style="margin:-8px 0 20px">
+  Kunci tersimpan <strong>terenkripsi</strong>. Nilainya tidak ditampilkan di mana pun.
+</div>
+<div class="row" style="margin:-8px 0 20px">
+  <form method="post" action="/admin/providers/key/delete" class="inline"
+        data-confirm="Hapus kunci tersimpan untuk “${esc(provider.name)}”? Provider ini tidak dapat dipanggil sampai kunci baru diisi."
+        data-confirm-title="Hapus kunci API"
+        data-confirm-ok="Hapus kunci">
+    <input type="hidden" name="providerId" value="${inputValue(provider.providerId)}">
+    <button class="danger" type="submit">Hapus kunci</button>
+  </form>
+</div>`
+      : ''
+  }
+
   ${textField({
     id: 'p-key-env',
     name: 'apiKeyEnv',
-    label: 'Nama variabel kunci API',
-    hint: 'NAMA variabel lingkungan, bukan kuncinya. Huruf besar dan garis bawah.',
+    label: 'Nama variabel kunci API (opsional)',
+    hint: 'Bila Anda lebih suka kunci tetap di lingkungan server dan tidak tersimpan di sini. Huruf besar dan garis bawah. Kunci yang tersimpan di atas menang bila keduanya ada.',
     placeholder: 'mis. OPENAI_API_KEY',
     maxlength: 120,
     mono: true,
@@ -308,10 +373,10 @@ export async function providerForm(
   })}
 
   ${
-    provider && provider.apiKeyEnv.length > 0
-      ? html`<div class="notice ${provider.keyPresent ? 'ok' : 'err'}" style="margin:-8px 0 20px">
+    provider && provider.apiKeyEnv.length > 0 && provider.keySource !== 'stored'
+      ? html`<div class="notice ${isKeySet(provider) ? 'ok' : 'err'}" style="margin:-8px 0 20px">
   Variabel <span class="mono">${esc(provider.apiKeyEnv)}</span>
-  ${provider.keyPresent ? 'terpasang.' : 'belum terpasang di lingkungan server.'}
+  ${isKeySet(provider) ? 'terpasang.' : 'belum terpasang di lingkungan server.'}
 </div>`
       : ''
   }

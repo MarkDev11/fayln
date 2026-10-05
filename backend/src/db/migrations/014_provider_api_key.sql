@@ -1,0 +1,34 @@
+-- Menyimpan kunci API provider, terenkripsi.
+--
+-- ---------------------------------------------------------------------------
+-- MENGAPA KOLOM INI ADA
+-- ---------------------------------------------------------------------------
+-- Awalnya kunci API sengaja TIDAK disimpan: yang disimpan hanya nama variabel
+-- lingkungannya (`api_key_env`). Alasannya kuat — rahasia tidak masuk basis
+-- data yang isinya dapat dibaca panel, dan tidak masuk cadangan malam.
+--
+-- Tetapi ada harga yang dibayar: mengganti kunci API harus lewat pengaturan
+-- platform, bukan lewat panel. Untuk operator yang mengelola beberapa provider
+-- sekaligus, itu berarti panel kehilangan separuh gunanya. Pemilik produk
+-- memilih kenyamanan itu, jadi kuncinya disimpan — TETAPI DIENKRIPSI.
+--
+-- ---------------------------------------------------------------------------
+-- YANG TIDAK BOLEH TERJADI
+-- ---------------------------------------------------------------------------
+-- 1. NILAINYA TIDAK PERNAH DIKEMBALIKAN KE PANEL. Yang ditampilkan hanya "ada"
+--    atau "tidak ada". Tidak ada satu pun halaman yang mengisinya kembali ke
+--    sebuah input, dan tidak ada satu pun baris audit yang mencatatnya.
+-- 2. KUNCI ENKRIPSINYA TIDAK ADA DI SINI. Ia hidup di variabel lingkungan
+--    `FAYLN_SECRETS_KEY`. Tanpa itu, nilai kolom ini tidak terbaca oleh siapa
+--    pun — termasuk kita.
+-- 3. `api_key_env` TETAP ADA. Kedua cara boleh dipakai, dan yang tersimpan
+--    menang bila keduanya ada. Menghapus kolom lama akan membatalkan
+--    konfigurasi siapa pun yang sudah memilihnya.
+--
+-- Catatan: `NOT NULL DEFAULT ''` dipakai karena baris provider yang SUDAH ADA
+-- belum punya nilai untuk kolom ini. Tanpa nilai bawaan, `NOT NULL` akan
+-- ditolak pada tabel yang tidak kosong — dan itu berlaku di PostgreSQL
+-- sungguhan maupun pg-mem. (pg-mem sendiri mendukung
+-- `ALTER COLUMN ... SET NOT NULL`; lihat migrasi 012.)
+
+ALTER TABLE providers ADD COLUMN api_key_enc text NOT NULL DEFAULT '';

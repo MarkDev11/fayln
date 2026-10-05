@@ -43,6 +43,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Database } from '../db/pool';
+import { decryptSecret, encryptSecret, SecretsUnavailableError } from './secretBox';
 
 export const MAX_PROVIDER_NAME = 120;
 export const MAX_PREFIX = 32;
@@ -86,8 +87,17 @@ export type ProviderRow = {
   updatedAt: Date | string;
   /** Berapa model yang menunjuk provider ini. */
   modelCount: number;
-  /** Apakah variabel lingkungan itu benar-benar terpasang saat ini. */
+  /** Apakah ada kunci tersimpan (terenkripsi) untuk provider ini. */
+  hasStoredKey: boolean;
+  /**
+   * Apakah variabel lingkungan itu benar-benar terpasang.
+   *
+   * Dihitung dari nama variabelnya saja; nilainya tidak pernah dibaca untuk
+   * keperluan tampilan.
+   */
   keyPresent: boolean;
+  /** Dari mana kunci yang dipakai nanti berasal. */
+  keySource: 'stored' | 'env' | 'none';
 };
 
 export type ProviderInput = {
@@ -96,6 +106,14 @@ export type ProviderInput = {
   apiType: string;
   baseUrl: string;
   apiKeyEnv: string;
+  /**
+   * Kunci API yang akan disimpan terenkripsi.
+   *
+   * Nilai ini hanya masuk ke `encryptSecret()` dan tidak pernah disimpan
+   * apa adanya, tidak pernah dikembalikan, dan tidak pernah dicatat. Kosong
+   * berarti "jangan ubah kunci yang sudah ada".
+   */
+  apiKey?: string;
   isActive: boolean;
   notes: string;
 };
@@ -108,6 +126,15 @@ export type ProviderFailure =
   | 'invalid-api-type'
   | 'invalid-base-url'
   | 'invalid-key-env'
+  /**
+   * Kunci enkripsi belum terpasang di lingkungan server.
+   *
+   * Ditolak, bukan disimpan apa adanya: menyimpan kunci tanpa enkripsi karena
+   * "konfigurasinya belum lengkap" akan menghasilkan rahasia terbaca yang
+   * tampak sah, dan tidak ada yang akan tahu sampai suatu saat basis datanya
+   * tersalin ke tempat lain.
+   */
+  | 'secrets-unavailable'
   | 'not-found'
   | 'in-use';
 
@@ -124,6 +151,11 @@ type Prepared = {
   isActive: boolean;
   notes: string;
 };
+
+/** Hasil `sealKey()`: kunci terenkripsi, "tidak diubah", atau ditolak. */
+type SealedKey =
+  | { ok: true; value: string | null }
+  | { ok: false; reason: 'secrets-unavailable' };
 
 export class ProvidersRepository {
   constructor(private readonly db: Database) {}
@@ -143,13 +175,14 @@ export class ProvidersRepository {
       api_type: string;
       base_url: string;
       api_key_env: string;
+      api_key_enc: string;
       position: number;
       is_active: boolean;
       notes: string;
       created_at: Date | string;
       updated_at: Date | string;
     }>(
-      `SELECT provider_id, name, prefix, api_type, base_url, api_key_env,
+      `SELECT provider_id, name, prefix, api_type, base_url, api_key_env, api_key_enc,
               position, is_active, notes, created_at, updated_at
        FROM providers
        ORDER BY position ASC, provider_id ASC`,
@@ -176,7 +209,9 @@ export class ProvidersRepository {
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       modelCount: byProvider.get(row.provider_id) ?? 0,
-      keyPresent: isKeyPresent(row.api_key_env),
+      hasStoredKey: row.api_key_enc.length > 0,
+      keyPresent: row.api_key_enc.length > 0 || isKeyPresent(row.api_key_env),
+      keySource: keySourceOf(row.api_key_enc, row.api_key_env),
     }));
   }
 
@@ -196,15 +231,20 @@ export class ProvidersRepository {
       return prepared;
     }
 
+    const sealed = this.sealKey(input.apiKey);
+    if (!sealed.ok) {
+      return sealed;
+    }
+
     const providerId = newProviderId();
     const { rows } = await this.db.query<{ next_position: number }>(
       'SELECT coalesce(max(position), 0)::int + 1 AS next_position FROM providers',
     );
     await this.db.query(
       `INSERT INTO providers (
-         provider_id, name, prefix, api_type, base_url, api_key_env,
+         provider_id, name, prefix, api_type, base_url, api_key_env, api_key_enc,
          position, is_active, notes
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         providerId,
         prepared.name,
@@ -212,6 +252,7 @@ export class ProvidersRepository {
         prepared.apiType,
         prepared.baseUrl,
         prepared.apiKeyEnv,
+        sealed.value ?? '',
         rows[0]?.next_position ?? 1,
         prepared.isActive,
         prepared.notes,
@@ -235,6 +276,11 @@ export class ProvidersRepository {
       return prepared;
     }
 
+    const sealed = this.sealKey(input.apiKey);
+    if (!sealed.ok) {
+      return sealed;
+    }
+
     const { rowCount } = await this.db.query(
       `UPDATE providers SET
          name = $2, prefix = $3, api_type = $4, base_url = $5,
@@ -252,9 +298,84 @@ export class ProvidersRepository {
       ],
     );
 
+    if (rowCount === 0) {
+      return { ok: false, reason: 'not-found' };
+    }
+
+    // Kuncinya hanya ditulis bila benar-benar diisi. Bidang yang dibiarkan
+    // kosong pada formulir berarti "pertahankan yang sudah ada" — bukan
+    // "hapus kuncinya", karena menghapusnya butuh aksi tersendiri yang
+    // disengaja.
+    if (sealed.value !== null) {
+      await this.db.query(
+        'UPDATE providers SET api_key_enc = $2, updated_at = now() WHERE provider_id = $1',
+        [providerId, sealed.value],
+      );
+    }
+
+    return { ok: true, providerId };
+  }
+
+  /**
+   * Menghapus kunci tersimpan tanpa menyentuh kolom lain.
+   *
+   * Aksi tersendiri, bukan efek samping menyimpan formulir: menghapus kunci
+   * berarti provider itu tidak dapat dipanggil lagi, dan itu keputusan yang
+   * harus disengaja.
+   */
+  async clearKey(providerId: string): Promise<ProviderResult> {
+    const { rowCount } = await this.db.query(
+      `UPDATE providers SET api_key_enc = '', updated_at = now() WHERE provider_id = $1`,
+      [providerId],
+    );
     return rowCount > 0
       ? { ok: true, providerId }
       : { ok: false, reason: 'not-found' };
+  }
+
+  /**
+   * Kunci API yang dipakai memanggil provider ini.
+   *
+   * Dipanggil JALUR CERITA sesaat sebelum permintaan dikirim — bukan panel,
+   * dan hasilnya tidak boleh berakhir di HTML mana pun. Yang tersimpan menang;
+   * bila kosong, jatuh ke variabel lingkungan yang disebutkan.
+   */
+  async apiKeyFor(providerId: string): Promise<string | null> {
+    const provider = await this.find(providerId);
+    if (!provider) {
+      return null;
+    }
+
+    if (provider.hasStoredKey) {
+      const { rows } = await this.db.query<{ api_key_enc: string }>(
+        'SELECT api_key_enc FROM providers WHERE provider_id = $1',
+        [providerId],
+      );
+      return decryptSecret(rows[0]?.api_key_enc ?? '');
+    }
+
+    const raw = process.env[provider.apiKeyEnv];
+    return typeof raw === 'string' && raw.trim().length > 0 ? raw.trim() : null;
+  }
+
+  /**
+   * Mengenkripsi kunci baru, atau `null` bila tidak ada yang diubah.
+   *
+   * Gagal bila kunci enkripsi belum terpasang di lingkungan — dan itu
+   * DITOLAK, bukan dibiarkan tersimpan apa adanya.
+   */
+  private sealKey(raw: string | undefined): SealedKey {
+    if (raw === undefined || raw.length === 0) {
+      return { ok: true, value: null };
+    }
+    try {
+      return { ok: true, value: encryptSecret(raw) };
+    } catch (error) {
+      if (error instanceof SecretsUnavailableError) {
+        return { ok: false, reason: 'secrets-unavailable' };
+      }
+      throw error;
+    }
   }
 
   /**
@@ -365,6 +486,24 @@ export class ProvidersRepository {
       notes: clamp(input.notes ?? '', MAX_PROVIDER_NOTES),
     };
   }
+}
+
+/**
+ * Dari mana kunci yang akan dipakai berasal.
+ *
+ * Tiga keadaan, dan halaman menampilkannya berbeda: kunci tersimpan (siap
+ * dipanggil), kunci dari variabel lingkungan (juga siap), dan tidak ada sama
+ * sekali (belum bisa dipanggil). Menyatukan dua yang pertama akan menutupi
+ * perbedaan yang perlu diketahui saat ada masalah.
+ */
+function keySourceOf(encrypted: string, envName: string): 'stored' | 'env' | 'none' {
+  if (encrypted.length > 0) {
+    return 'stored';
+  }
+  if (isKeyPresent(envName)) {
+    return 'env';
+  }
+  return 'none';
 }
 
 /**

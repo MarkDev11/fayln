@@ -35,6 +35,7 @@ import { GenresRepository } from '../src/admin/genresRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ProvidersRepository } from '../src/admin/providersRepository';
+import { SECRETS_KEY_ENV } from '../src/admin/secretBox';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
@@ -1095,5 +1096,69 @@ describe('provider: keadaan kosong dan berisi', () => {
     expect(body).toContain('Tidak ditemukan');
     expect(body).toContain('Kembali ke daftar provider');
     expect(body).not.toContain('&lt;div');
+  });
+
+  /**
+   * Kunci tersimpan tidak boleh kembali ke HTML — dalam bentuk apa pun.
+   *
+   * Dua kebocoran yang mungkin, dan keduanya tampak wajar kalau tidak dijaga:
+   * mengisi kembali nilai aslinya ke input (supaya admin "tidak perlu
+   * mengetik ulang"), atau menaruh teks tersandinya di atribut untuk keperluan
+   * pengembangan. Yang pertama membocorkan rahasia ke halaman, yang kedua
+   * membocorkannya ke siapa pun yang dapat membuka halaman itu dan memegang
+   * kunci enkripsinya.
+   */
+  it('tidak pernah mengembalikan kunci tersimpan ke halaman', async () => {
+    const cookie = await login();
+    const semula = process.env[SECRETS_KEY_ENV];
+    process.env[SECRETS_KEY_ENV] = Buffer.from('0123456789abcdef0123456789abcdef').toString(
+      'base64',
+    );
+
+    try {
+      const KUNCI = 'sk-RAHASIA-yang-tidak-boleh-tampil';
+      const created = await pages.providers.create({
+        name: 'Dengan Kunci',
+        prefix: 'kunci',
+        apiType: 'chat-completions',
+        baseUrl: 'https://kunci.example.test/v1',
+        apiKeyEnv: '',
+        apiKey: KUNCI,
+        isActive: true,
+        notes: '',
+      });
+      expect(created.ok, 'provider uji gagal dibuat').toBe(true);
+
+      const { rows } = await ctx.db.query<{ api_key_enc: string }>(
+        'SELECT api_key_enc FROM providers',
+      );
+      const tersandi = rows[0]?.api_key_enc ?? '';
+      expect(tersandi, 'kuncinya tidak tersimpan').not.toBe('');
+
+      const form = await sweep(
+        cookie,
+        `/admin/providers-form?provider=${(created as { providerId: string }).providerId}`,
+      );
+      const list = await sweep(cookie, '/admin/providers');
+
+      for (const [nama, body] of [
+        ['formulir', form],
+        ['daftar', list],
+      ] as [string, string][]) {
+        expect(body, `nilai asli kunci tampil di ${nama}`).not.toContain(KUNCI);
+        expect(body, `teks tersandi tampil di ${nama}`).not.toContain(tersandi);
+      }
+
+      // Bidangnya tetap ada — tetapi kosong dan bertipe password, jadi tidak ada
+      // yang dapat membacanya dari layar.
+      expect(form, 'bidang kunci tidak dirender').toMatch(/type="password"/);
+      expect(form, 'halaman menyatakan kuncinya tersimpan').toContain('Kunci tersimpan');
+    } finally {
+      if (semula === undefined) {
+        delete process.env[SECRETS_KEY_ENV];
+      } else {
+        process.env[SECRETS_KEY_ENV] = semula;
+      }
+    }
   });
 });

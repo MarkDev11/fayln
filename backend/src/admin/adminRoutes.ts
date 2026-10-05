@@ -282,6 +282,12 @@ const providerBody = z.object({
   prefix: z.string().max(60).optional().default(''),
   apiType: z.string().max(40).optional().default(''),
   baseUrl: z.string().max(300).optional().default(''),
+  /*
+   * Kunci API dikirim sekali dan langsung dienkripsi. Batasnya longgar karena
+   * panjang kunci berbeda-beda per penyedia; yang memeriksa kebenarannya
+   * bukan panel, melainkan panggilan pertamanya nanti.
+   */
+  apiKey: z.string().max(2000).optional().default(''),
   apiKeyEnv: z.string().max(120).optional().default(''),
   notes: z.string().max(300).optional().default(''),
   isActive: z.union([z.literal('on'), z.literal('true'), z.undefined()]).optional(),
@@ -1877,6 +1883,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       prefix: data.prefix,
       apiType: data.apiType,
       baseUrl: data.baseUrl,
+      apiKey: data.apiKey,
       apiKeyEnv: data.apiKeyEnv,
       isActive: data.isActive !== undefined,
       notes: data.notes,
@@ -1906,14 +1913,45 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       targetKind: 'provider',
       targetId: result.providerId,
       /*
-       * NAMA variabel kuncinya boleh masuk catatan; NILAI kuncinya tidak pernah
-       * menyentuh berkas ini sama sekali, jadi tidak mungkin ikut tercatat.
+       * Sengaja TIDAK mencatat apa pun tentang kuncinya — bahkan tidak panjangnya,
+       * dan tidak juga "apakah diisi". Catatan audit dapat dibaca peran `support`,
+       * dan jejak paling kecil sekalipun (mis. "kunci diganti pada 14:02") masih
+       * mengatakan sesuatu tentang rahasia yang tidak seharusnya ia ketahui.
        */
-      detail: { prefix: data.prefix, apiType: data.apiType, apiKeyEnv: data.apiKeyEnv },
+      detail: { prefix: data.prefix, apiType: data.apiType },
       ipAddress: request.ip,
     });
 
     return reply.redirect('/admin/providers?notice=saved', 302);
+  });
+
+  app.post('/admin/providers/key/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z.object({ providerId: z.string().trim().min(1) }).safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/providers?notice=invalid-input', 302);
+    }
+
+    const result = await ctx.providers.clearKey(body.data.providerId);
+    if (!result.ok) {
+      // `clearKey` hanya dapat gagal karena barisnya tidak ada.
+      const base = `/admin/providers-form?provider=${encodeURIComponent(body.data.providerId)}`;
+      return reply.redirect(noticeRedirect(base, 'not-found'), 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'provider.key.delete',
+      targetKind: 'provider',
+      targetId: body.data.providerId,
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect(
+      `/admin/providers-form?provider=${encodeURIComponent(body.data.providerId)}&notice=key-cleared`,
+      302,
+    );
   });
 
   app.post('/admin/providers/delete', async (request, reply) => {
@@ -2459,6 +2497,16 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
         'Provider ini masih dipakai model, jadi tidak dihapus — model itu akan ' +
         'kehilangan alamat tujuannya. Pindahkan modelnya ke provider lain lebih dulu.',
     },
+    'provider-secrets-unavailable': {
+      kind: 'error',
+      text:
+        'Kunci API tidak dapat disimpan: kunci enkripsinya belum terpasang di ' +
+        'lingkungan server. Menyimpan tanpa enkripsi sengaja ditolak.',
+    },
+    'key-cleared': {
+      kind: 'ok',
+      text: 'Kunci tersimpan dihapus. Isi yang baru bila provider ini ingin dipakai lagi.',
+    },
     'model-label-invalid': {
       kind: 'error',
       text: 'Nama model tidak boleh kosong.',
@@ -2589,6 +2637,8 @@ function providerNotice(reason: ProviderFailure): string {
       return 'provider-base-url-invalid';
     case 'invalid-key-env':
       return 'provider-key-env-invalid';
+    case 'secrets-unavailable':
+      return 'provider-secrets-unavailable';
     case 'in-use':
       return 'provider-in-use';
     case 'not-found':

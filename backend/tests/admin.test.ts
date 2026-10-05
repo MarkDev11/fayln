@@ -28,6 +28,7 @@ import { GenresRepository } from '../src/admin/genresRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ProvidersRepository } from '../src/admin/providersRepository';
+import { SECRETS_KEY_ENV } from '../src/admin/secretBox';
 import { ModelsRepository, resolvedModelId } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { hashPassword, verifyPassword } from '../src/admin/password';
@@ -2899,7 +2900,7 @@ describe('provider', () => {
     expect(await new ProvidersRepository(ctx.db).find(provider!.providerId)).not.toBeNull();
   });
 
-  it('mencatat pembuatan provider di audit tanpa pernah menuliskan nilainya', async () => {
+  it('mencatat pembuatan provider tanpa jejak rahasia apa pun', async () => {
     const cookie = await login();
     await saveProvider(cookie, {
       providerId: '',
@@ -2907,7 +2908,7 @@ describe('provider', () => {
       prefix: 'audit',
       apiType: 'chat-completions',
       baseUrl: 'https://audit.example.test/v1',
-      apiKeyEnv: 'AUDIT_API_KEY',
+      apiKeyEnv: 'FAYLN_UJI_KUNCI',
       isActive: 'true',
     });
 
@@ -2915,8 +2916,145 @@ describe('provider', () => {
       "SELECT action, detail FROM admin_audit_log WHERE target_kind = 'provider'",
     );
     expect(rows.map((row) => row.action)).toEqual(['provider.create']);
-    // Yang tercatat adalah NAMANYA. Nilai kuncinya tidak pernah menyentuh berkas
-    // rute sama sekali, jadi tidak mungkin ikut tersimpan di sini.
-    expect(JSON.stringify(rows[0]?.detail)).toContain('AUDIT_API_KEY');
+
+    /*
+     * Catatan audit dapat dibaca peran `support`. Jejak sekecil apa pun tentang
+     * rahasia tidak boleh ada di sini — termasuk NAMANYA. "Kunci diganti pada
+     * 14:02" pun sudah mengatakan sesuatu yang bukan urusannya.
+     */
+    const detail = JSON.stringify(rows[0]?.detail);
+    expect(detail).not.toContain('FAYLN_UJI_KUNCI');
+    expect(detail).not.toContain('apiKey');
+  });
+
+  /**
+   * Kunci API yang tersimpan.
+   *
+   * Enkripsinya sendiri diuji di `secretBox.test.ts`. Yang diuji di sini
+   * KABELNYA — dan itu bagian yang paling mudah salah tanpa terlihat: kolom
+   * yang berisi nilai terbaca, kunci yang hilang saat menyunting, atau
+   * penyimpanan yang tetap jalan padahal kunci enkripsinya tidak ada.
+   */
+  describe('kunci API tersimpan', () => {
+    /** Base64 persis 32 byte, sama seperti yang diharapkan secretBox. */
+    const KUNCI_ENKRIPSI = Buffer.from('0123456789abcdef0123456789abcdef').toString('base64');
+    const KUNCI = 'sk-RAHASIA-yang-tidak-boleh-terbaca';
+    let semula: string | undefined;
+
+    beforeEach(() => {
+      semula = process.env[SECRETS_KEY_ENV];
+      process.env[SECRETS_KEY_ENV] = KUNCI_ENKRIPSI;
+    });
+
+    afterEach(() => {
+      if (semula === undefined) {
+        delete process.env[SECRETS_KEY_ENV];
+      } else {
+        process.env[SECRETS_KEY_ENV] = semula;
+      }
+    });
+
+    function simpanDenganKunci(cookie: string, extra: Record<string, string>): Promise<string> {
+      return saveProvider(cookie, {
+        providerId: '',
+        name: 'Dengan Kunci',
+        prefix: 'kunci',
+        apiType: 'chat-completions',
+        baseUrl: 'https://kunci.example.test/v1',
+        isActive: 'true',
+        ...extra,
+      });
+    }
+
+    it('menyimpan kunci terenkripsi, bukan apa adanya', async () => {
+      const cookie = await login();
+      expect(await simpanDenganKunci(cookie, { apiKey: KUNCI })).toContain('notice=saved');
+
+      const { rows } = await ctx.db.query<{ api_key_enc: string }>(
+        'SELECT api_key_enc FROM providers',
+      );
+      expect(rows[0]?.api_key_enc, 'kolom kuncinya kosong').not.toBe('');
+      // Inti seluruh fitur ini: cadangan malam menyalin kolom ini.
+      expect(rows[0]?.api_key_enc, 'kunci terbaca di basis data').not.toContain(KUNCI);
+
+      const providers = new ProvidersRepository(ctx.db);
+      const [provider] = await providers.list();
+      expect(provider?.hasStoredKey).toBe(true);
+      expect(provider?.keySource).toBe('stored');
+      // Dan jalur cerita tetap memperoleh nilai aslinya.
+      expect(await providers.apiKeyFor(provider!.providerId)).toBe(KUNCI);
+    });
+
+    it('mempertahankan kunci lama bila bidangnya dibiarkan kosong', async () => {
+      const cookie = await login();
+      await simpanDenganKunci(cookie, { apiKey: KUNCI });
+
+      const providers = new ProvidersRepository(ctx.db);
+      const [awal] = await providers.list();
+
+      // Menyunting nama tanpa menyentuh kunci tidak boleh menghapusnya.
+      await saveProvider(cookie, {
+        providerId: awal!.providerId,
+        name: 'Nama Baru',
+        prefix: 'kunci',
+        apiType: 'chat-completions',
+        baseUrl: 'https://kunci.example.test/v1',
+        isActive: 'true',
+      });
+
+      const sesudah = await providers.find(awal!.providerId);
+      expect(sesudah?.name).toBe('Nama Baru');
+      expect(sesudah?.hasStoredKey, 'kunci hilang saat menyunting').toBe(true);
+      expect(await providers.apiKeyFor(awal!.providerId)).toBe(KUNCI);
+    });
+
+    it('menghapus kunci hanya lewat aksi tersendiri', async () => {
+      const cookie = await login();
+      await simpanDenganKunci(cookie, { apiKey: KUNCI });
+
+      const providers = new ProvidersRepository(ctx.db);
+      const [provider] = await providers.list();
+
+      await app.inject({
+        method: 'POST',
+        url: '/admin/providers/key/delete',
+        headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+        payload: form({ providerId: provider!.providerId }),
+      });
+
+      const sesudah = await providers.find(provider!.providerId);
+      expect(sesudah?.hasStoredKey).toBe(false);
+      expect(sesudah?.keySource).toBe('none');
+      expect(await providers.apiKeyFor(provider!.providerId)).toBeNull();
+    });
+
+    it('menolak menyimpan bila kunci enkripsi belum terpasang', async () => {
+      delete process.env[SECRETS_KEY_ENV];
+      const cookie = await login();
+
+      expect(await simpanDenganKunci(cookie, { apiKey: KUNCI })).toContain(
+        'notice=provider-secrets-unavailable',
+      );
+
+      /*
+       * Ditolak, BUKAN disimpan apa adanya. Menyimpan rahasia terbaca karena
+       * "konfigurasinya belum lengkap" menghasilkan baris yang tampak sah, dan
+       * tidak ada yang akan tahu sampai basis datanya tersalin ke tempat lain.
+       */
+      expect(await new ProvidersRepository(ctx.db).list()).toHaveLength(0);
+    });
+
+    it('tetap dapat memakai kunci dari variabel lingkungan', async () => {
+      const cookie = await login();
+      await simpanDenganKunci(cookie, { apiKeyEnv: 'FAYLN_UJI_KUNCI' });
+      process.env.FAYLN_UJI_KUNCI = 'sk-dari-lingkungan';
+
+      const providers = new ProvidersRepository(ctx.db);
+      const [provider] = await providers.list();
+      expect(provider?.keySource).toBe('env');
+      expect(await providers.apiKeyFor(provider!.providerId)).toBe('sk-dari-lingkungan');
+
+      delete process.env.FAYLN_UJI_KUNCI;
+    });
   });
 });

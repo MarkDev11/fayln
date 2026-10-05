@@ -51,6 +51,7 @@ describe('migrasi', () => {
     '011_locations.sql',
     '012_lokasi_sederhana.sql',
     '013_providers.sql',
+    '014_provider_api_key.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
