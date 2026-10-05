@@ -26,6 +26,7 @@ import { WorldDraftRepository } from './admin/worldDraftRepository';
 import { GenresRepository } from './admin/genresRepository';
 import { CharactersRepository } from './admin/charactersRepository';
 import { LocationsRepository } from './admin/locationsRepository';
+import { ProvidersRepository } from './admin/providersRepository';
 import { validatePassword } from './admin/password';
 import type { AdminPageContext } from './admin/pages/context';
 import { parseConfig } from './config';
@@ -115,6 +116,7 @@ async function main(): Promise<void> {
     genres: new GenresRepository(db),
     characters: new CharactersRepository(db),
     locations: new LocationsRepository(db),
+    providers: new ProvidersRepository(db),
     media: mediaRepository,
   };
 

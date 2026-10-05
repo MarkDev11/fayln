@@ -288,6 +288,18 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: '/admin/providers',
+    label: 'Provider',
+    key: 'providers',
+    from: '#64d2ff',
+    to: '#0a7ea4',
+    icon: navIcon(
+      '<rect x="2.2" y="3.2" width="11.6" height="4.2" rx="1.5"/>' +
+        '<rect x="2.2" y="8.6" width="11.6" height="4.2" rx="1.5"/>' +
+        '<path d="M4.6 5.3h.01M4.6 10.7h.01"/>',
+    ),
+  },
+  {
     href: '/admin/promotions',
     label: 'Promosi',
     key: 'promotions',
@@ -913,6 +925,27 @@ select{appearance:none;-webkit-appearance:none;
     linear-gradient(135deg,var(--muted) 50%,transparent 50%);
   background-position:calc(100% - 15px) 50%,calc(100% - 10px) 50%;
   background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:28px}
+
+/*
+ * Bidang bergaya "label di atas, isian, bantuan di bawah".
+ *
+ * Dipakai formulir yang isiannya perlu DIJELASKAN, bukan sekadar diberi nama:
+ * nama bidang yang baik belum tentu cukup ("Prefix" tidak memberi tahu bahwa
+ * nilainya dipakai sebagai awalan id model). Tempat penjelasan yang benar
+ * adalah tepat di bawah isiannya, bukan di paragraf jauh di atas formulir —
+ * di sana ia terpisah dari hal yang diterangkannya begitu halaman digulir.
+ *
+ * Spesifisitasnya sengaja lebih tinggi daripada aturan label span, yang akan
+ * menimpa warna dan ukuran keduanya karena span di sini juga anak label.
+ */
+.field{margin-bottom:20px}
+.field__label{display:block;color:var(--text);font-size:13px;font-weight:500;margin:0 0 6px}
+.field__hint{display:block;color:var(--muted);font-size:12px;font-weight:400;
+  line-height:1.55;margin:6px 0 0}
+/* "Wajib." dibedakan dari penjelasannya: yang pertama syarat, yang kedua alasan. */
+.field__hint b{color:var(--text);font-weight:500}
+/* Sejalan dengan .mono, dan sengaja memakai tumpukan yang sama persis. */
+.field__mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
 
 /* ---------------- Tombol ---------------- */
 /*

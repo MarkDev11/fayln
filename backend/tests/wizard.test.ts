@@ -25,6 +25,7 @@ import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
+import { ProvidersRepository } from '../src/admin/providersRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
@@ -112,6 +113,7 @@ async function build(): Promise<FastifyInstance> {
     genres: new GenresRepository(ctx.db),
     characters: new CharactersRepository(ctx.db),
     locations: new LocationsRepository(ctx.db),
+    providers: new ProvidersRepository(ctx.db),
     media: new MediaRepository(ctx.db),
   };
 

@@ -1,0 +1,429 @@
+/**
+ * Provider model: ke mana permintaan dikirim, dan dengan protokol apa.
+ *
+ * Sebelum ini "provider" hanya teks bebas pada baris model, sehingga tidak ada
+ * tempat untuk hal-hal yang sebenarnya milik PROVIDER: base URL, jenis API, dan
+ * awalan id model. Ketiganya ditulis ulang di setiap model dari provider yang
+ * sama — dan satu salah ketik menghasilkan model yang diam-diam menembak alamat
+ * yang salah.
+ *
+ * ---------------------------------------------------------------------------
+ * TIGA KEPUTUSAN YANG PERLU DIKETAHUI SEBELUM MENYUNTING BERKAS INI
+ * ---------------------------------------------------------------------------
+ *
+ * 1. KUNCI API TIDAK DISIMPAN DI SINI — hanya NAMA variabel lingkungannya.
+ *
+ *    `apiKeyEnv` berisi mis. "OPENAI_API_KEY", bukan kuncinya. Itu aturan
+ *    proyek ini sejak awal (rahasia tidak masuk basis data yang isinya dapat
+ *    dibaca panel), dan ada dua alasan tambahan yang khas fayLN: cadangan malam
+ *    blitz.cloud menyalin isi basis data, dan panel ini punya peran `support`
+ *    yang tidak seharusnya dapat melihat rahasia.
+ *
+ *    Yang dapat dilakukan panel: MEMERIKSA apakah variabelnya terpasang
+ *    (`keyPresent`), tanpa pernah menampilkan nilainya. Jadi admin tetap tahu
+ *    konfigurasinya lengkap atau belum.
+ *
+ * 2. PREFIX DIPERIKSA DI SINI, BUKAN DENGAN `UNIQUE` DI SKEMA.
+ *
+ *    Keunikannya tetap ditegakkan, tetapi lewat pemeriksaan yang dapat
+ *    menjelaskan "prefix ini sudah dipakai provider X" — sedangkan `UNIQUE`
+ *    hanya menghasilkan galat basis data. Bentuknya juga diperiksa di sini
+ *    karena pg-mem tidak mengenal operator `~`, dan `CHECK` seperti itu membuat
+ *    MIGRASI GAGAL, bukan sekadar tidak menegakkan apa pun.
+ *
+ * 3. BASE URL DINORMALKAN: garis miring di ujung dibuang.
+ *
+ *    "https://api.openai.com/v1/" dan "https://api.openai.com/v1" adalah alamat
+ *    yang sama, dan menyimpannya sebagai dua bentuk berbeda berarti suatu saat
+ *    ada yang menyambung path menjadi ".../v1//chat/completions". Yang
+ *    diperiksa di sini hanya bentuknya (skema http/https + ada host); panel
+ *    TIDAK memanggil alamatnya, karena itu pekerjaan jalur cerita nanti.
+ */
+
+import { randomUUID } from 'node:crypto';
+
+import type { Database } from '../db/pool';
+
+export const MAX_PROVIDER_NAME = 120;
+export const MAX_PREFIX = 32;
+export const MAX_BASE_URL = 300;
+export const MAX_API_KEY_ENV = 120;
+export const MAX_PROVIDER_NOTES = 240;
+
+/** Huruf kecil, angka, tanda hubung. Diawali huruf atau angka. 1–32 karakter. */
+export const PREFIX_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** Nama variabel lingkungan: huruf besar, angka, garis bawah. */
+export const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,119}$/;
+
+export const API_TYPES = ['chat-completions', 'responses', 'messages'] as const;
+export type ApiType = (typeof API_TYPES)[number];
+
+/**
+ * Nama yang dilihat admin.
+ *
+ * `messages` sengaja disebut "(Anthropic)" karena itulah satu-satunya penyedia
+ * yang memakai bentuk itu; menyebutnya "Messages" saja membuat admin menebak.
+ */
+export const API_TYPE_LABELS: Record<ApiType, string> = {
+  'chat-completions': 'Chat Completions',
+  responses: 'Responses',
+  messages: 'Messages (Anthropic)',
+};
+
+export type ProviderRow = {
+  providerId: string;
+  name: string;
+  prefix: string;
+  apiType: ApiType;
+  baseUrl: string;
+  /** NAMA variabel lingkungan — bukan nilainya. */
+  apiKeyEnv: string;
+  position: number;
+  isActive: boolean;
+  notes: string;
+  createdAt: Date | string;
+  updatedAt: Date | string;
+  /** Berapa model yang menunjuk provider ini. */
+  modelCount: number;
+  /** Apakah variabel lingkungan itu benar-benar terpasang saat ini. */
+  keyPresent: boolean;
+};
+
+export type ProviderInput = {
+  name: string;
+  prefix: string;
+  apiType: string;
+  baseUrl: string;
+  apiKeyEnv: string;
+  isActive: boolean;
+  notes: string;
+};
+
+/** Sebab sebuah tindakan ditolak, agar halaman dapat menampilkan pesan tepat. */
+export type ProviderFailure =
+  | 'invalid-name'
+  | 'invalid-prefix'
+  | 'duplicate-prefix'
+  | 'invalid-api-type'
+  | 'invalid-base-url'
+  | 'invalid-key-env'
+  | 'not-found'
+  | 'in-use';
+
+export type ProviderResult =
+  | { ok: true; providerId: string }
+  | { ok: false; reason: ProviderFailure; detail?: string; usedBy?: number };
+
+type Prepared = {
+  name: string;
+  prefix: string;
+  apiType: ApiType;
+  baseUrl: string;
+  apiKeyEnv: string;
+  isActive: boolean;
+  notes: string;
+};
+
+export class ProvidersRepository {
+  constructor(private readonly db: Database) {}
+
+  /**
+   * Seluruh provider, terurut.
+   *
+   * Jumlah modelnya dihitung lewat satu kueri `GROUP BY` terpisah, bukan
+   * sub-kueri berkorelasi: pg-mem tidak dapat sub-kueri yang merujuk tabel
+   * induk — pola yang sama seperti master genre dan lokasi.
+   */
+  async list(): Promise<ProviderRow[]> {
+    const { rows } = await this.db.query<{
+      provider_id: string;
+      name: string;
+      prefix: string;
+      api_type: string;
+      base_url: string;
+      api_key_env: string;
+      position: number;
+      is_active: boolean;
+      notes: string;
+      created_at: Date | string;
+      updated_at: Date | string;
+    }>(
+      `SELECT provider_id, name, prefix, api_type, base_url, api_key_env,
+              position, is_active, notes, created_at, updated_at
+       FROM providers
+       ORDER BY position ASC, provider_id ASC`,
+    );
+
+    const { rows: counts } = await this.db.query<{ provider_id: string; total: number }>(
+      `SELECT provider_id, count(*)::int AS total
+       FROM model_configs
+       WHERE provider_id IS NOT NULL
+       GROUP BY provider_id`,
+    );
+    const byProvider = new Map(counts.map((row) => [row.provider_id, row.total]));
+
+    return rows.map((row) => ({
+      providerId: row.provider_id,
+      name: row.name,
+      prefix: row.prefix,
+      apiType: asApiType(row.api_type),
+      baseUrl: row.base_url,
+      apiKeyEnv: row.api_key_env,
+      position: row.position,
+      isActive: row.is_active,
+      notes: row.notes,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      modelCount: byProvider.get(row.provider_id) ?? 0,
+      keyPresent: isKeyPresent(row.api_key_env),
+    }));
+  }
+
+  async find(providerId: string): Promise<ProviderRow | null> {
+    const all = await this.list();
+    return all.find((row) => row.providerId === providerId) ?? null;
+  }
+
+  /** Provider yang pantas ditawarkan pada formulir model: yang aktif saja. */
+  async listOfferable(): Promise<ProviderRow[]> {
+    return (await this.list()).filter((row) => row.isActive);
+  }
+
+  async create(input: ProviderInput): Promise<ProviderResult> {
+    const prepared = await this.prepare(input);
+    if ('reason' in prepared) {
+      return prepared;
+    }
+
+    const providerId = newProviderId();
+    const { rows } = await this.db.query<{ next_position: number }>(
+      'SELECT coalesce(max(position), 0)::int + 1 AS next_position FROM providers',
+    );
+    await this.db.query(
+      `INSERT INTO providers (
+         provider_id, name, prefix, api_type, base_url, api_key_env,
+         position, is_active, notes
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        providerId,
+        prepared.name,
+        prepared.prefix,
+        prepared.apiType,
+        prepared.baseUrl,
+        prepared.apiKeyEnv,
+        rows[0]?.next_position ?? 1,
+        prepared.isActive,
+        prepared.notes,
+      ],
+    );
+
+    return { ok: true, providerId };
+  }
+
+  /**
+   * Mengubah provider.
+   *
+   * `prefix` BOLEH diubah, dan itu berbeda dari genre yang id-nya terkunci.
+   * Alasannya: prefix bukan identitas baris ini — ia bagian dari cara model
+   * menyebut dirinya, dan model menunjuk provider lewat `provider_id`, bukan
+   * lewat prefix. Mengganti prefix karena itu tidak memutus apa pun.
+   */
+  async update(providerId: string, input: ProviderInput): Promise<ProviderResult> {
+    const prepared = await this.prepare(input, providerId);
+    if ('reason' in prepared) {
+      return prepared;
+    }
+
+    const { rowCount } = await this.db.query(
+      `UPDATE providers SET
+         name = $2, prefix = $3, api_type = $4, base_url = $5,
+         api_key_env = $6, is_active = $7, notes = $8, updated_at = now()
+       WHERE provider_id = $1`,
+      [
+        providerId,
+        prepared.name,
+        prepared.prefix,
+        prepared.apiType,
+        prepared.baseUrl,
+        prepared.apiKeyEnv,
+        prepared.isActive,
+        prepared.notes,
+      ],
+    );
+
+    return rowCount > 0
+      ? { ok: true, providerId }
+      : { ok: false, reason: 'not-found' };
+  }
+
+  /**
+   * Menghapus provider.
+   *
+   * Ditolak bila masih ada model yang menunjuknya: menghapusnya akan membuat
+   * model itu kehilangan alamat tujuannya, dan `ON DELETE RESTRICT` sudah
+   * menolaknya di tingkat basis data. Pemeriksaan di sini membuat alasannya
+   * dapat dibaca admin.
+   */
+  async remove(providerId: string): Promise<ProviderResult> {
+    const used = await this.modelCount(providerId);
+    if (used > 0) {
+      return { ok: false, reason: 'in-use', usedBy: used };
+    }
+
+    const { rowCount } = await this.db.query('DELETE FROM providers WHERE provider_id = $1', [
+      providerId,
+    ]);
+    return rowCount > 0
+      ? { ok: true, providerId }
+      : { ok: false, reason: 'not-found' };
+  }
+
+  async modelCount(providerId: string): Promise<number> {
+    const { rows } = await this.db.query<{ total: number }>(
+      'SELECT count(*)::int AS total FROM model_configs WHERE provider_id = $1',
+      [providerId],
+    );
+    return rows[0]?.total ?? 0;
+  }
+
+  /** Menggeser satu provider satu langkah. Urutan menentukan urutan di formulir. */
+  async move(providerId: string, direction: 'up' | 'down'): Promise<void> {
+    await this.db.transaction(async (client) => {
+      const { rows } = await client.query<{ provider_id: string }>(
+        'SELECT provider_id FROM providers ORDER BY position ASC, provider_id ASC',
+      );
+      const ids = rows.map((row) => row.provider_id);
+      const index = ids.indexOf(providerId);
+      if (index < 0) {
+        return;
+      }
+      const target = direction === 'up' ? index - 1 : index + 1;
+      if (target < 0 || target >= ids.length) {
+        return;
+      }
+      ids.splice(target, 0, ...ids.splice(index, 1));
+
+      for (const [position, each] of ids.entries()) {
+        await client.query('UPDATE providers SET position = $2 WHERE provider_id = $1', [
+          each,
+          position + 1,
+        ]);
+      }
+    });
+  }
+
+  /**
+   * Menyaring dan menormalkan isian sebelum menyentuh basis data.
+   *
+   * Mengembalikan `reason` alih-alih melempar, supaya halaman dapat menjelaskan
+   * penolakannya — dan supaya tidak ada satu pun jalur simpan yang dapat
+   * menyelundupkan alamat yang tidak dapat dipanggil.
+   */
+  private async prepare(
+    input: ProviderInput,
+    selfId?: string,
+  ): Promise<Prepared | { ok: false; reason: ProviderFailure; detail?: string }> {
+    const name = clamp(input.name, MAX_PROVIDER_NAME);
+    if (name.length === 0) {
+      return { ok: false, reason: 'invalid-name' };
+    }
+
+    const prefix = input.prefix.trim().toLowerCase();
+    if (!PREFIX_PATTERN.test(prefix)) {
+      return { ok: false, reason: 'invalid-prefix' };
+    }
+
+    const clash = (await this.list()).find(
+      (row) => row.prefix === prefix && row.providerId !== selfId,
+    );
+    if (clash) {
+      return { ok: false, reason: 'duplicate-prefix', detail: clash.name };
+    }
+
+    if (!isApiType(input.apiType)) {
+      return { ok: false, reason: 'invalid-api-type' };
+    }
+
+    const baseUrl = normaliseBaseUrl(input.baseUrl);
+    if (!baseUrl) {
+      return { ok: false, reason: 'invalid-base-url' };
+    }
+
+    const apiKeyEnv = input.apiKeyEnv.trim();
+    if (apiKeyEnv.length > 0 && !ENV_NAME_PATTERN.test(apiKeyEnv)) {
+      return { ok: false, reason: 'invalid-key-env' };
+    }
+
+    return {
+      name,
+      prefix,
+      apiType: input.apiType,
+      baseUrl,
+      apiKeyEnv,
+      isActive: input.isActive,
+      notes: clamp(input.notes ?? '', MAX_PROVIDER_NOTES),
+    };
+  }
+}
+
+/**
+ * Apakah variabel lingkungan kunci benar-benar terpasang.
+ *
+ * Yang diperiksa hanya ADA atau TIDAK. Nilainya tidak pernah dikembalikan, dan
+ * tidak pernah ikut ke halaman — itulah gunanya menyimpan namanya saja.
+ */
+function isKeyPresent(envName: string): boolean {
+  if (envName.length === 0) {
+    return false;
+  }
+  const value = process.env[envName];
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
+/**
+ * Memeriksa bentuk base URL dan membuang garis miring di ujungnya.
+ *
+ * Yang diperiksa hanya bentuknya: skema http/https dan ada host. Panel TIDAK
+ * memanggil alamatnya — mencoba menghubungi setiap alamat yang diketik akan
+ * membuat panel menggantung karena satu alamat yang tidak menjawab.
+ */
+function normaliseBaseUrl(raw: string): string | null {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (trimmed.length === 0 || trimmed.length > MAX_BASE_URL) {
+    return null;
+  }
+
+  let parsed: URL;
+  try {
+    parsed = new URL(trimmed);
+  } catch {
+    return null;
+  }
+
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return null;
+  }
+  if (parsed.hostname.length === 0) {
+    return null;
+  }
+  return trimmed;
+}
+
+function asApiType(value: string): ApiType {
+  return isApiType(value) ? value : 'chat-completions';
+}
+
+function isApiType(value: string): value is ApiType {
+  return (API_TYPES as readonly string[]).includes(value);
+}
+
+/** Berawalan `prov_` supaya bentuknya dapat dikenali sekilas di URL dan di log. */
+function newProviderId(): string {
+  return `prov_${randomUUID().replace(/-/g, '').slice(0, 12)}`;
+}
+
+function clamp(value: string, max: number): string {
+  const trimmed = value.trim();
+  return trimmed.length > max ? trimmed.slice(0, max) : trimmed;
+}

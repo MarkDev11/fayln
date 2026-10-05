@@ -27,7 +27,8 @@ import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
-import { ModelsRepository } from '../src/admin/modelsRepository';
+import { ProvidersRepository } from '../src/admin/providersRepository';
+import { ModelsRepository, resolvedModelId } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { hashPassword, verifyPassword } from '../src/admin/password';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
@@ -96,6 +97,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     genres: new GenresRepository(ctx.db),
     characters,
     locations,
+    providers: new ProvidersRepository(ctx.db),
     media: new MediaRepository(ctx.db),
   };
 
@@ -1342,8 +1344,33 @@ describe('manajemen akun', () => {
 /* ------------------------------------------------------------------ */
 
 describe('model dan rantai fallback', () => {
+  /**
+   * Satu provider uji.
+   *
+   * Basis data dibuat ulang sebelum SETIAP uji, jadi prefix yang sama aman
+   * dipakai berulang — dan keunikan prefix tetap diuji di tempatnya sendiri.
+   * Model tidak dapat disimpan tanpa provider, karena setiap model harus tahu
+   * ke alamat mana ia dikirim.
+   */
+  async function seedProvider(): Promise<string> {
+    const created = await new ProvidersRepository(ctx.db).create({
+      name: 'Penyedia Uji',
+      prefix: 'uji',
+      apiType: 'chat-completions',
+      baseUrl: 'https://example.test/v1',
+      apiKeyEnv: '',
+      isActive: true,
+      notes: '',
+    });
+    if (!created.ok) {
+      throw new Error();
+    }
+    return created.providerId;
+  }
+
   it('menyimpan model beserta biaya per gilirannya', async () => {
     const cookie = await login();
+    const providerId = await seedProvider();
 
     await app.inject({
       method: 'POST',
@@ -1352,7 +1379,8 @@ describe('model dan rantai fallback', () => {
       payload: form({
         modelId: '',
         label: 'Model Uji',
-        provider: 'penyedia-uji',
+        providerId,
+        modelKey: 'model-uji-latest',
         estimatedTurnCost: '900',
         contextTokens: '64000',
         position: '0',
@@ -1368,17 +1396,21 @@ describe('model dan rantai fallback', () => {
     expect(created).toBeDefined();
     expect(created?.estimatedTurnCost).toBe(900);
     expect(created?.isActive).toBe(true);
+    // Id lengkap yang dikenal penyedia tersusun dari prefix provider + nama model.
+    expect(resolvedModelId(created!)).toBe('uji/model-uji-latest');
   });
 
   it('menonaktifkan model lain pada tier yang sama saat satu diaktifkan', async () => {
     const cookie = await login();
     const models = new ModelsRepository(ctx.db);
+    const providerId = await seedProvider();
 
     for (const label of ['Model Satu', 'Model Dua']) {
       await models.saveModel({
         modelId: null,
         label,
-        provider: '',
+        providerId,
+      modelKey: 'model-uji',
         estimatedTurnCost: 500,
         contextTokens: 32_000,
         position: 0,
@@ -1409,6 +1441,7 @@ describe('model dan rantai fallback', () => {
 
   it('menyusun rantai fallback menurut posisi', async () => {
     const models = new ModelsRepository(ctx.db);
+    const providerId = await seedProvider();
     for (const [label, position] of [
       ['Fallback Kedua', 2],
       ['Utama', 0],
@@ -1417,7 +1450,8 @@ describe('model dan rantai fallback', () => {
       await models.saveModel({
         modelId: null,
         label,
-        provider: '',
+        providerId,
+      modelKey: 'model-uji',
         estimatedTurnCost: 100,
         contextTokens: 16_000,
         position,
@@ -1433,10 +1467,12 @@ describe('model dan rantai fallback', () => {
 
   it('melaporkan rantai yang belum punya model utama', async () => {
     const models = new ModelsRepository(ctx.db);
+    const providerId = await seedProvider();
     await models.saveModel({
       modelId: null,
       label: 'Hanya Fallback',
-      provider: '',
+      providerId,
+      modelKey: 'model-uji',
       estimatedTurnCost: 100,
       contextTokens: 16_000,
       position: 1,
@@ -1453,6 +1489,7 @@ describe('model dan rantai fallback', () => {
 
   it('menolak biaya per giliran nol atau negatif', async () => {
     const cookie = await login();
+    const providerId = await seedProvider();
 
     await app.inject({
       method: 'POST',
@@ -1461,7 +1498,8 @@ describe('model dan rantai fallback', () => {
       payload: form({
         modelId: '',
         label: 'Model Gratis',
-        provider: '',
+        providerId,
+        modelKey: 'model-uji',
         estimatedTurnCost: '0',
         contextTokens: '32000',
         position: '0',
@@ -2677,5 +2715,208 @@ describe('keamanan keluaran', () => {
     expect(response.body).not.toMatch(/<script[^>]+src=/i);
     expect(response.body).not.toMatch(/<link[^>]+href=["']https?:/i);
     expect(response.body).not.toContain('cdn.');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Provider model.
+ *
+ * Provider adalah tingkat di atas model: ia memegang alamat, jenis API, dan
+ * awalan id. Uji di sini menjaga tiga hal yang membuatnya aman dipakai: prefix
+ * tidak boleh kembar (id model menjadi ambigu), alamat harus benar-benar alamat,
+ * dan yang diketik pada bidang kunci adalah NAMA variabel — bukan kuncinya.
+ */
+describe('provider', () => {
+  /** Menyimpan provider lewat HTTP dan mengembalikan alamat tujuan. */
+  async function saveProvider(
+    cookie: string,
+    payload: Record<string, string | string[]>,
+  ): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/providers',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form(payload),
+    });
+    expect(response.statusCode).toBe(302);
+    return String(response.headers.location ?? '');
+  }
+
+  it('menyimpan provider, lalu mengubah dan menghapusnya', async () => {
+    const cookie = await login();
+    const providers = new ProvidersRepository(ctx.db);
+
+    const created = await saveProvider(cookie, {
+      providerId: '',
+      name: 'OpenAI Compatible (Prod)',
+      prefix: 'oc-prod',
+      apiType: 'chat-completions',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKeyEnv: 'FAYLN_UJI_KUNCI',
+      isActive: 'true',
+    });
+    expect(created).toContain('notice=saved');
+
+    const [row] = await providers.list();
+    expect(row?.name).toBe('OpenAI Compatible (Prod)');
+    expect(row?.prefix).toBe('oc-prod');
+    expect(row?.apiType).toBe('chat-completions');
+    expect(row?.apiKeyEnv).toBe('FAYLN_UJI_KUNCI');
+    // Variabelnya tidak ada di lingkungan uji, jadi panel harus mengatakannya
+    // — bukan menampilkan seolah siap dipakai.
+    expect(row?.keyPresent).toBe(false);
+
+    const saved = await saveProvider(cookie, {
+      providerId: row!.providerId,
+      name: 'OpenAI (Prod)',
+      prefix: 'oc-prod',
+      apiType: 'responses',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKeyEnv: 'FAYLN_UJI_KUNCI',
+      isActive: 'true',
+    });
+    expect(saved).toContain('notice=saved');
+
+    const after = await providers.find(row!.providerId);
+    expect(after?.name).toBe('OpenAI (Prod)');
+    expect(after?.apiType).toBe('responses');
+
+    await app.inject({
+      method: 'POST',
+      url: '/admin/providers/delete',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ providerId: row!.providerId }),
+    });
+    expect(await providers.find(row!.providerId)).toBeNull();
+  });
+
+  it('menolak prefix yang sudah dipakai provider lain', async () => {
+    const cookie = await login();
+    await saveProvider(cookie, {
+      providerId: '',
+      name: 'Provider Satu',
+      prefix: 'sama',
+      apiType: 'chat-completions',
+      baseUrl: 'https://satu.example.test/v1',
+      isActive: 'true',
+    });
+
+    const kedua = await saveProvider(cookie, {
+      providerId: '',
+      name: 'Provider Dua',
+      prefix: 'sama',
+      apiType: 'chat-completions',
+      baseUrl: 'https://dua.example.test/v1',
+      isActive: 'true',
+    });
+    expect(kedua).toContain('notice=provider-prefix-taken');
+    // Pesannya menyebut provider yang sudah memakainya, bukan sekadar menolak.
+    expect(decodeURIComponent(kedua)).toContain('Provider Satu');
+
+    expect(await new ProvidersRepository(ctx.db).list()).toHaveLength(1);
+  });
+
+  it('menormalkan base URL dan menolak yang bukan alamat', async () => {
+    const cookie = await login();
+
+    await saveProvider(cookie, {
+      providerId: '',
+      name: 'Dengan Garis Miring',
+      prefix: 'miring',
+      apiType: 'chat-completions',
+      baseUrl: 'https://miring.example.test/v1/',
+      isActive: 'true',
+    });
+    const [row] = await new ProvidersRepository(ctx.db).list();
+    // Garis miring di ujung dibuang: dua bentuk alamat yang sama akan
+    // menghasilkan path bergaris miring ganda saat disambung nanti.
+    expect(row?.baseUrl).toBe('https://miring.example.test/v1');
+
+    const bukanAlamat = await saveProvider(cookie, {
+      providerId: '',
+      name: 'Bukan Alamat',
+      prefix: 'bukan',
+      apiType: 'chat-completions',
+      baseUrl: 'miring.example.test/v1',
+      isActive: 'true',
+    });
+    expect(bukanAlamat).toContain('notice=provider-base-url-invalid');
+  });
+
+  it('menolak kunci API yang ditempelkan ke bidang nama variabel', async () => {
+    const cookie = await login();
+
+    // Kekeliruan yang paling mudah terjadi: yang diminta adalah NAMA variabel,
+    // dan yang ditempelkan adalah kuncinya. Menyimpannya akan menaruh rahasia
+    // di basis data — tepat hal yang dihindari bidang ini.
+    const response = await saveProvider(cookie, {
+      providerId: '',
+      name: 'Salah Isi',
+      prefix: 'salah',
+      apiType: 'chat-completions',
+      baseUrl: 'https://salah.example.test/v1',
+      apiKeyEnv: 'sk-rahasia-yang-tidak-boleh-disimpan',
+      isActive: 'true',
+    });
+    expect(response).toContain('notice=provider-key-env-invalid');
+    expect(await new ProvidersRepository(ctx.db).list()).toHaveLength(0);
+  });
+
+  it('menolak menghapus provider yang masih dipakai model', async () => {
+    const cookie = await login();
+    await saveProvider(cookie, {
+      providerId: '',
+      name: 'Dipakai',
+      prefix: 'dipakai',
+      apiType: 'chat-completions',
+      baseUrl: 'https://dipakai.example.test/v1',
+      isActive: 'true',
+    });
+    const [provider] = await new ProvidersRepository(ctx.db).list();
+
+    await new ModelsRepository(ctx.db).saveModel({
+      modelId: null,
+      label: 'Model Yang Menunjuk',
+      providerId: provider!.providerId,
+      modelKey: 'model-uji',
+      estimatedTurnCost: 100,
+      contextTokens: 16_000,
+      position: 0,
+      tier: 'free',
+      isActive: true,
+      notes: '',
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/providers/delete',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({ providerId: provider!.providerId }),
+    });
+    expect(String(response.headers.location ?? '')).toContain('notice=provider-in-use');
+    expect(await new ProvidersRepository(ctx.db).find(provider!.providerId)).not.toBeNull();
+  });
+
+  it('mencatat pembuatan provider di audit tanpa pernah menuliskan nilainya', async () => {
+    const cookie = await login();
+    await saveProvider(cookie, {
+      providerId: '',
+      name: 'Audit',
+      prefix: 'audit',
+      apiType: 'chat-completions',
+      baseUrl: 'https://audit.example.test/v1',
+      apiKeyEnv: 'AUDIT_API_KEY',
+      isActive: 'true',
+    });
+
+    const { rows } = await ctx.db.query<{ action: string; detail: unknown }>(
+      "SELECT action, detail FROM admin_audit_log WHERE target_kind = 'provider'",
+    );
+    expect(rows.map((row) => row.action)).toEqual(['provider.create']);
+    // Yang tercatat adalah NAMANYA. Nilai kuncinya tidak pernah menyentuh berkas
+    // rute sama sekali, jadi tidak mungkin ikut tersimpan di sini.
+    expect(JSON.stringify(rows[0]?.detail)).toContain('AUDIT_API_KEY');
   });
 });

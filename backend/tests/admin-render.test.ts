@@ -34,6 +34,7 @@ import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
+import { ProvidersRepository } from '../src/admin/providersRepository';
 import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
@@ -105,6 +106,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     genres: new GenresRepository(ctx.db),
     characters: new CharactersRepository(ctx.db),
     locations: new LocationsRepository(ctx.db),
+    providers: new ProvidersRepository(ctx.db),
     media: new MediaRepository(ctx.db),
   };
 
@@ -558,7 +560,7 @@ describe('bilah sisi ala System Settings', () => {
     const body = await sweep(cookie, '/admin');
 
     const icons = body.match(/class="nav__icon"/g) ?? [];
-    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(13);
+    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(14);
     expect(body).toContain('--i-a:#0a84ff;--i-b:#0055c4');
     expect(body).toMatch(/nav__icon[^>]*>\s*<svg/);
     expect(body, 'ikon tidak boleh dimuat dari jaringan').not.toMatch(/<img[^>]+src="https?:/);
@@ -973,5 +975,125 @@ describe('daftar dunia', () => {
         `aturan ${selector} memakai shorthand margin dan akan menggeser judul`,
       ).not.toMatch(/(?:^|;)\s*margin:/);
     }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Provider model.
+ *
+ * Pasangan "kosong" dan "berisi" dengan alasan yang sama seperti master lain,
+ * ditambah dua penjaga yang khas halaman ini:
+ *
+ * 1. Model tidak boleh ditawarkan sebelum ada provider — menawarkan formulir
+ *    yang pasti ditolak hanya membuat admin mengisi sesuatu dengan sia-sia.
+ * 2. Setiap teks bantuan harus DITUNJUK `aria-describedby` oleh kontrolnya, dan
+ *    setiap bidang wajib harus ber-atribut `required` SEKALIGUS menuliskan
+ *    "Wajib.". Yang pertama tidak dapat diperiksa mata — bidang dengan bantuan
+ *    yang tidak tertaut tetap tampak benar di layar, dan hanya pembaca layar
+ *    yang kehilangan penjelasannya.
+ */
+describe('provider: keadaan kosong dan berisi', () => {
+  async function seedProvider(name = 'OpenAI Compatible (Prod)', prefix = 'oc-prod') {
+    const created = await pages.providers.create({
+      name,
+      prefix,
+      apiType: 'chat-completions',
+      baseUrl: 'https://api.openai.com/v1',
+      apiKeyEnv: '',
+      isActive: true,
+      notes: '',
+    });
+    if (!created.ok) {
+      throw new Error(`provider uji gagal dibuat: ${created.reason}`);
+    }
+    return created.providerId;
+  }
+
+  it('menampilkan pesan kosong saat belum ada provider', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/providers');
+
+    expect(body).toContain('Belum ada provider');
+    expect(body).not.toContain('<table');
+    expect(body).not.toContain('&lt;div');
+  });
+
+  it('menampilkan tabel sungguhan saat ada provider', async () => {
+    const cookie = await login();
+    await seedProvider();
+
+    const body = await sweep(cookie, '/admin/providers');
+
+    expect(body, 'pesan kosong masih tampil padahal ada provider').not.toContain(
+      'Belum ada provider',
+    );
+    expect(body).toContain('<table');
+    expect(body).toContain('OpenAI Compatible (Prod)');
+    expect(body).toContain('oc-prod');
+    expect(body).toContain('Chat Completions');
+    expect(body).toContain('https://api.openai.com/v1');
+  });
+
+  it('tidak menawarkan formulir model selama belum ada provider', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/models-form');
+
+    expect(body).toContain('Belum ada provider');
+    expect(body).not.toContain('<select name="providerId"');
+    expect(body).toContain('/admin/providers-form');
+  });
+
+  it('menawarkan provider di formulir model begitu ada provider aktif', async () => {
+    const cookie = await login();
+    await seedProvider();
+
+    const body = await sweep(cookie, '/admin/models-form');
+
+    // Select-nya merender id lebih dulu, jadi dicari dengan pola, bukan teks
+    // persis — dan tetap menuntut elemennya select, bukan sekadar nama bidangnya.
+    expect(body, 'pemilih provider tidak dirender').toMatch(/<select[^>]*name="providerId"/);
+    expect(body).toContain('OpenAI Compatible (Prod)');
+    expect(body).not.toContain('Belum ada provider');
+  });
+
+  it('menautkan setiap teks bantuan ke kontrolnya, dan menandai bidang wajib', async () => {
+    const cookie = await login();
+    await seedProvider();
+
+    const body = await sweep(cookie, '/admin/providers-form');
+
+    const hintIds = Array.from(body.matchAll(/class="field__hint" id="([^"]+)"/g), (m) => m[1]!);
+    const described = new Set(
+      Array.from(body.matchAll(/aria-describedby="([^"]+)"/g), (m) => m[1]!),
+    );
+
+    expect(hintIds.length, 'tidak ada bidang bergaya baru yang dirender').toBeGreaterThan(3);
+    for (const id of hintIds) {
+      expect(described.has(id), `bantuan ${id} tidak ditunjuk kontrol mana pun`).toBe(true);
+    }
+
+    /*
+     * Bidang wajib ditandai DUA cara sekaligus: atribut `required` menahan
+     * pengiriman, dan "Wajib." pada bantuannya terlihat admin. Menghitung
+     * keduanya dan menuntut jumlahnya sama menangkap bidang yang hanya punya
+     * salah satunya — bentuk kelalaian yang tidak menghasilkan galat apa pun.
+     */
+    const required = (body.match(/\srequired[\s>]/g) ?? []).length;
+    const wajib = (body.match(/<b>Wajib\.<\/b>/g) ?? []).length;
+    expect(required, 'tidak ada bidang wajib yang dirender').toBeGreaterThan(2);
+    expect(wajib, 'penanda "Wajib." tidak sepadan dengan bidang ber-atribut required').toBe(
+      required,
+    );
+  });
+
+  it('menghidupkan pesan "tidak ditemukan" saat id provider tidak ada', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/providers-form?provider=prov_tidak_ada');
+
+    expect(body).toContain('Tidak ditemukan');
+    expect(body).toContain('Kembali ke daftar provider');
+    expect(body).not.toContain('&lt;div');
   });
 });

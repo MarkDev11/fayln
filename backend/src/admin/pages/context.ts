@@ -15,6 +15,7 @@ import type { WorldDraftRepository } from '../worldDraftRepository';
 import type { GenresRepository } from '../genresRepository';
 import type { CharactersRepository } from '../charactersRepository';
 import type { LocationsRepository } from '../locationsRepository';
+import type { ProvidersRepository } from '../providersRepository';
 import type { MediaRepository } from '../../repositories/mediaRepository';
 
 export type AdminPageContext = {
@@ -54,6 +55,16 @@ export type AdminPageContext = {
    * `world_assets`, dan wizard hanya MEMUNGUT latar dari sini.
    */
   locations: LocationsRepository;
+  /**
+   * Provider model — alamat, jenis API, dan awalan id.
+   *
+   * Dipisah dari model dengan alasan yang sama seperti genre dipisah dari dunia:
+   * satu alamat dipakai banyak model, dan menuliskannya ulang di setiap baris
+   * berarti satu salah ketik menghasilkan model yang menembak alamat yang salah.
+   * Kunci API tidak ada di sini — bahkan di tabelnya pun yang disimpan hanya
+   * NAMA variabel lingkungannya.
+   */
+  providers: ProvidersRepository;
   /** Berkas gambar unggahan; dipakai halaman Aset untuk menghitung pemakaian. */
   media: MediaRepository;
 };

@@ -50,6 +50,7 @@ describe('migrasi', () => {
     '010_characters.sql',
     '011_locations.sql',
     '012_lokasi_sederhana.sql',
+    '013_providers.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
@@ -498,6 +499,63 @@ describe('batasan yang menegakkan aturan domain', () => {
       await before.close();
       rmSync(directory, { recursive: true, force: true });
     }
+  });
+
+  /**
+   * Provider model: alamat dan jenis API-nya milik provider, bukan milik model.
+   *
+   * Yang dijaga basis data di sini: jenis API hanya boleh salah satu dari daftar
+   * (kalau tidak, jalur cerita harus menebak bentuk permintaannya), dan provider
+   * yang masih dipakai model tidak dapat dihapus — model itu akan kehilangan
+   * alamat tujuannya.
+   */
+  it('menolak jenis API provider yang tidak dikenal', async () => {
+    await expect(
+      ctx.db.query(
+        `INSERT INTO providers (provider_id, name, prefix, api_type, base_url)
+         VALUES ('prov_x', 'X', 'x', 'entah-apa', 'https://x.test/v1')`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menolak posisi provider yang negatif', async () => {
+    await expect(
+      ctx.db.query(
+        `INSERT INTO providers (provider_id, name, prefix, api_type, base_url, position)
+         VALUES ('prov_y', 'Y', 'y', 'chat-completions', 'https://y.test/v1', -1)`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menolak model yang menunjuk provider tidak ada', async () => {
+    await expect(
+      ctx.db.query(
+        `INSERT INTO model_configs (
+           model_id, label, provider_id, model_key, estimated_turn_cost, context_tokens
+         ) VALUES ('m_hantu', 'Hantu', 'prov_hantu', 'x', 100, 1000)`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('menahan penghapusan provider yang masih dipakai model', async () => {
+    await ctx.db.query(
+      `INSERT INTO providers (provider_id, name, prefix, api_type, base_url)
+       VALUES ('prov_dipakai', 'Dipakai', 'dipakai', 'chat-completions', 'https://d.test/v1')`,
+    );
+    await ctx.db.query(
+      `INSERT INTO model_configs (
+         model_id, label, provider_id, model_key, estimated_turn_cost, context_tokens
+       ) VALUES ('m_dipakai', 'M', 'prov_dipakai', 'x', 100, 1000)`,
+    );
+
+    await expect(
+      ctx.db.query(`DELETE FROM providers WHERE provider_id = 'prov_dipakai'`),
+    ).rejects.toThrow();
+
+    await ctx.db.query(`DELETE FROM model_configs WHERE model_id = 'm_dipakai'`);
+    await expect(
+      ctx.db.query(`DELETE FROM providers WHERE provider_id = 'prov_dipakai'`),
+    ).resolves.toBeDefined();
   });
 
   it('menolak penagihan dua kali untuk operasi yang sama (FR-52)', async () => {    await ctx.db.query(

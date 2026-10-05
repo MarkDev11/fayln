@@ -28,7 +28,7 @@ import {
 import { genresList } from './pages/genrePages';
 import { wizardStep1, wizardStep2, wizardStep3 } from './pages/wizardPages';
 import { WIZARD_CSS, WIZARD_JS } from './wizardClient';
-import { modelForm, modelsList } from './pages/modelPages';
+import { modelForm, modelsList, providerForm, providersList } from './pages/modelPages';
 import { promotionForm, promotionsList } from './pages/promotionPages';
 import type { SafeHtml } from './html';
 import { ACCEPTED_IMAGE_TYPES, inspectImage } from '../media/imageFile';
@@ -36,6 +36,8 @@ import { isMediaId, type MediaRepository } from '../repositories/mediaRepository
 import { BASE_EXPRESSION, isRelationStatus } from './worldDraftRepository';
 import type { CharacterFailure } from './charactersRepository';
 import type { CategoryFailure, LocationFailure } from './locationsRepository';
+import type { ModelFailure } from './modelsRepository';
+import type { ProviderFailure } from './providersRepository';
 import { html, inputValue, layout } from './html';
 import { validatePassword, verifyPassword } from './password';
 import {
@@ -70,6 +72,8 @@ type AdminPages = {
   accountDetail: (ctx: AdminPageContext, accountId: string) => Promise<SafeHtml>;
   modelsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   modelForm: (ctx: AdminPageContext, modelId: string | null) => Promise<SafeHtml>;
+  providersList: (ctx: AdminPageContext) => Promise<SafeHtml>;
+  providerForm: (ctx: AdminPageContext, providerId: string | null) => Promise<SafeHtml>;
   promotionsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   promotionForm: (ctx: AdminPageContext, promotionId: string | null) => Promise<SafeHtml>;
   settingsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
@@ -98,6 +102,8 @@ const DEFAULT_PAGES: AdminPages = {
   accountDetail,
   modelsList,
   modelForm,
+  providersList,
+  providerForm,
   promotionsList,
   promotionForm,
   settingsList,
@@ -250,12 +256,34 @@ const genreBody = z.object({
 const modelBody = z.object({
   modelId: z.string().optional().default(''),
   label: z.string().trim().min(1).max(120),
-  provider: z.string().trim().max(60).optional().default(''),
+  // Provider dan nama model diperiksa di repositori, bukan di sini: repositori
+  // dapat menyebutkan APA yang salah ("provider itu sudah dihapus"), sedangkan
+  // penolakan Zod berakhir sebagai `notice=invalid-input` yang tidak menjelaskan
+  // apa pun. Bentuknya tetap dijaga di sini sebagai lapis pertama.
+  providerId: z.string().optional().default(''),
+  modelKey: z.string().optional().default(''),
   estimatedTurnCost: z.coerce.number().int().positive(),
   contextTokens: z.coerce.number().int().positive(),
   position: z.coerce.number().int().min(0),
   tier: z.enum(['free', 'paid']),
   notes: z.string().trim().max(240).optional().default(''),
+  isActive: z.union([z.literal('on'), z.literal('true'), z.undefined()]).optional(),
+});
+
+/**
+ * Isian provider.
+ *
+ * Semuanya opsional di sini dengan alasan yang sama seperti model: penolakan
+ * yang menjelaskan sebabnya datang dari repositori.
+ */
+const providerBody = z.object({
+  providerId: z.string().optional().default(''),
+  name: z.string().max(200).optional().default(''),
+  prefix: z.string().max(60).optional().default(''),
+  apiType: z.string().max(40).optional().default(''),
+  baseUrl: z.string().max(300).optional().default(''),
+  apiKeyEnv: z.string().max(120).optional().default(''),
+  notes: z.string().max(300).optional().default(''),
   isActive: z.union([z.literal('on'), z.literal('true'), z.undefined()]).optional(),
 });
 
@@ -569,6 +597,28 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
   app.get<{ Querystring: { model?: string } }>('/admin/models-form', async (request, reply) =>
     send(reply, request, 'Model', await pages.modelForm(ctx, request.query.model ?? null), 'models'),
+  );
+
+  app.get('/admin/providers', async (request, reply) =>
+    send(reply, request, 'Provider', await pages.providersList(ctx), 'providers'),
+  );
+
+  /*
+   * Formulir provider memakai sendWizard, bukan send.
+   *
+   * Bukan karena ia punya baris berulang — ia tidak punya. Yang dibutuhkan
+   * adalah WIZARD_JS, yang memasang perilaku umum panel: penjaga perubahan
+   * belum tersimpan dan penyetel tinggi textarea. Tanpa itu, meninggalkan
+   * formulir yang setengah diisi tidak memperingatkan apa pun.
+   */
+  app.get<{ Querystring: { provider?: string } }>('/admin/providers-form', async (request, reply) =>
+    sendWizard(
+      reply,
+      request,
+      'Provider',
+      await pages.providerForm(ctx, request.query.provider ?? null),
+      'providers',
+    ),
   );
 
   app.get('/admin/promotions', async (request, reply) =>
@@ -1774,10 +1824,11 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       return reply.redirect('/admin/models-form?notice=invalid-input', 302);
     }
 
-    const { modelId } = await ctx.models.saveModel({
+    const result = await ctx.models.saveModel({
       modelId: parsed.data.modelId || null,
       label: parsed.data.label,
-      provider: parsed.data.provider,
+      providerId: parsed.data.providerId,
+      modelKey: parsed.data.modelKey,
       estimatedTurnCost: parsed.data.estimatedTurnCost,
       contextTokens: parsed.data.contextTokens,
       position: parsed.data.position,
@@ -1786,16 +1837,120 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       notes: parsed.data.notes,
     });
 
+    if (!result.ok) {
+      // Kembali ke formulir yang sedang diisi, bukan ke daftar: isian yang
+      // panjang tidak boleh hilang hanya karena satu bidang ditolak.
+      const base = parsed.data.modelId
+        ? `/admin/models-form?model=${encodeURIComponent(parsed.data.modelId)}`
+        : '/admin/models-form';
+      return reply.redirect(noticeRedirect(base, modelNotice(result.reason)), 302);
+    }
+
     await admins.recordAudit({
       adminId: session?.adminId ?? null,
       username: session?.username ?? '',
       action: parsed.data.modelId ? 'model.update' : 'model.create',
       targetKind: 'model',
-      targetId: modelId,
+      targetId: result.modelId,
+      detail: { providerId: parsed.data.providerId, tier: parsed.data.tier },
       ipAddress: request.ip,
     });
 
     return reply.redirect('/admin/models?notice=saved', 302);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Perubahan: provider                                               */
+  /* ---------------------------------------------------------------- */
+
+  app.post('/admin/providers', async (request, reply) => {
+    const session = request.adminSession;
+    const parsed = providerBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.redirect('/admin/providers-form?notice=invalid-input', 302);
+    }
+    const data = parsed.data;
+
+    const isNew = data.providerId.length === 0;
+    const input = {
+      name: data.name,
+      prefix: data.prefix,
+      apiType: data.apiType,
+      baseUrl: data.baseUrl,
+      apiKeyEnv: data.apiKeyEnv,
+      isActive: data.isActive !== undefined,
+      notes: data.notes,
+    };
+
+    const result = isNew
+      ? await ctx.providers.create(input)
+      : await ctx.providers.update(data.providerId, input);
+
+    // Kembali ke formulir yang sedang diisi, bukan ke daftar: alamat dan prefix
+    // panjang, dan tidak boleh hilang hanya karena satu bidang ditolak.
+    const base = isNew
+      ? '/admin/providers-form'
+      : `/admin/providers-form?provider=${encodeURIComponent(data.providerId)}`;
+
+    if (!result.ok) {
+      return reply.redirect(
+        noticeRedirect(base, providerNotice(result.reason), result.detail),
+        302,
+      );
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: isNew ? 'provider.create' : 'provider.update',
+      targetKind: 'provider',
+      targetId: result.providerId,
+      /*
+       * NAMA variabel kuncinya boleh masuk catatan; NILAI kuncinya tidak pernah
+       * menyentuh berkas ini sama sekali, jadi tidak mungkin ikut tercatat.
+       */
+      detail: { prefix: data.prefix, apiType: data.apiType, apiKeyEnv: data.apiKeyEnv },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/providers?notice=saved', 302);
+  });
+
+  app.post('/admin/providers/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z.object({ providerId: z.string().trim().min(1) }).safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/providers?notice=invalid-input', 302);
+    }
+
+    const result = await ctx.providers.remove(body.data.providerId);
+    if (!result.ok) {
+      const code = result.reason === 'in-use' ? 'provider-in-use' : 'not-found';
+      return reply.redirect(noticeRedirect('/admin/providers', code), 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'provider.delete',
+      targetKind: 'provider',
+      targetId: body.data.providerId,
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/providers?notice=deleted', 302);
+  });
+
+  app.post('/admin/providers/move', async (request, reply) => {
+    const body = z
+      .object({ providerId: z.string().trim().min(1), direction: z.enum(['up', 'down']) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/providers?notice=invalid-input', 302);
+    }
+
+    await ctx.providers.move(body.data.providerId, body.data.direction);
+    return reply.redirect('/admin/providers', 302);
   });
 
   app.post('/admin/models/toggle', async (request, reply) => {
@@ -2263,6 +2418,63 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
         'Lokasi ini sudah dipungut sebuah dunia, jadi tidak dihapus — menghapusnya ' +
         'akan memutus latar di cerita itu. Hapus latarnya dari dunia tersebut lebih dulu.',
     },
+    'provider-name-invalid': {
+      kind: 'error',
+      text: 'Nama provider tidak boleh kosong.',
+    },
+    'provider-prefix-invalid': {
+      kind: 'error',
+      text:
+        'Prefix harus diawali huruf atau angka, dan hanya boleh berisi huruf kecil, ' +
+        'angka, atau tanda hubung (maksimal 32 karakter).',
+    },
+    'provider-prefix-taken': {
+      kind: 'error',
+      text:
+        'Prefix itu sudah dipakai provider lain. Dua provider dengan prefix sama ' +
+        'membuat id model menjadi ambigu.',
+    },
+    'provider-api-type-invalid': {
+      kind: 'error',
+      text: 'Jenis API harus dipilih salah satu dari daftar.',
+    },
+    'provider-base-url-invalid': {
+      kind: 'error',
+      text:
+        'Base URL harus alamat http:// atau https:// yang lengkap, mis. ' +
+        'https://api.openai.com/v1',
+    },
+    'provider-key-env-invalid': {
+      kind: 'error',
+      // Menyebut bentuk yang benar, bukan hanya menolak: yang diketik admin di
+      // sini adalah NAMA variabel, dan itu mudah tertukar dengan nilainya.
+      text:
+        'Isi dengan NAMA variabel lingkungannya, bukan kuncinya — huruf besar, angka, ' +
+        'dan garis bawah, mis. OPENAI_API_KEY. Kuncinya sendiri tidak pernah disimpan ' +
+        'di basis data.',
+    },
+    'provider-in-use': {
+      kind: 'error',
+      text:
+        'Provider ini masih dipakai model, jadi tidak dihapus — model itu akan ' +
+        'kehilangan alamat tujuannya. Pindahkan modelnya ke provider lain lebih dulu.',
+    },
+    'model-label-invalid': {
+      kind: 'error',
+      text: 'Nama model tidak boleh kosong.',
+    },
+    'model-provider-invalid': {
+      kind: 'error',
+      text:
+        'Provider belum dipilih, atau providernya sudah dihapus di tab lain. ' +
+        'Setiap model harus tahu ke alamat mana ia dikirim.',
+    },
+    'model-key-invalid': {
+      kind: 'error',
+      text:
+        'Nama model di provider harus diawali huruf atau angka, dan hanya boleh berisi ' +
+        'huruf, angka, titik, garis bawah, garis miring, atau titik dua.',
+    },
   };
 
   const entry = MAP[raw];
@@ -2357,6 +2569,42 @@ function locationNotice(reason: LocationFailure): string {
       return 'location-no-image';
     case 'in-use':
       return 'location-in-use';
+    case 'not-found':
+      return 'not-found';
+  }
+}
+
+/** Kode notifikasi untuk tiap sebab penolakan provider. */
+function providerNotice(reason: ProviderFailure): string {
+  switch (reason) {
+    case 'invalid-name':
+      return 'provider-name-invalid';
+    case 'invalid-prefix':
+      return 'provider-prefix-invalid';
+    case 'duplicate-prefix':
+      return 'provider-prefix-taken';
+    case 'invalid-api-type':
+      return 'provider-api-type-invalid';
+    case 'invalid-base-url':
+      return 'provider-base-url-invalid';
+    case 'invalid-key-env':
+      return 'provider-key-env-invalid';
+    case 'in-use':
+      return 'provider-in-use';
+    case 'not-found':
+      return 'not-found';
+  }
+}
+
+/** Kode notifikasi untuk tiap sebab penolakan model. */
+function modelNotice(reason: ModelFailure): string {
+  switch (reason) {
+    case 'invalid-label':
+      return 'model-label-invalid';
+    case 'invalid-provider':
+      return 'model-provider-invalid';
+    case 'invalid-model-key':
+      return 'model-key-invalid';
     case 'not-found':
       return 'not-found';
   }
