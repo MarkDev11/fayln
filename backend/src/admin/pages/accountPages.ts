@@ -122,7 +122,10 @@ export async function accountDetail(ctx: AdminPageContext, accountId: string): P
       <button type="submit">Simpan tier</button>
     </form>
 
-    <form method="post" action="/admin/accounts/reset">
+    <form method="post" action="/admin/accounts/reset"
+          data-confirm="Kosongkan hitungan pemakaian hari ini untuk ${esc(account.accountId)}? Buku besar penagihan tidak dihapus."
+          data-confirm-title="Reset pemakaian"
+          data-confirm-ok="Reset">
       <input type="hidden" name="accountId" value="${inputValue(account.accountId)}">
       <p class="sub" style="margin-top:0">
         Mengosongkan hitungan pemakaian hari ini supaya pemain mendapat kembali

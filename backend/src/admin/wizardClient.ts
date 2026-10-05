@@ -415,24 +415,24 @@ export const WIZARD_JS = `
 /**
  * Gaya untuk potongan yang hanya dipakai wizard.
  *
- * Diselaraskan dengan gaya panel yang baru: tokennya sama (`--panel`, `--line`,
- * `--accent`), radiusnya sama, dan `--surface2` lama sudah tidak ada — memakai
- * variabel yang tidak lagi didefinisikan TIDAK menghasilkan galat, hanya latar
- * yang tembus, sehingga mudah terlewat.
+ * Diselaraskan dengan gaya panel: tokennya sama (`--panel`, `--line`, `--accent`,
+ * `--track`, `--seg-active`), radiusnya sama, dan `--surface2` serta `--surface`
+ * lama sudah tidak ada — memakai variabel yang tidak lagi didefinisikan TIDAK
+ * menghasilkan galat, hanya latar yang tembus, sehingga mudah terlewat.
  *
  * Langkah wizard digambar sebagai segmented control macOS: satu wadah kelabu
- * berisi beberapa ruas, dengan ruas aktif berlatar putih dan berbayang.
+ * berisi beberapa ruas, dengan ruas aktif berlatar terang dan berbayang.
  */
 export const WIZARD_CSS = `
 .wizard-steps{display:inline-flex;gap:2px;margin:0 0 18px;padding:2px;list-style:none;
-  flex-wrap:wrap;background:var(--panel);border:1px solid var(--line);border-radius:9px}
+  flex-wrap:wrap;background:var(--track);border:0;border-radius:var(--radius-sm)}
 .wizard-steps li{display:flex;align-items:center}
 .wizard-steps a,.wizard-steps span{display:inline-flex;align-items:center;gap:6px;
-  padding:5px 12px;border-radius:7px;font-size:12.5px;color:var(--muted);
+  padding:4px 12px;border-radius:7px;font-size:12px;font-weight:600;color:var(--muted);
   border:1px solid transparent}
-.wizard-steps a:hover{color:var(--text);text-decoration:none;background:var(--accent-soft)}
-.wizard-steps .is-current{background:var(--surface);color:var(--text);font-weight:600;
-  border-color:var(--line);box-shadow:0 1px 2px rgba(0,0,0,.08)}
+.wizard-steps a:hover{color:var(--text);text-decoration:none;background:var(--hover)}
+.wizard-steps .is-current{background:var(--seg-active);color:var(--text);font-weight:600;
+  border-color:transparent;box-shadow:var(--shadow-ctl)}
 .wizard-steps .is-done{color:var(--accent);font-weight:500}
 .wizard-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:18px}
 .wizard-actions .spacer{flex:1}
@@ -442,26 +442,27 @@ export const WIZARD_CSS = `
 .upload-status[data-state=error]{color:var(--danger)}
 .upload-row{display:flex;align-items:center;gap:10px;padding:6px 0;font-size:12.5px}
 .upload-row--error{color:var(--danger)}
-.upload-thumb{width:56px;height:32px;object-fit:cover;border-radius:6px;
-  border:1px solid var(--line);background:var(--panel)}
+.upload-thumb{width:56px;height:32px;object-fit:cover;border-radius:var(--radius-xs);
+  border:1px solid var(--line);background:var(--field)}
 .focal-stage{position:relative;display:inline-block;line-height:0;cursor:crosshair;
-  border:1px solid var(--line);border-radius:8px;overflow:hidden;max-width:100%}
+  border:1px solid var(--line);border-radius:var(--radius-sm);overflow:hidden;max-width:100%}
 .focal-stage img{display:block;width:100%;max-width:420px;height:auto}
 .focal-marker{position:absolute;width:16px;height:16px;margin:-8px 0 0 -8px;border-radius:50%;
   border:2px solid #fff;box-shadow:0 0 0 1px rgba(0,0,0,.6);pointer-events:none}
 .bg-item{display:flex;gap:12px;align-items:flex-start;padding:12px 0;
   border-top:1px solid var(--line)}
 .bg-item:first-child{border-top:0}
-.bg-item__thumb{width:96px;height:54px;object-fit:cover;border-radius:6px;
-  border:1px solid var(--line);background:var(--panel);flex:none}
+.bg-item__thumb{width:96px;height:54px;object-fit:cover;border-radius:var(--radius-xs);
+  border:1px solid var(--line);background:var(--field);flex:none}
 .bg-item__body{flex:1;min-width:0}
 .bg-item__meta{font-size:11.5px;color:var(--muted);margin-top:2px}
 .bg-item__order{display:flex;flex-direction:column;gap:4px}
 .bg-item__order button{padding:1px 8px;font-size:12px}
 .expression-row{display:flex;gap:10px;align-items:flex-start;padding:10px;
-  border:1px solid var(--line);border-radius:9px;margin-top:10px;background:var(--panel)}
+  border:1px solid var(--line);border-radius:var(--radius-sm);margin-top:10px;
+  background:var(--field)}
 .expression-row__fields{flex:1;min-width:0}
-.npc-card{border:1px solid var(--line);border-radius:10px;padding:14px;margin-top:12px;
-  background:var(--panel)}
+.npc-card{border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-top:12px;
+  background:var(--field)}
 .npc-card__head{display:flex;gap:12px;align-items:center}
 `;

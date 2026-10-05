@@ -51,7 +51,10 @@ export async function locationsList(ctx: AdminPageContext, worldId: string | nul
   </td>
   <td class="right mono">${String(location.position)}</td>
   <td class="right">
-    <form method="post" action="/admin/locations/delete" class="inline">
+    <form method="post" action="/admin/locations/delete" class="inline"
+          data-confirm="Hapus lokasi “${esc(location.label)}”? Dunia akan mendapat versi baru tanpa lokasi tersebut."
+          data-confirm-title="Hapus lokasi"
+          data-confirm-ok="Hapus">
       <input type="hidden" name="worldId" value="${inputValue(activeWorldId)}">
       <input type="hidden" name="locationId" value="${inputValue(location.locationId)}">
       <button class="danger" type="submit">Hapus</button>

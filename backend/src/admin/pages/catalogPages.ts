@@ -196,7 +196,10 @@ export async function worldsForm(ctx: AdminPageContext, worldId: string | null):
         : 'Belum ada perjalanan pemain yang memakai dunia ini, sehingga aman dihapus.'
     }
   </p>
-  <form method="post" action="/admin/worlds/delete" class="inline">
+  <form method="post" action="/admin/worlds/delete" class="inline"
+        data-confirm="Hapus dunia “${esc(world.title)}” beserta seluruh versinya? Perjalanan pemain yang menunjuk ke sana tidak dapat dibuka lagi."
+        data-confirm-title="Hapus dunia"
+        data-confirm-ok="Hapus dunia">
     <input type="hidden" name="worldId" value="${inputValue(world.worldId)}">
     <button class="danger" type="submit" ${world.journeyCount > 0 ? 'disabled' : ''}>Hapus dunia</button>
   </form>
@@ -399,7 +402,10 @@ export async function charactersForm(
     <a href="/admin/characters"><button class="ghost" type="button">Batal</button></a>
     ${
       character
-        ? html`<form method="post" action="/admin/characters/delete" class="inline">
+        ? html`<form method="post" action="/admin/characters/delete" class="inline"
+      data-confirm="Hapus karakter “${esc(character.name)}” dari dunia ini? Dunia akan mendapat versi baru tanpa karakter tersebut."
+      data-confirm-title="Hapus karakter"
+      data-confirm-ok="Hapus karakter">
       <input type="hidden" name="worldId" value="${inputValue(activeWorldId)}">
       <input type="hidden" name="npcId" value="${inputValue(character.npcId)}">
       <button class="danger" type="submit">Hapus karakter</button>

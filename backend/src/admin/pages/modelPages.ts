@@ -46,7 +46,10 @@ export async function modelsList(ctx: AdminPageContext): Promise<SafeHtml> {
   <td class="right">
     <div class="row" style="justify-content:flex-end">
       <a href="/admin/models-form?model=${esc(model.modelId)}"><button class="ghost" type="button">Ubah</button></a>
-      <form method="post" action="/admin/models/toggle" class="inline">
+      <form method="post" action="/admin/models/toggle" class="inline"
+            data-confirm="${model.isActive ? 'Matikan' : 'Nyalakan'} model ${esc(model.modelId)}?"
+            data-confirm-title="${model.isActive ? 'Matikan model' : 'Nyalakan model'}"
+            data-confirm-ok="${model.isActive ? 'Matikan' : 'Nyalakan'}">
         <input type="hidden" name="modelId" value="${inputValue(model.modelId)}">
         <input type="hidden" name="isActive" value="${model.isActive ? 'false' : 'true'}">
         <button class="ghost" type="submit">${model.isActive ? 'Matikan' : 'Nyalakan'}</button>
@@ -136,7 +139,10 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
     <a href="/admin/models"><button class="ghost" type="button">Batal</button></a>
     ${
       model
-        ? html`<form method="post" action="/admin/models/delete" class="inline">
+        ? html`<form method="post" action="/admin/models/delete" class="inline"
+      data-confirm="Hapus model ${esc(model.modelId)} dari rantai fallback tier ini?"
+      data-confirm-title="Hapus model"
+      data-confirm-ok="Hapus">
       <input type="hidden" name="modelId" value="${inputValue(model.modelId)}">
       <button class="danger" type="submit">Hapus</button>
     </form>`

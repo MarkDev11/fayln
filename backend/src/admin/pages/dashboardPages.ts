@@ -158,7 +158,10 @@ export async function settingsList(ctx: AdminPageContext): Promise<SafeHtml> {
   <td>${setting.description ? esc(setting.description) : html`<span class="muted">—</span>`}</td>
   <td class="mono">${renderValue(setting.value)}</td>
   <td class="right">
-    <form method="post" action="/admin/settings/delete" class="inline">
+    <form method="post" action="/admin/settings/delete" class="inline"
+          data-confirm="Hapus pengaturan ${esc(setting.key)}? Nilainya akan kembali ke bawaan."
+          data-confirm-title="Hapus pengaturan"
+          data-confirm-ok="Hapus">
       <input type="hidden" name="key" value="${inputValue(setting.key)}">
       <button class="danger" type="submit">Hapus</button>
     </form>

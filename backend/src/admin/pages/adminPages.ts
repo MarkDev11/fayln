@@ -46,7 +46,10 @@ export async function adminsList(ctx: AdminPageContext, viewer: AdminViewer): Pr
     ${
       isSelf
         ? html`<span class="muted" style="font-size:12px">tidak dapat menonaktifkan diri sendiri</span>`
-        : html`<form method="post" action="/admin/admins/toggle" class="inline">
+        : html`<form method="post" action="/admin/admins/toggle" class="inline"
+      data-confirm="${admin.isActive ? 'Nonaktifkan' : 'Aktifkan'} akses ${esc(admin.displayName || admin.username)} ke panel?"
+      data-confirm-title="${admin.isActive ? 'Nonaktifkan admin' : 'Aktifkan admin'}"
+      data-confirm-ok="${admin.isActive ? 'Nonaktifkan' : 'Aktifkan'}">
       <input type="hidden" name="adminId" value="${inputValue(admin.adminId)}">
       <input type="hidden" name="isActive" value="${admin.isActive ? 'false' : 'true'}">
       <button class="ghost" type="submit" ${isOwner ? '' : 'disabled'}>${

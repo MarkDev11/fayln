@@ -155,7 +155,10 @@ function genreRow(genre: GenreRow, index: number, total: number): SafeHtml {
     ${
       used
         ? html`<span class="muted" style="font-size:12px">dipakai ${escOr(String(genre.worldCount), '0')} dunia</span>`
-        : html`<form method="post" action="/admin/genres/delete" class="inline">
+        : html`<form method="post" action="/admin/genres/delete" class="inline"
+      data-confirm="Hapus genre “${esc(genre.labelId)}”? Genre yang sudah dipakai dunia tidak dapat dihapus — nonaktifkan saja."
+      data-confirm-title="Hapus genre"
+      data-confirm-ok="Hapus">
       <input type="hidden" name="genreId" value="${inputValue(genre.genreId)}">
       <button class="danger" type="submit">Hapus</button>
     </form>`

@@ -308,3 +308,243 @@ describe('cabang yang hanya aktif saat basis data kosong', () => {
     expect(body).not.toContain('&lt;div');
   });
 });
+
+/* ------------------------------------------------------------------ */
+
+describe('sakelar tema', () => {
+  it('menawarkan tiga pilihan tema di halaman yang sudah masuk', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin');
+
+    for (const mode of ['light', 'dark', 'auto']) {
+      expect(body).toContain(`data-theme-set="${mode}"`);
+    }
+    expect(body).toContain('Terang');
+    expect(body).toContain('Gelap');
+    expect(body).toContain('Otomatis');
+  });
+
+  it('memasang tema tersimpan di dalam kepala halaman, bukan di akhir badan', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin');
+
+    // Kalau skrip ini diletakkan di akhir <body>, halaman akan berkedip terang
+    // lebih dahulu lalu berubah gelap pada setiap pemuatan.
+    const head = body.slice(0, body.indexOf('</head>'));
+    expect(head).toContain("localStorage.getItem('fayln.admin.theme')");
+    expect(head).toContain('data-theme');
+  });
+
+  it('membiarkan pilihan eksplisit mengalahkan preferensi sistem', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin');
+
+    // Blok [data-theme] harus berada SETELAH blok media; spesifisitas keduanya
+    // sama, jadi urutannya yang menentukan siapa yang menang.
+    const darkRule = body.indexOf(':root[data-theme=dark]{');
+    const mediaRule = body.indexOf('@media (prefers-color-scheme:dark)');
+    expect(mediaRule).toBeGreaterThan(-1);
+    expect(darkRule).toBeGreaterThan(mediaRule);
+  });
+
+  it('tidak menawarkan sakelar tema pada halaman masuk', async () => {
+    const response = await app.inject({ method: 'GET', url: '/admin/login' });
+    expect(response.statusCode).toBe(200);
+    // Yang diperiksa adalah TOMBOLNYA, bukan nama atributnya: skrip klien memuat
+    // teks "data-theme-set" sebagai selektor, jadi mencarinya sebagai teks akan
+    // selalu menemukannya di mana pun.
+    expect(response.body).not.toContain('data-theme-set="');
+  });
+});
+
+describe('bilah sisi ala System Settings', () => {
+  it('memberi setiap menu sebuah ikon berwarna, bukan gambar dari jaringan', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin');
+
+    const icons = body.match(/class="nav__icon"/g) ?? [];
+    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(12);
+    expect(body).toContain('--i-a:#0a84ff;--i-b:#0055c4');
+    expect(body).toMatch(/nav__icon[^>]*>\s*<svg/);
+    expect(body, 'ikon tidak boleh dimuat dari jaringan').not.toMatch(/<img[^>]+src="https?:/);
+  });
+});
+
+describe('gaya panel', () => {
+  function cssOf(body: string): string {
+    const match = /<style>([\s\S]*?)<\/style>/.exec(body);
+    expect(match, 'Halaman tidak memuat blok gaya.').not.toBeNull();
+    return match![1];
+  }
+
+  it('mendefinisikan token warna yang dipakai halamannya', async () => {
+    const cookie = await login();
+    const css = cssOf(await sweep(cookie, '/admin'));
+
+    for (const token of [
+      '--window',
+      '--panel',
+      '--field',
+      '--line',
+      '--accent',
+      '--danger',
+      '--ok',
+      '--warn',
+      '--track',
+      '--seg-active',
+      '--radius',
+      '--content',
+    ]) {
+      expect(css, `token ${token} tidak didefinisikan`).toContain(`${token}:`);
+    }
+    expect(css).toContain('@media (prefers-color-scheme:dark)');
+    expect(css).toContain(':root[data-theme=dark]');
+  });
+
+  /**
+   * Penjaga untuk kelas cacat yang sudah dua kali terjadi.
+   *
+   * Ketika `--surface` dihapus dari daftar token, `WIZARD_CSS` tetap memakainya.
+   * Memakai variabel yang tidak didefinisikan TIDAK menghasilkan galat apa pun —
+   * hanya latar yang tembus, dan tidak ada satu baris pun yang terlihat salah.
+   * Karena itu kesamaannya diperiksa di sini, bukan diserahkan pada mata.
+   *
+   * Halaman wizard ikut diperiksa karena `WIZARD_CSS` hanya disisipkan di sana.
+   */
+  it('tidak memakai token CSS yang tidak didefinisikan', async () => {
+    const cookie = await login();
+    const { worldId } = await pages.drafts.createDraft();
+
+    const halaman = ['/admin', `/admin/worlds/${worldId}/wizard/1`, `/admin/worlds/${worldId}/wizard/3`];
+    const dipakai = new Set<string>();
+
+    for (const url of halaman) {
+      const css = cssOf(await sweep(cookie, url));
+      const defined = new Set(Array.from(css.matchAll(/(--[a-z0-9-]+)\s*:/g), (m) => m[1]));
+      for (const match of css.matchAll(/var\((--[a-z0-9-]+)/g)) {
+        const token = match[1]!;
+        // Disetel inline pada setiap ikon menu, jadi memang tidak ada di sini.
+        if (token === '--i-a' || token === '--i-b') {
+          continue;
+        }
+        if (!defined.has(token)) {
+          dipakai.add(`${token} (di ${url})`);
+        }
+      }
+    }
+
+    expect([...dipakai], 'token CSS dipakai tetapi tidak pernah didefinisikan').toEqual([]);
+  });
+});
+
+describe('sheet konfirmasi', () => {
+  it('membawa tiga tombol jendela yang benar-benar berfungsi', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin');
+
+    expect(body).toContain('data-sheet-root');
+    for (const action of ['close', 'min', 'zoom']) {
+      expect(body).toContain(`data-sheet-action="${action}"`);
+    }
+    // Titik di bilah judul jendela utama tetap hiasan.
+    expect(body).toContain('class="traffic" aria-hidden="true"');
+  });
+
+  it('tidak menyisipkan sheet pada halaman masuk', async () => {
+    const response = await app.inject({ method: 'GET', url: '/admin/login' });
+    // Sama seperti sakelar tema: yang diperiksa elemennya, bukan nama atributnya.
+    expect(response.body).not.toContain('class="sheet-layer"');
+  });
+
+  /**
+   * Uji paling penting di blok ini.
+   *
+   * Ia tidak memeriksa satu formulir yang sudah diketahui, melainkan MENYAPU
+   * seluruh halaman dan menuntut setiap formulir destruktif memawa konfirmasi.
+   * Formulir baru yang ditambahkan kelak tanpa `data-confirm` akan langsung
+   * ketahuan — itulah bedanya dengan uji yang hanya menyebut satu alamat.
+   */
+  it('tidak membiarkan satu pun formulir destruktif lolos tanpa konfirmasi', async () => {
+    const cookie = await login();
+
+    // Siapkan data yang membuat formulir destruktif benar-benar muncul.
+    // Tanpa ini, sebagian besar halaman hanya menampilkan tabel kosong dan
+    // ujinya lulus tanpa membuktikan apa pun.
+    await pages.genres.create({
+      genreId: 'uji_hapus',
+      labelId: 'Uji Hapus',
+      labelEn: 'Delete Test',
+      active: true,
+    });
+    await admins.createAdmin({
+      username: 'operator-kedua',
+      password: ADMIN_PASSWORD,
+      displayName: 'Operator Kedua',
+      role: 'editor',
+    });
+    const { worldId } = await pages.drafts.createDraft();
+
+    // Sebagian besar aksi destruktif berada di halaman RINCIAN, bukan di daftar.
+    // Alamatnya diturunkan dari daftarnya sendiri supaya tidak ada id yang
+    // ditulis tetap di sini — id dunia berubah setiap kali seed berubah.
+    const daftarDunia = await sweep(cookie, '/admin/worlds');
+    const idDunia = /\/admin\/worlds\/([A-Za-z0-9_-]+)"/.exec(daftarDunia)?.[1];
+    expect(idDunia, 'Tidak menemukan satu pun dunia untuk disapu.').toBeTruthy();
+
+    const daftarAkun = await sweep(cookie, '/admin/accounts');
+    const idAkun = /\/admin\/accounts\/([A-Za-z0-9_-]+)"/.exec(daftarAkun)?.[1];
+    expect(idAkun, 'Tidak menemukan satu pun akun untuk disapu.').toBeTruthy();
+
+    const halaman = [
+      '/admin/genres',
+      '/admin/admins',
+      '/admin/models',
+      '/admin/settings',
+      '/admin/accounts',
+      '/admin/locations',
+      '/admin/promotions',
+      '/admin/worlds',
+      '/admin/characters',
+      `/admin/worlds/${idDunia}`,
+      `/admin/accounts/${idAkun}`,
+      `/admin/worlds/${worldId}/wizard/2`,
+      `/admin/worlds/${worldId}/wizard/3`,
+    ];
+
+    // Sengaja TANPA bendera global: regex dengan /g menyimpan posisi terakhir,
+    // sehingga .test() yang dipanggil berulang kali akan melewatkan kecocokan.
+    const destruktif = /action="\/admin\/[a-zA-Z0-9/_-]*(delete|toggle|reset|remove|revoke)[a-zA-Z0-9/_-]*"/;
+
+    let ditemukan = 0;
+    for (const url of halaman) {
+      const body = await sweep(cookie, url);
+      for (const tag of body.match(/<form[^>]*>/g) ?? []) {
+        if (!destruktif.test(tag)) {
+          continue;
+        }
+        ditemukan += 1;
+        expect(tag, `formulir destruktif tanpa konfirmasi di ${url}: ${tag}`).toContain(
+          'data-confirm=',
+        );
+      }
+    }
+
+    expect(
+      ditemukan,
+      'Tidak menemukan cukup banyak formulir destruktif — uji ini tidak membuktikan apa-apa.',
+    ).toBeGreaterThanOrEqual(4);
+  });
+
+  it('menyebut sasaran tindakan di dalam pesan konfirmasi', async () => {
+    const cookie = await login();
+    await pages.genres.create({
+      genreId: 'uji_hapus',
+      labelId: 'Uji Hapus',
+      labelEn: 'Delete Test',
+      active: true,
+    });
+
+    const body = await sweep(cookie, '/admin/genres');
+    expect(body).toMatch(/data-confirm="Hapus genre “[^”]+”\?/);
+  });
+});

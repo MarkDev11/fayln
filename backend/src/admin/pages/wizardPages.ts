@@ -370,7 +370,10 @@ function backgroundItem(
       <input type="hidden" name="direction" value="down">
       <button class="ghost" type="submit"${index === total - 1 ? ' disabled' : ''} title="Turunkan">&darr;</button>
     </form>
-    <form method="post" action="/admin/worlds-wizard/2/background/delete">
+    <form method="post" action="/admin/worlds-wizard/2/background/delete"
+          data-confirm="Hapus latar “${escOr(background.label, background.assetId)}”? Berkasnya tetap tersimpan sebagai aset."
+          data-confirm-title="Hapus latar"
+          data-confirm-ok="Hapus">
       <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
       <input type="hidden" name="assetId" value="${inputValue(background.assetId)}">
       <button class="danger" type="submit" title="Hapus">Hapus</button>
@@ -532,7 +535,10 @@ function npcCard(npc: NpcRow, draft: DraftWorld): SafeHtml {
         relasi awal: ${esc(npc.initialRelation)} · sifat: ${escOr(npc.traits.join(', '), '—')}
       </div>
     </div>
-    <form method="post" action="/admin/worlds-wizard/3/npc/delete">
+    <form method="post" action="/admin/worlds-wizard/3/npc/delete"
+          data-confirm="Hapus karakter “${esc(npc.name)}” beserta seluruh ekspresinya dari draf ini?"
+          data-confirm-title="Hapus karakter"
+          data-confirm-ok="Hapus karakter">
       <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
       <input type="hidden" name="npcId" value="${inputValue(npc.npcId)}">
       <button class="danger" type="submit">Hapus</button>

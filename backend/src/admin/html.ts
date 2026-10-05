@@ -158,43 +158,383 @@ export type LayoutOptions = {
   scripts?: string;
 };
 
-const NAV: { href: string; label: string; key: string }[] = [
-  { href: '/admin', label: 'Ringkasan', key: 'dashboard' },
-  { href: '/admin/worlds', label: 'Dunia', key: 'worlds' },
-  { href: '/admin/characters', label: 'Karakter', key: 'characters' },
-  { href: '/admin/locations', label: 'Lokasi', key: 'locations' },
-  { href: '/admin/genres', label: 'Genre', key: 'genres' },
-  { href: '/admin/assets', label: 'Aset', key: 'assets' },
-  { href: '/admin/accounts', label: 'Akun', key: 'accounts' },
-  { href: '/admin/models', label: 'Model', key: 'models' },
-  { href: '/admin/promotions', label: 'Promosi', key: 'promotions' },
-  { href: '/admin/settings', label: 'Pengaturan', key: 'settings' },
-  { href: '/admin/admins', label: 'Admin', key: 'admins' },
-  { href: '/admin/audit', label: 'Audit', key: 'audit' },
+/**
+ * Ikon bilah sisi.
+ *
+ * Ikon berwarna di bilah sisi adalah tanda pengenal System Settings: setiap
+ * baris punya kotak kecil bersudut bulat dengan gradien yang berbeda, sehingga
+ * menu dapat dikenali dari warnanya sebelum labelnya dibaca. Semuanya SVG
+ * sebaris — panel ini tidak boleh memuat apa pun dari jaringan.
+ *
+ * `aria-hidden` dipasang karena label teksnya sudah ada di sebelah ikon;
+ * pembaca layar tidak perlu mendengar bentuk yang tidak menambah makna.
+ */
+function navIcon(paths: string): SafeHtml {
+  return safe(
+    '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" ' +
+      'stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+      paths +
+      '</svg>',
+  );
+}
+
+type NavItem = {
+  href: string;
+  label: string;
+  key: string;
+  /** Warna gradien kotak ikon. */
+  from: string;
+  to: string;
+  icon: SafeHtml;
+};
+
+const NAV: NavItem[] = [
+  {
+    href: '/admin',
+    label: 'Ringkasan',
+    key: 'dashboard',
+    from: '#8e8e93',
+    to: '#5f5f66',
+    icon: navIcon(
+      '<rect x="2.6" y="2.6" width="4.8" height="4.8" rx="1.2"/>' +
+        '<rect x="8.6" y="2.6" width="4.8" height="4.8" rx="1.2"/>' +
+        '<rect x="2.6" y="8.6" width="4.8" height="4.8" rx="1.2"/>' +
+        '<rect x="8.6" y="8.6" width="4.8" height="4.8" rx="1.2"/>',
+    ),
+  },
+  {
+    href: '/admin/worlds',
+    label: 'Dunia',
+    key: 'worlds',
+    from: '#0a84ff',
+    to: '#0055c4',
+    icon: navIcon(
+      '<circle cx="8" cy="8" r="5.6"/><path d="M2.4 8h11.2"/>' +
+        '<path d="M8 2.4c1.6 1.7 2.4 3.6 2.4 5.6S9.6 12.3 8 13.6C6.4 12.3 5.6 10.4 5.6 8s.8-3.9 2.4-5.6z"/>',
+    ),
+  },
+  {
+    href: '/admin/characters',
+    label: 'Karakter',
+    key: 'characters',
+    from: '#af52de',
+    to: '#7a2bd0',
+    icon: navIcon(
+      '<circle cx="8" cy="5.5" r="2.7"/><path d="M2.9 13.7c0-2.6 2.3-4.3 5.1-4.3s5.1 1.7 5.1 4.3"/>',
+    ),
+  },
+  {
+    href: '/admin/locations',
+    label: 'Lokasi',
+    key: 'locations',
+    from: '#30b0c7',
+    to: '#1a7f93',
+    icon: navIcon(
+      '<path d="M8 14.2s4.7-4.3 4.7-7.6A4.7 4.7 0 0 0 8 1.9a4.7 4.7 0 0 0-4.7 4.7c0 3.3 4.7 7.6 4.7 7.6z"/>' +
+        '<circle cx="8" cy="6.5" r="1.7"/>',
+    ),
+  },
+  {
+    href: '/admin/genres',
+    label: 'Genre',
+    key: 'genres',
+    from: '#ff9f0a',
+    to: '#d97c00',
+    icon: navIcon(
+      '<path d="M8.7 2.2H13a.9.9 0 0 1 .9.9v4.3a1.7 1.7 0 0 1-.5 1.2l-4.4 4.4a1.7 1.7 0 0 1-2.4 0L3 9.4a1.7 1.7 0 0 1 0-2.4l4.4-4.4a1.7 1.7 0 0 1 1.3-.4z"/>' +
+        '<circle cx="10.7" cy="5.3" r=".95"/>',
+    ),
+  },
+  {
+    href: '/admin/assets',
+    label: 'Aset',
+    key: 'assets',
+    from: '#5e5ce6',
+    to: '#3b39b8',
+    icon: navIcon(
+      '<rect x="2.4" y="3.2" width="11.2" height="9.6" rx="1.9"/><circle cx="5.9" cy="6.7" r="1.2"/>' +
+        '<path d="M3.1 11.6l3.1-2.9 2.4 2.2 2.2-2 2.1 1.9"/>',
+    ),
+  },
+  {
+    href: '/admin/accounts',
+    label: 'Akun',
+    key: 'accounts',
+    from: '#34c759',
+    to: '#1f8f3f',
+    icon: navIcon(
+      '<rect x="2.2" y="3.6" width="11.6" height="8.8" rx="2.1"/><path d="M2.2 6.9h11.6"/><path d="M4.8 10.1h2.6"/>',
+    ),
+  },
+  {
+    href: '/admin/models',
+    label: 'Model',
+    key: 'models',
+    from: '#ff375f',
+    to: '#c9003a',
+    icon: navIcon(
+      '<rect x="4.4" y="4.4" width="7.2" height="7.2" rx="1.7"/>' +
+        '<path d="M6.6 2.1v2.3M9.4 2.1v2.3M6.6 11.6v2.3M9.4 11.6v2.3M2.1 6.6h2.3M2.1 9.4h2.3M11.6 6.6h2.3M11.6 9.4h2.3"/>',
+    ),
+  },
+  {
+    href: '/admin/promotions',
+    label: 'Promosi',
+    key: 'promotions',
+    from: '#ffd60a',
+    to: '#d9a800',
+    icon: navIcon(
+      '<circle cx="4.9" cy="11.1" r="1.9"/><circle cx="11.1" cy="4.9" r="1.9"/><path d="M12.2 3.8L3.8 12.2"/>',
+    ),
+  },
+  {
+    href: '/admin/settings',
+    label: 'Pengaturan',
+    key: 'settings',
+    from: '#8e8e93',
+    to: '#5f5f66',
+    icon: navIcon(
+      '<circle cx="8" cy="8" r="2.2"/>' +
+        '<path d="M8 1.9v1.9M8 12.2v1.9M1.9 8h1.9M12.2 8h1.9M3.7 3.7l1.35 1.35M10.95 10.95l1.35 1.35M12.3 3.7l-1.35 1.35M5.05 10.95L3.7 12.3"/>',
+    ),
+  },
+  {
+    href: '/admin/admins',
+    label: 'Admin',
+    key: 'admins',
+    from: '#64d2ff',
+    to: '#0a84ff',
+    icon: navIcon(
+      '<path d="M8 2.1l4.9 1.9v3.7c0 3.1-2 5.2-4.9 6.3-2.9-1.1-4.9-3.2-4.9-6.3V4z"/>' +
+        '<path d="M6 8l1.5 1.5L10.2 6.8"/>',
+    ),
+  },
+  {
+    href: '/admin/audit',
+    label: 'Audit',
+    key: 'audit',
+    from: '#a2845e',
+    to: '#7d6343',
+    icon: navIcon('<circle cx="8" cy="8" r="5.6"/><path d="M8 4.9V8l2.2 1.4"/>'),
+  },
 ];
 
 /**
- * Tiga titik jendela macOS.
+ * Tiga titik jendela macOS pada bilah judul.
  *
- * Murni hiasan — tidak ada yang dapat diklik, dan itu memang benar: panel ini
- * halaman web, bukan jendela aplikasi. Karena itu `aria-hidden` dipasang dan
- * tidak ada satu pun elemen fokus di dalamnya; pembaca layar tidak perlu
- * mendengar tiga lingkaran yang tidak melakukan apa-apa.
+ * Murni hiasan di jendela utama — tidak ada yang dapat diklik, dan itu memang
+ * benar: panel ini halaman web, bukan jendela aplikasi. Karena itu `aria-hidden`
+ * dipasang dan tidak ada satu pun elemen fokus di dalamnya.
+ *
+ * Yang BERFUNGSI adalah tiga titik pada sheet konfirmasi (lihat `SHEET`): di
+ * sana ia memang menutup, mengecilkan, dan memperbesar sesuatu.
  */
 const TRAFFIC_LIGHTS = safe(
-  `<span class="traffic" aria-hidden="true">` +
-    `<span class="traffic__dot traffic__dot--close"></span>` +
-    `<span class="traffic__dot traffic__dot--min"></span>` +
-    `<span class="traffic__dot traffic__dot--zoom"></span>` +
-    `</span>`,
+  '<span class="traffic" aria-hidden="true">' +
+    '<span class="traffic__dot traffic__dot--close"></span>' +
+    '<span class="traffic__dot traffic__dot--min"></span>' +
+    '<span class="traffic__dot traffic__dot--zoom"></span>' +
+    '</span>',
+);
+
+/**
+ * Kerangka sheet konfirmasi.
+ *
+ * Bentuknya meniru jendela macOS: bilah judul dengan tiga titik yang benar-benar
+ * dapat ditekan, isi, lalu deretan tombol. Titik merah menutup, kuning
+ * mengecilkan sheet sampai tinggal bilah judulnya, hijau memperlebarnya.
+ *
+ * Dirender server-side, bukan dibuat JavaScript, supaya markupnya ikut tersapu
+ * uji render — kalau ia dibuat di sisi klien, tidak ada uji yang akan menangkap
+ * markup yang tampil sebagai teks di dalamnya.
+ */
+const SHEET = safe(
+  '<div class="sheet-layer" data-sheet-root hidden>' +
+    '<div class="sheet" role="dialog" aria-modal="true" aria-labelledby="sheet-title">' +
+    '<header class="sheet__bar">' +
+    '<span class="traffic traffic--live">' +
+    '<button type="button" class="traffic__dot traffic__dot--close" data-sheet-action="close" aria-label="Tutup" title="Tutup"></button>' +
+    '<button type="button" class="traffic__dot traffic__dot--min" data-sheet-action="min" aria-label="Kecilkan" title="Kecilkan"></button>' +
+    '<button type="button" class="traffic__dot traffic__dot--zoom" data-sheet-action="zoom" aria-label="Perbesar" title="Perbesar"></button>' +
+    '</span>' +
+    '<h2 class="sheet__title" id="sheet-title" data-sheet-title>Konfirmasi</h2>' +
+    '</header>' +
+    '<div class="sheet__body"><p class="sheet__text" data-sheet-text></p></div>' +
+    '<footer class="sheet__foot">' +
+    '<button type="button" class="ghost" data-sheet-action="close">Batal</button>' +
+    '<button type="button" class="danger" data-sheet-action="ok" data-sheet-ok>Lanjutkan</button>' +
+    '</footer>' +
+    '</div>' +
+    '</div>',
+);
+
+/**
+ * Skrip kecil di `<head>` yang memasang tema tersimpan SEBELUM halaman digambar.
+ *
+ * Tanpa ini, halaman akan berkedip terang lebih dahulu lalu berubah gelap pada
+ * setiap pemuatan — persis keluhan yang membuat sakelar tema terasa rusak.
+ */
+const THEME_BOOT = safe(
+  "(function(){try{var m=localStorage.getItem('fayln.admin.theme');" +
+    "if(m==='light'||m==='dark'){document.documentElement.setAttribute('data-theme',m);}}catch(e){}})();",
+);
+
+/**
+ * Perilaku klien panel: sakelar tema dan sheet konfirmasi.
+ *
+ * Ditulis tanpa pustaka dan tanpa fitur yang tidak ada di peramban lama.
+ * Sengaja dipasang di SETIAP halaman, bukan hanya halaman wizard: konfirmasi
+ * aksi destruktif tersebar di seluruh panel.
+ *
+ * Semua kontrol di sini adalah PENINGKATAN, bukan syarat. Tanpa JavaScript,
+ * formulir `data-confirm` tetap terkirim seperti biasa dan tombol tema hanya
+ * diam — tidak ada satu pun tindakan yang menjadi mustahil.
+ */
+const APP_SCRIPT = safe(
+  [
+    '(function () {',
+    "  'use strict';",
+    '',
+    '  /* ---------------- Tema ---------------- */',
+    "  var THEME_KEY = 'fayln.admin.theme';",
+    '',
+    '  function storedTheme() {',
+    "    try { return localStorage.getItem(THEME_KEY) || 'auto'; } catch (e) { return 'auto'; }",
+    '  }',
+    '',
+    '  function paintTheme(mode) {',
+    "    Array.prototype.forEach.call(document.querySelectorAll('[data-theme-set]'), function (btn) {",
+    "      btn.setAttribute('aria-pressed', btn.getAttribute('data-theme-set') === mode ? 'true' : 'false');",
+    '    });',
+    '  }',
+    '',
+    '  function applyTheme(mode) {',
+    '    var root = document.documentElement;',
+    "    if (mode === 'light' || mode === 'dark') { root.setAttribute('data-theme', mode); }",
+    "    else { root.removeAttribute('data-theme'); }",
+    '    paintTheme(mode);',
+    '  }',
+    '',
+    '  function bindTheme() {',
+    "    Array.prototype.forEach.call(document.querySelectorAll('[data-theme-set]'), function (btn) {",
+    "      btn.addEventListener('click', function () {",
+    "        var mode = btn.getAttribute('data-theme-set');",
+    '        try { localStorage.setItem(THEME_KEY, mode); } catch (e) {}',
+    '        applyTheme(mode);',
+    '      });',
+    '    });',
+    '    paintTheme(storedTheme());',
+    '  }',
+    '',
+    '  /* ---------------- Sheet konfirmasi ---------------- */',
+    "  var layer = document.querySelector('[data-sheet-root]');",
+    '  var pending = null;',
+    '  var lastFocus = null;',
+    '',
+    "  function box() { return layer ? layer.querySelector('.sheet') : null; }",
+    '',
+    '  /*',
+    '   * Memanggil submit lewat prototipe, bukan form.submit().',
+    '   *',
+    '   * submit hanyalah nama properti pada elemen formulir, dan sebuah input',
+    '   * bernama "submit" akan menutupinya — panggilan itu lalu gagal tanpa suara.',
+    '   * Prototipe tidak dapat ditimpa oleh nama medan.',
+    '   */',
+    '  function submit(form) {',
+    '    window.HTMLFormElement.prototype.submit.call(form);',
+    '  }',
+    '',
+    '  function openSheet(form) {',
+    '    var target = box();',
+    '    if (!layer || !target) { submit(form); return; }',
+    '    pending = form;',
+    '    lastFocus = document.activeElement;',
+    "    target.classList.remove('sheet--min', 'sheet--zoom');",
+    "    layer.querySelector('[data-sheet-text]').textContent =",
+    "      form.getAttribute('data-confirm') || 'Lanjutkan tindakan ini?';",
+    "    layer.querySelector('[data-sheet-title]').textContent =",
+    "      form.getAttribute('data-confirm-title') || 'Konfirmasi';",
+    "    var ok = layer.querySelector('[data-sheet-ok]');",
+    "    ok.textContent = form.getAttribute('data-confirm-ok') || 'Lanjutkan';",
+    '    layer.hidden = false;',
+    '    ok.focus();',
+    '  }',
+    '',
+    '  function closeSheet() {',
+    '    if (!layer || layer.hidden) { return; }',
+    '    layer.hidden = true;',
+    '    pending = null;',
+    '    if (lastFocus && lastFocus.focus) { lastFocus.focus(); }',
+    '  }',
+    '',
+    '  function confirmSheet() {',
+    '    var form = pending;',
+    '    closeSheet();',
+    '    if (!form) { return; }',
+    '    /*',
+    '     * Umumkan lebih dahulu bahwa formulir ini memang akan dikirim, lalu',
+    '     * kirim sungguhan lewat prototipe.',
+    '     *',
+    '     * Pengumuman itu perlu karena halaman wizard memasang penjaga perubahan',
+    '     * belum tersimpan yang menandai "sudah dikirim" pada setiap peristiwa',
+    '     * submit. Pengiriman lewat prototipe melewati semua pendengar, jadi tanpa',
+    '     * pengumuman ini penjaganya tetap mengira masih ada perubahan yang belum',
+    '     * disimpan, dan peramban menampilkan dialog "tinggalkan situs?" tepat',
+    '     * setelah admin menekan tombol konfirmasi.',
+    '     */',
+    "    form.setAttribute('data-sheet-confirmed', '1');",
+    '    try {',
+    "      form.dispatchEvent(new Event('submit', { cancelable: true, bubbles: true }));",
+    '    } catch (e) {',
+    "      form.removeAttribute('data-sheet-confirmed');",
+    '    }',
+    '    submit(form);',
+    '  }',
+    '',
+    '  function bindSheet() {',
+    '    if (!layer) { return; }',
+    "    layer.addEventListener('click', function (event) {",
+    '      if (event.target === layer) { closeSheet(); return; }',
+    "      var hit = event.target.closest ? event.target.closest('[data-sheet-action]') : null;",
+    '      if (!hit) { return; }',
+    "      var kind = hit.getAttribute('data-sheet-action');",
+    "      if (kind === 'close') { closeSheet(); }",
+    "      else if (kind === 'ok') { confirmSheet(); }",
+    "      else if (kind === 'min') { box().classList.toggle('sheet--min'); }",
+    "      else if (kind === 'zoom') { box().classList.toggle('sheet--zoom'); }",
+    '    });',
+    "    document.addEventListener('keydown', function (event) {",
+    '      if (layer.hidden) { return; }',
+    "      if (event.key === 'Escape') { closeSheet(); }",
+    "      if (event.key === 'Enter' && event.target === layer.querySelector('[data-sheet-ok]')) { confirmSheet(); }",
+    '    });',
+    "    Array.prototype.forEach.call(document.querySelectorAll('form[data-confirm]'), function (form) {",
+    "      form.addEventListener('submit', function (event) {",
+    "        if (form.getAttribute('data-sheet-confirmed') === '1') {",
+    "          form.removeAttribute('data-sheet-confirmed');",
+    '          return;',
+    '        }',
+    '        event.preventDefault();',
+    '        openSheet(form);',
+    '      });',
+    '    });',
+    '  }',
+    '',
+    '  function start() { bindTheme(); bindSheet(); }',
+    '',
+    "  if (document.readyState === 'loading') {",
+    "    document.addEventListener('DOMContentLoaded', start);",
+    '  } else { start(); }',
+    '})();',
+  ].join('\n'),
 );
 
 /**
  * Tata letak halaman.
  *
- * Bentuknya meniru jendela macOS: bilah judul dengan tiga titik di kiri,
- * bilah sisi tetap berisi menu, dan isi halaman sebagai "jendela" putih yang
- * mengambang di atas kanvas kelabu.
+ * Bentuknya mengikuti macOS terkini sebagaimana terlihat pada System Settings:
+ * satu jendela yang memenuhi seluruh layar, bilah judul tipis yang tembus
+ * pandang, bilah sisi dengan ikon berwarna, dan isi yang menggulir sendiri.
  *
  * Sengaja mengembalikan `string` PRIMITIF, bukan `SafeHtml`. Halaman jadi sudah
  * final, jadi tidak perlu ditandai aman lagi — dan Fastify hanya menerima nilai
@@ -207,6 +547,12 @@ export function layout(options: LayoutOptions): string {
     ? html`<header class="top">
   ${TRAFFIC_LIGHTS}
   <div class="brand">fayLN <span>admin</span></div>
+  <div class="top__gap"></div>
+  <div class="segmented" role="group" aria-label="Tema tampilan">
+    <button type="button" data-theme-set="light">Terang</button>
+    <button type="button" data-theme-set="dark">Gelap</button>
+    <button type="button" data-theme-set="auto">Otomatis</button>
+  </div>
   <div class="who">
     <span class="who__name">${options.admin!.displayName || options.admin!.username}</span>
     <form method="post" action="/admin/logout"><button class="link" type="submit">Keluar</button></form>
@@ -219,7 +565,7 @@ export function layout(options: LayoutOptions): string {
   <div class="sidebar__label">Panel</div>
   <nav class="nav">${NAV.map(
     (item) =>
-      html`<a href="${item.href}"${item.key === options.active ? ' class="on"' : ''}>${item.label}</a>`,
+      html`<a href="${item.href}"${item.key === options.active ? ' class="on"' : ''}><span class="nav__icon" style="--i-a:${item.from};--i-b:${item.to}">${item.icon}</span><span class="nav__text">${item.label}</span></a>`,
   )}</nav>
 </aside>`
     : html``;
@@ -236,6 +582,7 @@ export function layout(options: LayoutOptions): string {
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>${options.title} — fayLN admin</title>
+<script>${THEME_BOOT}</script>
 <style>${safe(STYLES)}${options.styles ? safe(options.styles) : safe('')}</style>
 </head>
 <body>
@@ -247,165 +594,218 @@ ${notice}
 ${options.body}
 </main>
 </div>
+${signedIn ? SHEET : safe('')}
+<script>${APP_SCRIPT}</script>
 ${options.scripts ? safe(`<script>${options.scripts}</script>`) : safe('')}
 </body>
 </html>`.toString();
 }
 
 /**
- * Gaya panel — ala macOS.
+ * Gaya panel — macOS terkini, bukan Mac jadul.
  *
- * TIGA ATURAN YANG MENGIKAT BERKAS INI:
+ * EMPAT ATURAN YANG MENGIKAT BERKAS INI:
  *
  * 1. **Tanpa resource luar.** Tanpa font web, tanpa CDN, tanpa ikon dari
  *    jaringan. Panel ini harus tampil utuh di jaringan tertutup sekalipun.
  *    Tumpukan font sistem dipakai apa adanya — `-apple-system` memberi SF Pro
  *    di macOS, `Segoe UI Variable` di Windows, `Inter` di Linux.
  *
- * 2. **Tema terang dan gelap.** Tema gelap mengikuti `prefers-color-scheme`
- *    perangkat, bukan sakelar di halaman: itu yang diharapkan dari aplikasi
- *    macOS, dan tidak menambah keadaan yang harus disimpan.
+ * 2. **Yang membuat sesuatu terasa macOS TERKINI** bukan kilau, melainkan:
+ *    radius besar yang konsisten, pemisah rambut setipis 1px, permukaan
+ *    tembus pandang yang di-blur, bilah sisi berikon warna, dan ruang kosong
+ *    yang lapang. Yang membuatnya terasa JADUL justru sebaliknya — gradien
+ *    mengkilap, tombol kapsul, dan garis tebal. Hindari yang kedua.
  *
- * 3. **Nama kelas tidak berubah.** Seluruh halaman sudah memakai kelas seperti
+ * 3. **Tema terang dan gelap, dengan pilihan manual.** Bawaannya mengikuti
+ *    `prefers-color-scheme`, tetapi `data-theme` pada elemen `html` selalu
+ *    menang — itulah yang dipasang sakelar Terang/Gelap/Otomatis. Urutan
+ *    penulisannya penting: aturan `[data-theme]` harus berada SETELAH blok
+ *    media, sebab spesifisitas keduanya sama dan yang terakhir menang.
+ *
+ * 4. **Nama kelas tidak berubah.** Seluruh halaman sudah memakai kelas seperti
  *    `.card`, `.grid`, `.stat`, `.notice`, `.pill`, `.two`, `.between`, dan
  *    seterusnya. Rombakan ini hanya mengubah TAMPILANNYA, bukan namanya —
  *    mengganti nama berarti menyunting belasan halaman sekaligus, dan satu yang
  *    terlewat tidak menghasilkan galat, hanya bagian yang tampil tanpa gaya.
  *
- * JANGAN MENULIS BACKTICK ATAU `${` DI DALAM STRING INI. Isinya template
- * literal; satu backtick saja menutupnya lebih awal, dan sisa CSS-nya menjadi
- * kode TypeScript yang tidak sah — `tsc` gagal dengan pesan yang menunjuk baris
- * komentar CSS, bukan baris yang salah. Ini pernah terjadi pada komentar yang
- * menulis nama properti CSS di antara backtick.
+ * JANGAN MENULIS BACKTICK ATAU TANDA DOLAR-KURUNG-BUKA DI DALAM STRING INI.
+ * Isinya template literal; satu backtick saja menutupnya lebih awal, dan sisa
+ * CSS-nya menjadi kode TypeScript yang tidak sah — `tsc` gagal dengan pesan yang
+ * menunjuk baris komentar CSS, bukan baris yang salah. Ini pernah terjadi pada
+ * komentar yang menulis nama properti CSS di antara backtick.
  */
 const STYLES = `
 :root{
-  color-scheme:light dark;
+  color-scheme:light;
 
-  --canvas:#f2f2f7; --surface:#ffffff; --sidebar:#ececf0; --panel:#f7f7f9;
-  --field:#ffffff; --line:rgba(0,0,0,.10); --line-strong:rgba(0,0,0,.16);
-  --text:#1d1d1f; --muted:#6e6e73;
-  --accent:#007aff; --accent-ink:#ffffff; --accent-soft:rgba(0,122,255,.12);
+  --canvas:#e6e6ec; --window:#ffffff; --sidebar:#eef0f4; --panel:#f6f6f8;
+  --field:#ffffff; --line:rgba(0,0,0,.075); --line-strong:rgba(0,0,0,.16);
+  --text:#1d1d1f; --muted:#79797f;
+  --accent:#0071e3; --accent-ink:#ffffff; --accent-soft:rgba(0,113,227,.12);
   --danger:#d70015; --danger-soft:rgba(215,0,21,.10);
   --ok:#1c8b3a; --ok-soft:rgba(28,139,58,.12);
   --warn:#9a6400; --warn-soft:rgba(154,100,0,.12);
-  --shadow:0 1px 2px rgba(0,0,0,.10), 0 10px 30px rgba(0,0,0,.07);
-  --radius:12px;
+  --hover:rgba(0,0,0,.055); --track:rgba(0,0,0,.07); --seg-active:#ffffff;
+  --shadow-ctl:0 1px 1.5px rgba(0,0,0,.10);
+  --shadow-pop:0 18px 50px rgba(0,0,0,.26);
+  --bar:52px; --content:1180px;
+  --radius:12px; --radius-sm:9px; --radius-xs:6px;
 }
 @media (prefers-color-scheme:dark){
-  :root{
-    --canvas:#131315; --surface:#2c2c2e; --sidebar:#232325; --panel:#232325;
-    --field:#1c1c1e; --line:rgba(255,255,255,.12); --line-strong:rgba(255,255,255,.22);
-    --text:#f5f5f7; --muted:#98989d;
-    --accent:#0a84ff; --accent-ink:#ffffff; --accent-soft:rgba(10,132,255,.20);
+  :root:not([data-theme=light]){
+    color-scheme:dark;
+    --canvas:#131315; --window:#1e1e20; --sidebar:#232326; --panel:#2a2a2d;
+    --field:#2c2c2f; --line:rgba(255,255,255,.10); --line-strong:rgba(255,255,255,.19);
+    --text:#f5f5f7; --muted:#9a9aa1;
+    --accent:#0a84ff; --accent-soft:rgba(10,132,255,.24);
     --danger:#ff6961; --danger-soft:rgba(255,105,97,.16);
     --ok:#4cd964; --ok-soft:rgba(76,217,100,.16);
     --warn:#ffb340; --warn-soft:rgba(255,179,64,.16);
-    --shadow:0 1px 2px rgba(0,0,0,.5), 0 10px 30px rgba(0,0,0,.4);
+    --hover:rgba(255,255,255,.075); --track:rgba(255,255,255,.09); --seg-active:#48484c;
+    --shadow-ctl:0 1px 1.5px rgba(0,0,0,.45);
+    --shadow-pop:0 18px 50px rgba(0,0,0,.62);
   }
 }
+:root[data-theme=dark]{
+  color-scheme:dark;
+  --canvas:#131315; --window:#1e1e20; --sidebar:#232326; --panel:#2a2a2d;
+  --field:#2c2c2f; --line:rgba(255,255,255,.10); --line-strong:rgba(255,255,255,.19);
+  --text:#f5f5f7; --muted:#9a9aa1;
+  --accent:#0a84ff; --accent-soft:rgba(10,132,255,.24);
+  --danger:#ff6961; --danger-soft:rgba(255,105,97,.16);
+  --ok:#4cd964; --ok-soft:rgba(76,217,100,.16);
+  --warn:#ffb340; --warn-soft:rgba(255,179,64,.16);
+  --hover:rgba(255,255,255,.075); --track:rgba(255,255,255,.09); --seg-active:#48484c;
+  --shadow-ctl:0 1px 1.5px rgba(0,0,0,.45);
+  --shadow-pop:0 18px 50px rgba(0,0,0,.62);
+}
+
 *{box-sizing:border-box}
-body{margin:0;background:var(--canvas);color:var(--text);
-  font:13.5px/1.55 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text",
+html,body{height:100%}
+body{margin:0;background:var(--window);color:var(--text);
+  font:13.5px/1.5 -apple-system,BlinkMacSystemFont,"SF Pro Text","Segoe UI Variable Text",
   "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
-  -webkit-font-smoothing:antialiased}
+  -webkit-font-smoothing:antialiased;
+  display:flex;flex-direction:column;overflow:hidden}
 a{color:var(--accent);text-decoration:none}
 a:hover{text-decoration:underline}
+::selection{background:var(--accent-soft)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 
 /* ---------------- Bilah judul ---------------- */
-.top{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:16px;
-  height:52px;padding:0 18px;border-bottom:1px solid var(--line);
-  background:var(--surface);background:color-mix(in srgb,var(--surface) 82%,transparent);
-  backdrop-filter:saturate(180%) blur(20px);-webkit-backdrop-filter:saturate(180%) blur(20px)}
+.top{flex:none;height:var(--bar);display:flex;align-items:center;gap:14px;padding:0 16px;
+  background:color-mix(in srgb,var(--sidebar) 74%,transparent);
+  backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);
+  border-bottom:1px solid var(--line);z-index:20}
+.top__gap{flex:1}
 .traffic{display:inline-flex;gap:8px;flex:none}
-.traffic__dot{width:12px;height:12px;border-radius:50%;display:block}
+.traffic__dot{width:12px;height:12px;border-radius:50%;display:block;padding:0;border:0}
 .traffic__dot--close{background:#ff5f57}
 .traffic__dot--min{background:#febc2e}
 .traffic__dot--zoom{background:#28c840}
 @media (prefers-color-scheme:dark){
-  .traffic__dot{box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
+  :root:not([data-theme=light]) .traffic__dot{box-shadow:inset 0 0 0 1px rgba(0,0,0,.32)}
 }
-.brand{font-weight:600;font-size:14px;letter-spacing:.01em}
+:root[data-theme=dark] .traffic__dot{box-shadow:inset 0 0 0 1px rgba(0,0,0,.32)}
+.brand{font-weight:600;font-size:14px;letter-spacing:.01em;white-space:nowrap}
 .brand span{color:var(--muted);font-weight:500;font-size:11px;text-transform:uppercase;
   letter-spacing:.08em;margin-left:2px}
-.who{display:flex;align-items:center;gap:12px;margin-left:auto;color:var(--muted);font-size:12.5px}
+.who{display:flex;align-items:center;gap:12px;color:var(--muted);font-size:12.5px}
 .who__name{color:var(--text);font-weight:500}
 
-/* ---------------- Kerangka: satu jendela berisi bilah sisi + isi ---------------- */
-/*
- * Bilah sisi berada DI DALAM jendela, bukan di sampingnya. Itu yang membuatnya
- * terbaca sebagai jendela macOS — System Settings, Finder, dan Mail semuanya
- * berbentuk satu kartu dengan kolom kiri yang diwarnai berbeda, bukan dua
- * permukaan yang berdiri sendiri.
- *
- * "overflow:hidden" dipakai untuk memangkas sudut kolom kirinya; sudut itu tidak
- * dapat dibulatkan sendiri karena tingginya mengikuti isi halaman.
- */
-.shell{max-width:1240px;margin:22px auto 72px;display:flex;align-items:stretch;
-  background:var(--surface);border:1px solid var(--line);border-radius:14px;
-  box-shadow:var(--shadow);overflow:hidden}
-.shell--bare{display:block;max-width:400px;margin:12vh auto;padding:26px}
-.shell--bare main{padding:0}
-.sidebar{width:236px;flex:none;padding:16px 12px 24px;background:var(--sidebar);
+/* ---------------- Kontrol tersegmen ---------------- */
+.segmented{display:inline-flex;gap:2px;padding:2px;border-radius:var(--radius-sm);
+  background:var(--track)}
+.segmented button{border:0;background:none;box-shadow:none;color:var(--muted);
+  font:inherit;font-size:12px;font-weight:600;padding:3px 11px;border-radius:7px;cursor:pointer}
+.segmented button:hover{color:var(--text)}
+.segmented button[aria-pressed=true]{background:var(--seg-active);color:var(--text);
+  box-shadow:var(--shadow-ctl)}
+
+/* ---------------- Kerangka: bilah sisi + isi, memenuhi layar ---------------- */
+.shell{flex:1;display:flex;align-items:stretch;min-height:0;background:var(--window)}
+.sidebar{width:234px;flex:none;overflow-y:auto;padding:12px 10px 20px;
+  background:color-mix(in srgb,var(--sidebar) 66%,transparent);
+  backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);
   border-right:1px solid var(--line)}
 .sidebar__label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
-  color:var(--muted);padding:0 10px 8px}
+  color:var(--muted);padding:6px 10px 7px}
 .nav{display:flex;flex-direction:column;gap:1px}
-.nav a{display:block;padding:6px 10px;border-radius:7px;color:var(--text);font-size:13px;
-  line-height:1.4}
-.nav a:hover{background:var(--accent-soft);text-decoration:none}
-.nav a.on{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.nav a{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:7px;
+  color:var(--text);font-size:13px;line-height:1.35}
+.nav a:hover{background:var(--hover);text-decoration:none}
+.nav a.on{background:var(--accent);color:#fff;font-weight:600}
+.nav__icon{width:19px;height:19px;flex:none;border-radius:var(--radius-xs);
+  display:grid;place-items:center;color:#fff;
+  background:linear-gradient(160deg,var(--i-a),var(--i-b));
+  box-shadow:inset 0 0 0 .5px rgba(255,255,255,.3), 0 1px 1.5px rgba(0,0,0,.22)}
+.nav__icon svg{width:12px;height:12px;display:block}
+.nav__text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-main{flex:1;min-width:0;padding:24px 26px 32px}
-@media(max-width:860px){
-  .shell{display:block;margin:12px 12px 48px}
-  .sidebar{width:auto;padding:10px;border-right:0;border-bottom:1px solid var(--line)}
+main{flex:1;min-width:0;overflow-y:auto;padding:28px 32px 64px;background:var(--window)}
+main>*{max-width:var(--content);margin-left:auto;margin-right:auto}
+@media(max-width:900px){
+  .shell{flex-direction:column}
+  .sidebar{width:auto;border-right:0;border-bottom:1px solid var(--line);padding:8px 10px}
   .nav{flex-direction:row;flex-wrap:wrap;gap:4px}
   .sidebar__label{display:none}
-  main{padding:18px}
+  main{padding:18px 16px 48px}
+  .top{gap:10px;padding:0 12px}
+  .brand span,.who__name{display:none}
 }
 
 /* ---------------- Tipografi ---------------- */
-h1{font-size:21px;margin:0 0 6px;font-weight:600;letter-spacing:-.01em}
-h2{font-size:13px;margin:26px 0 10px;color:var(--muted);text-transform:uppercase;
+h1{font-size:22px;margin:0 0 6px;font-weight:600;letter-spacing:-.015em}
+h2{font-size:12px;margin:28px 0 9px;color:var(--muted);text-transform:uppercase;
   letter-spacing:.06em;font-weight:600}
 h2 span{text-transform:none;letter-spacing:normal}
-.sub{color:var(--muted);margin:0 0 18px;font-size:12.5px}
+.sub{color:var(--muted);margin:0 0 20px;font-size:12.5px}
 .sub strong{color:var(--text);font-weight:600}
 .muted{color:var(--muted)}
 .mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:11.5px}
 .right{text-align:right}
 
 /* ---------------- Permukaan ---------------- */
-.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
   padding:16px;margin-bottom:16px}
-.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(180px,1fr))}
-.stat{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 14px}
-.stat b{display:block;font-size:22px;font-weight:600;margin-bottom:1px;letter-spacing:-.01em}
+.grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(184px,1fr))}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 15px}
+.stat b{display:block;font-size:23px;font-weight:600;margin-bottom:1px;letter-spacing:-.02em}
 .stat span{color:var(--muted);font-size:11.5px}
-.empty{color:var(--muted);padding:22px;text-align:center;border:1px dashed var(--line-strong);
-  border-radius:10px;font-size:12.5px}
+.empty{color:var(--muted);padding:26px;text-align:center;
+  border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:12.5px}
 
 /* ---------------- Tabel ---------------- */
-table{width:100%;border-collapse:collapse;font-size:12.5px}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);vertical-align:top}
-th{background:var(--panel);color:var(--muted);font-size:10.5px;text-transform:uppercase;
-  letter-spacing:.05em;font-weight:600;white-space:nowrap}
-thead th:first-child{border-top-left-radius:8px}
-thead th:last-child{border-top-right-radius:8px}
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{background:transparent;color:var(--muted);font-size:10.5px;text-transform:uppercase;
+  letter-spacing:.055em;font-weight:600;white-space:nowrap}
 tbody tr:last-child td{border-bottom:0}
-tbody tr:hover td{background:var(--accent-soft)}
+tbody tr:hover td{background:var(--hover)}
 
 /* ---------------- Formulir ---------------- */
-label{display:block;margin-bottom:12px}
+label{display:block;margin-bottom:13px}
 label span{display:block;color:var(--muted);font-size:11.5px;margin-bottom:4px}
 input,select,textarea{width:100%;padding:6px 10px;background:var(--field);color:var(--text);
-  border:1px solid var(--line-strong);border-radius:7px;font:inherit;font-size:13px}
+  border:1px solid var(--line-strong);border-radius:var(--radius-sm);font:inherit;font-size:13px;
+  box-shadow:inset 0 1px 1.5px rgba(0,0,0,.045)}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
-  box-shadow:0 0 0 3px var(--accent-soft)}
+  box-shadow:0 0 0 3.5px var(--accent-soft)}
 input[type=checkbox],input[type=radio]{width:auto;accent-color:var(--accent)}
 input[type=range]{padding:0;background:none;border:none;box-shadow:none}
-textarea{min-height:80px;resize:vertical}
+/*
+ * Tombol di dalam pemilih berkas bergaya bawaan peramban dan tidak ikut
+ * diwarnai oleh aturan elemen input di atas. Tanpa aturan ini, ia menjadi
+ * satu-satunya kontrol yang masih terlihat seperti tahun 2010 di tengah panel
+ * yang lain.
+ */
+input[type=file]{padding:4px}
+input[type=file]::file-selector-button{margin-right:8px;padding:4px 11px;
+  border:1px solid var(--line-strong);border-radius:var(--radius-xs);background:var(--window);
+  color:var(--text);font:inherit;font-size:12px;font-weight:500;cursor:pointer}
+input[type=file]::file-selector-button:hover{background:var(--hover)}
+textarea{min-height:84px;resize:vertical}
 select{appearance:none;-webkit-appearance:none;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),
     linear-gradient(135deg,var(--muted) 50%,transparent 50%);
@@ -413,17 +813,17 @@ select{appearance:none;-webkit-appearance:none;
   background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:28px}
 
 /* ---------------- Tombol ---------------- */
-button{padding:5px 13px;border-radius:7px;border:1px solid transparent;background:var(--accent);
-  color:var(--accent-ink);font:inherit;font-size:12.5px;font-weight:600;cursor:pointer;
-  box-shadow:0 1px 2px rgba(0,0,0,.12)}
-button:hover{filter:brightness(1.06)}
-button:active{filter:brightness(.94)}
+button{padding:5px 13px;border-radius:var(--radius-sm);border:1px solid transparent;
+  background:var(--accent);color:var(--accent-ink);font:inherit;font-size:12.5px;font-weight:600;
+  cursor:pointer;box-shadow:var(--shadow-ctl)}
+button:hover{filter:brightness(1.07)}
+button:active{filter:brightness(.93)}
 button:disabled{opacity:.4;cursor:default;filter:none}
-button.ghost{background:var(--surface);color:var(--text);border-color:var(--line-strong);
-  font-weight:500;box-shadow:0 1px 1px rgba(0,0,0,.06)}
-button.ghost:hover{background:var(--panel);filter:none}
+button.ghost{background:var(--window);color:var(--text);border-color:var(--line-strong);
+  font-weight:500}
+button.ghost:hover{background:var(--hover);filter:none}
 button.danger{background:var(--danger-soft);color:var(--danger);
-  border-color:color-mix(in srgb,var(--danger) 35%,transparent);font-weight:500;box-shadow:none}
+  border-color:color-mix(in srgb,var(--danger) 32%,transparent);font-weight:500;box-shadow:none}
 button.danger:hover{background:var(--danger);color:#fff;filter:none}
 button.link{background:none;border:none;color:var(--accent);padding:0;font-weight:500;
   box-shadow:none;font-size:12.5px}
@@ -435,7 +835,7 @@ button.link:hover{text-decoration:underline;filter:none}
 @media(max-width:680px){.two{grid-template-columns:1fr}}
 
 /* ---------------- Pemberitahuan dan pil ---------------- */
-.notice{padding:10px 13px;border-radius:9px;margin-bottom:16px;font-size:12.5px;
+.notice{padding:10px 13px;border-radius:var(--radius-sm);margin-bottom:16px;font-size:12.5px;
   border:1px solid transparent}
 .notice.ok{background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);
   color:var(--ok)}
@@ -452,11 +852,42 @@ button.link:hover{text-decoration:underline;filter:none}
 .pill.draft{border-color:color-mix(in srgb,var(--warn) 40%,transparent);color:var(--warn);
   background:var(--warn-soft)}
 
-/* ---------------- Halaman masuk ---------------- */
-.login{max-width:340px;margin:0 auto}
-.login .brand{margin-bottom:4px}
-`;
+/* ---------------- Sheet konfirmasi ---------------- */
+/*
+ * Di sinilah tiga titik itu benar-benar bekerja. Merah menutup, kuning
+ * mengecilkan jendela sampai tinggal bilah judulnya, hijau memperlebarnya —
+ * persis tiga tombol jendela macOS, pada satu-satunya tempat di panel ini yang
+ * memang berupa jendela di atas jendela.
+ */
+.sheet-layer{position:fixed;inset:0;z-index:60;display:grid;place-items:center;padding:24px;
+  background:rgba(0,0,0,.30);
+  backdrop-filter:saturate(160%) blur(4px);-webkit-backdrop-filter:saturate(160%) blur(4px)}
+.sheet-layer[hidden]{display:none}
+.sheet{width:min(460px,100%);background:var(--window);border:1px solid var(--line-strong);
+  border-radius:var(--radius);box-shadow:var(--shadow-pop);overflow:hidden;
+  transition:width .22s cubic-bezier(.32,.72,0,1)}
+.sheet--zoom{width:min(940px,100%)}
+.sheet--min{width:min(320px,100%);align-self:end;justify-self:start;margin-left:24px}
+.sheet--min .sheet__body,.sheet--min .sheet__foot{display:none}
+.sheet__bar{height:44px;display:flex;align-items:center;gap:12px;padding:0 14px;
+  background:var(--sidebar);border-bottom:1px solid var(--line)}
+.traffic--live .traffic__dot{cursor:pointer;border:0;padding:0;
+  transition:transform .12s ease,filter .12s ease}
+.traffic--live .traffic__dot:hover{filter:brightness(1.12)}
+.traffic--live .traffic__dot:active{transform:scale(.9)}
+.sheet__title{margin:0;font-size:13px;font-weight:600;color:var(--text);
+  text-transform:none;letter-spacing:normal}
+.sheet__body{padding:20px 18px}
+.sheet__text{margin:0;font-size:13px;line-height:1.55}
+.sheet__foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px;
+  border-top:1px solid var(--line);background:var(--panel)}
 
+/* ---------------- Halaman masuk ---------------- */
+.shell--bare{flex:1;display:grid;place-items:center;background:var(--canvas);padding:24px}
+.shell--bare main{flex:none;width:100%;max-width:360px;padding:0;background:none;overflow:visible}
+.shell--bare main>*{max-width:none}
+.login .brand{font-size:15px}
+`;
 
 /* ---------------------------------------------------------------- */
 /* Potongan yang sering dipakai                                      */
@@ -575,3 +1006,4 @@ export function formatTime(value: unknown, mode: 'date' | 'minute' = 'date'): st
   // Buang penanda zona; nilainya sudah UTC dan ditampilkan sebagai UTC.
   return iso.slice(0, 16).replace('T', ' ');
 }
+

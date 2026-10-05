@@ -183,7 +183,10 @@ export async function promotionForm(ctx: AdminPageContext, promotionId: string |
     <a href="/admin/promotions"><button class="ghost" type="button">Batal</button></a>
     ${
       promo
-        ? html`<form method="post" action="/admin/promotions/delete" class="inline">
+        ? html`<form method="post" action="/admin/promotions/delete" class="inline"
+      data-confirm="Hapus promosi ${esc(promo.code)}? Riwayat penukarannya tetap tercatat di audit."
+      data-confirm-title="Hapus promosi"
+      data-confirm-ok="Hapus">
       <input type="hidden" name="promotionId" value="${inputValue(promo.promotionId)}">
       <button class="danger" type="submit">Hapus promosi</button>
     </form>`
