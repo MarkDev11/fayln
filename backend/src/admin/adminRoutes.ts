@@ -21,7 +21,7 @@ import { charactersForm, charactersList, worldsForm, worldsList } from './pages/
 import { auditList, dashboard, settingsList } from './pages/dashboardPages';
 import { locationsList } from './pages/locationPages';
 import { genresList } from './pages/genrePages';
-import { draftResumePanel, wizardStep1, wizardStep2, wizardStep3 } from './pages/wizardPages';
+import { wizardStep1, wizardStep2, wizardStep3 } from './pages/wizardPages';
 import { WIZARD_CSS, WIZARD_JS } from './wizardClient';
 import { modelForm, modelsList } from './pages/modelPages';
 import { promotionForm, promotionsList } from './pages/promotionPages';
@@ -446,16 +446,17 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   });
 
   app.get('/admin/worlds', async (request, reply) => {
-    // Draf yang belum selesai ditaruh DI ATAS daftar: pekerjaan yang belum
-    // selesai adalah hal pertama yang perlu dilihat penulisnya.
-    const drafts = await ctx.drafts.listDrafts();
-    return send(
-      reply,
-      request,
-      'Dunia',
-      html`${draftResumePanel(drafts)}${await pages.worldsList(ctx)}`,
-      'worlds',
-    );
+    /*
+     * Bagian draf TIDAK lagi ditempelkan dari sini.
+     *
+     * Dulu rute ini menyusun `draftResumePanel(drafts)` di DEPAN
+     * `worldsList(ctx)`, dan karena panel draf memulai dengan `<h2>` sementara
+     * daftar dunia memulai dengan `<h1>`, urutan judul halamannya terbalik —
+     * pembaca layar mengumumkan bagian draf sebagai tingkat teratas, dan judul
+     * besar "Dunia" muncul di tengah halaman. Sekarang halaman itu menyusun
+     * dirinya sendiri, sehingga urutannya tidak dapat lagi terbalik dari luar.
+     */
+    return send(reply, request, 'Dunia', await pages.worldsList(ctx), 'worlds');
   });
 
   app.get<{ Params: { worldId: string } }>('/admin/worlds/:worldId', async (request, reply) =>

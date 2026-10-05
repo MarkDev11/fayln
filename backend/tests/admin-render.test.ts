@@ -159,6 +159,25 @@ function expectLiveMarkup(body: string, label: string): void {
       (escaped?.index ?? 0) + 70,
     )}"`,
   ).toBeNull();
+
+  /*
+   * Atribut yang ter-escape, bukan tag.
+   *
+   * Pemeriksaan tag di atas MELEWATKAN cacat satu ini: sebuah string biasa
+   * berisi ` class="on"` disisipkan ke template `html`, jadi tanda kutipnya
+   * menjadi &quot; dan nilai kelasnya berisi tanda kutip itu sendiri. Tidak
+   * ada satu pun tag yang tampil sebagai teks, sehingga uji tag lolos — padahal
+   * tidak ada satu pun menu bilah sisi yang tersorot, dan cacat itu hidup lama
+   * justru karena tampilannya hanya "kurang", bukan "salah".
+   *
+   * Yang dicari adalah `=&quot;`, bukan `&quot;` begitu saja. Teks isi memang
+   * boleh memuat tanda kutip lurus dan memang HARUS ter-escape — mis. kalimat
+   * "HEMAT" dan "hemat" dianggap sama pada halaman promosi. Tanda kutip yang
+   * muncul persis setelah tanda sama-dengan, di dalam sebuah tag, adalah tanda
+   * bahwa pembatas atribut ikut ter-escape.
+   */
+  const rusak = (body.match(/<[^>]*>/g) ?? []).filter((tag) => tag.includes('=&quot;'));
+  expect(rusak, `Halaman ${label} memuat atribut yang ter-escape`).toEqual([]);
 }
 
 async function sweep(cookie: string, url: string): Promise<string> {
@@ -546,5 +565,114 @@ describe('sheet konfirmasi', () => {
 
     const body = await sweep(cookie, '/admin/genres');
     expect(body).toMatch(/data-confirm="Hapus genre “[^”]+”\?/);
+  });
+});
+
+/**
+ * Cacat yang pernah ada di daftar dunia, masing-masing dengan penjaganya.
+ *
+ * Semuanya adalah cacat yang TIDAK melempar galat dan tidak terlihat oleh uji
+ * "tidak ada tag hidup": halamannya tetap sah, hanya salah. Karena itu setiap
+ * penjaga di bawah menegaskan hal yang seharusnya ADA, bukan yang seharusnya
+ * tidak ada.
+ */
+describe('daftar dunia', () => {
+  function cssOf(body: string): string {
+    const match = /<style>([\s\S]*?)<\/style>/.exec(body);
+    expect(match, 'Halaman tidak memuat blok gaya.').not.toBeNull();
+    return match![1];
+  }
+
+  /** Mengambil isi satu aturan CSS berdasarkan selektornya, di awal baris. */
+  function ruleFor(css: string, selector: string): string {
+    const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Jangkar awal-baris, bukan awal-string: aturannya berdiri sendiri di
+    // barisnya sendiri, sedangkan varian seperti `.page-head h1{` tidak.
+    const match = new RegExp(`^${escaped}\\{([^}]*)\\}`, 'm').exec(css);
+    expect(match, `aturan ${selector} tidak ditemukan di lembar gaya`).not.toBeNull();
+    return match![1]!;
+  }
+
+  it('menaruh h1 sebelum h2 mana pun', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/worlds');
+
+    const h1 = body.indexOf('<h1');
+    const h2 = body.indexOf('<h2');
+    expect(h1, 'Halaman tidak punya h1.').toBeGreaterThan(-1);
+    expect(h2, 'Halaman tidak punya h2.').toBeGreaterThan(-1);
+    expect(
+      h1,
+      'h2 muncul sebelum h1 — urutan judul halaman terbalik.',
+    ).toBeLessThan(h2);
+  });
+
+  it('tidak mencetak nilai status mentah sebagai teks', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/worlds');
+
+    // Nilai mentahnya masih ada sebagai tooltip dan di halaman rincian, jadi
+    // yang diperiksa di sini adalah bahwa ia tidak berdiri sendiri sebagai
+    // isi elemen — bentuk yang dulu mencetak "terbit" di atas "published".
+    for (const raw of ['published', 'draft', 'retired', 'revoked']) {
+      expect(body, `status mentah "${raw}" tampil sebagai teks`).not.toContain(`>${raw}<`);
+    }
+    // Dan pilnya benar-benar menyebutkan terjemahannya.
+    expect(body).toMatch(/class="pill [a-z]*" title="[a-z]+">[A-Za-z ]+<\/span>/);
+  });
+
+  it('tidak menampilkan id internal dunia sebagai teks', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/worlds');
+    expect(body, 'id internal tampil sebagai teks di daftar').not.toMatch(/>w_[A-Za-z0-9-]+</);
+  });
+
+  it('menampilkan sebuah draf satu kali saja', async () => {
+    const cookie = await login();
+    const { worldId } = await pages.drafts.createDraft();
+
+    const body = await sweep(cookie, '/admin/worlds');
+
+    // Draf hanya boleh muncul sebagai tautan wizard. Tautan ke halaman
+    // rinciannya berarti ia ikut tercetak di daftar arsip — persis duplikasi
+    // yang membuat satu dunia tampak seperti dua catatan.
+    expect(
+      body,
+      'draf ikut tampil di daftar arsip, bukan hanya di bagian draf',
+    ).not.toContain(`href="/admin/worlds/${worldId}"`);
+    expect(body, 'draf tidak muncul sama sekali').toContain(
+      `href="/admin/worlds/${worldId}/wizard/`,
+    );
+  });
+
+  it('menandai menu bilah sisi yang sedang dibuka', async () => {
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/worlds');
+
+    // Kelasnya harus benar-benar menjadi atribut, bukan teks berisi tanda kutip.
+    expect(body, 'kelas "on" tidak terpasang sebagai atribut').toContain(
+      '<a href="/admin/worlds" class="on">',
+    );
+    // Dan tepat satu menu yang bertanda aktif.
+    expect(body.match(/class="on"/g)?.length ?? 0).toBe(1);
+  });
+
+  it('menyejajarkan judul dengan kartu, bukan menggesernya ke tepi', async () => {
+    const cookie = await login();
+    const css = cssOf(await sweep(cookie, '/admin/worlds'));
+
+    // `main>*` memusatkan isi dengan margin otomatis. Aturan h1/h2/.sub tidak
+    // boleh memakai shorthand `margin`, sebab shorthand itu menimpa sisi
+    // kiri-kanannya dengan 0 dan judul lalu menempel ke tepi kiri sementara
+    // kartu tetap di tengah — terukur 207px pada lebar 1908px.
+    expect(css, 'main>* harus memakai margin-inline').toMatch(
+      /main>\*\{[^}]*margin-inline:auto/,
+    );
+    for (const selector of ['h1', 'h2', '.sub']) {
+      expect(
+        ruleFor(css, selector),
+        `aturan ${selector} memakai shorthand margin dan akan menggeser judul`,
+      ).not.toMatch(/(?:^|;)\s*margin:/);
+    }
   });
 });

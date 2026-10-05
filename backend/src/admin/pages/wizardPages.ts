@@ -14,7 +14,7 @@
  */
 
 import type { SafeHtml } from '../html';
-import { esc, escOr, formatTime, html, inputValue, safe, statusPill, table } from '../html';
+import { CHEVRON, esc, escOr, formatTime, html, inputValue, statusPill } from '../html';
 import { RESPONSE_LOCALES, type ResponseLocale } from '../../contracts/types';
 import { BASE_EXPRESSION, MAX_BACKGROUNDS, type BackgroundRow, type DraftWorld, type NpcRow, type WizardStep } from '../worldDraftRepository';
 import type { AdminPageContext } from './context';
@@ -562,7 +562,7 @@ export function draftResumePanel(drafts: DraftWorld[]): SafeHtml {
     return html``;
   }
 
-  const rows = drafts.map((draft) => {
+  const items = drafts.map((draft) => {
     const step = stepOfDraft(draft);
     const missing: string[] = [];
     if (draft.coverMediaId === null) {
@@ -575,31 +575,29 @@ export function draftResumePanel(drafts: DraftWorld[]): SafeHtml {
       missing.push('belum ada NPC');
     }
 
-    return html`<tr>
-  <td>
-    <strong>${draft.title.trim().length > 0 ? esc(draft.title) : html`<span class="muted">tanpa judul</span>`}</strong>
-    <div class="muted mono" style="font-size:11px">${esc(draft.worldId)} · v${String(draft.worldVersion)}</div>
-  </td>
-  <td>${statusPill('draft', `langkah ${String(step)} dari 3`)}</td>
-  <td class="muted">${progressText(draft)}</td>
-  <td class="muted">${missing.length > 0 ? esc(missing.join(', ')) : html`<span class="pill ok">siap diterbitkan</span>`}</td>
-  <td class="muted mono">${esc(formatTime(draft.updatedAt, 'minute'))}</td>
-  <td class="right">
-    <a href="/admin/worlds/${esc(draft.worldId)}/wizard/${String(step)}"><button type="button">Lanjutkan</button></a>
-  </td>
-</tr>`;
+    // Tanpa id dunia dan tanpa nomor versi: keduanya nilai yang dipakai kueri,
+    // bukan yang dibaca penulis saat memilih draf mana yang hendak dilanjutkan.
+    return html`<a class="list__item" href="/admin/worlds/${esc(draft.worldId)}/wizard/${String(step)}">
+  <div class="list__main">
+    <div class="list__title">${
+      draft.title.trim().length > 0 ? esc(draft.title) : html`<span class="muted">Tanpa judul</span>`
+    }</div>
+    <div class="list__meta">${progressText(draft)} · ${
+      missing.length > 0 ? esc(missing.join(', ')) : 'siap diterbitkan'
+    }</div>
+  </div>
+  <div class="list__side">
+    ${statusPill('draft', `langkah ${String(step)} dari 3`)}
+    <span>${esc(formatTime(draft.updatedAt, 'minute'))}</span>
+    <span class="list__chev">${CHEVRON}</span>
+  </div>
+</a>`;
   });
 
-  return html`<h2>Draf belum selesai</h2>
-<div class="card">
-  <p class="sub" style="margin-top:0">
-    Dunia yang belum diterbitkan. Draf dapat ditinggalkan dan dilanjutkan kapan saja.
-  </p>
-  ${table(
-    ['Dunia', 'Kemajuan', 'Isi', 'Yang kurang', 'Terakhir disentuh', ''],
-    rows,
-    'Tidak ada draf.',
-  )}
+  return html`<h2>Draf belum selesai <span class="muted">${String(drafts.length)} draf</span></h2>
+<div class="card card--list">
+  <p class="sub">Dunia yang belum diterbitkan. Draf dapat ditinggalkan dan dilanjutkan kapan saja.</p>
+  <div class="list">${items}</div>
 </div>`;
 }
 

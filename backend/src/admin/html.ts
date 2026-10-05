@@ -564,8 +564,18 @@ export function layout(options: LayoutOptions): string {
     ? html`<aside class="sidebar">
   <div class="sidebar__label">Panel</div>
   <nav class="nav">${NAV.map(
+    /*
+     * Atribut kelas ditulis sebagai SafeHtml, bukan string biasa.
+     *
+     * `html()` meng-escape setiap nilai skalar, dan yang di-escape bukan hanya
+     * tanda kurung siku: tanda kutip ikut menjadi &quot;. Akibatnya nilai
+     * `class` berisi `"on"` berikut tanda kutipnya, kelasnya tidak pernah
+     * cocok, dan tidak ada satu pun menu yang tersorot — tanpa satu pun galat,
+     * tanpa satu pun halaman rusak. Cacat ini sempat hidup lama justru karena
+     * tampilannya hanya "kurang", bukan "salah".
+     */
     (item) =>
-      html`<a href="${item.href}"${item.key === options.active ? ' class="on"' : ''}><span class="nav__icon" style="--i-a:${item.from};--i-b:${item.to}">${item.icon}</span><span class="nav__text">${item.label}</span></a>`,
+      html`<a href="${item.href}"${item.key === options.active ? safe(' class="on"') : safe('')}><span class="nav__icon" style="--i-a:${item.from};--i-b:${item.to}">${item.icon}</span><span class="nav__text">${item.label}</span></a>`,
   )}</nav>
 </aside>`
     : html``;
@@ -639,46 +649,57 @@ const STYLES = `
 :root{
   color-scheme:light;
 
-  --canvas:#e6e6ec; --window:#ffffff; --sidebar:#eef0f4; --panel:#f6f6f8;
-  --field:#ffffff; --line:rgba(0,0,0,.075); --line-strong:rgba(0,0,0,.16);
-  --text:#1d1d1f; --muted:#79797f;
-  --accent:#0071e3; --accent-ink:#ffffff; --accent-soft:rgba(0,113,227,.12);
-  --danger:#d70015; --danger-soft:rgba(215,0,21,.10);
-  --ok:#1c8b3a; --ok-soft:rgba(28,139,58,.12);
-  --warn:#9a6400; --warn-soft:rgba(154,100,0,.12);
-  --hover:rgba(0,0,0,.055); --track:rgba(0,0,0,.07); --seg-active:#ffffff;
+  --canvas:#ececf0; --window:#ffffff; --sidebar:#f2f2f5; --panel:#f7f7f9; --panel-2:#ffffff;
+  --field:#ffffff; --line:rgba(0,0,0,.08); --line-strong:rgba(0,0,0,.16);
+  --bevel:rgba(255,255,255,0);
+  --text:#1d1d1f; --muted:#6e6e73;
+  --accent:#0071e3; --accent-link:#0071e3; --accent-fill:#0071e3; --accent-ink:#ffffff;
+  --accent-soft:rgba(0,113,227,.12);
+  --danger:#c2000f; --danger-soft:rgba(194,0,15,.10); --danger-fill:#c2000f;
+  --ok:#0a6b28; --ok-soft:rgba(10,107,40,.12);
+  --warn:#8a5a00; --warn-soft:rgba(138,90,0,.12);
+  --sel:rgba(0,0,0,.055); --hover:rgba(0,0,0,.045); --track:rgba(0,0,0,.07); --seg-active:#ffffff;
   --shadow-ctl:0 1px 1.5px rgba(0,0,0,.10);
-  --shadow-pop:0 18px 50px rgba(0,0,0,.26);
+  --shadow-card:0 1px 2px rgba(0,0,0,.06), 0 6px 18px rgba(0,0,0,.05);
+  --shadow-pop:0 24px 64px rgba(0,0,0,.26);
   --bar:52px; --content:1180px;
-  --radius:12px; --radius-sm:9px; --radius-xs:6px;
+  --radius:10px; --radius-lg:14px; --radius-sm:7px; --radius-xs:5px;
 }
 @media (prefers-color-scheme:dark){
   :root:not([data-theme=light]){
     color-scheme:dark;
-    --canvas:#131315; --window:#1e1e20; --sidebar:#232326; --panel:#2a2a2d;
-    --field:#2c2c2f; --line:rgba(255,255,255,.10); --line-strong:rgba(255,255,255,.19);
-    --text:#f5f5f7; --muted:#9a9aa1;
-    --accent:#0a84ff; --accent-soft:rgba(10,132,255,.24);
-    --danger:#ff6961; --danger-soft:rgba(255,105,97,.16);
+    --canvas:#131316; --window:#1c1c1e; --sidebar:#202023; --panel:#2a2a2d; --panel-2:#313135;
+    --field:#2c2c2f; --line:rgba(255,255,255,.12); --line-strong:rgba(255,255,255,.20);
+    --bevel:rgba(255,255,255,.055);
+    --text:#f5f5f7; --muted:#a1a1a8;
+    --accent:#0a84ff; --accent-link:#409cff; --accent-fill:#0060df; --accent-ink:#ffffff;
+    --accent-soft:rgba(64,156,255,.18);
+    --danger:#ff8a84; --danger-soft:rgba(255,138,132,.16); --danger-fill:#d70015;
     --ok:#4cd964; --ok-soft:rgba(76,217,100,.16);
     --warn:#ffb340; --warn-soft:rgba(255,179,64,.16);
-    --hover:rgba(255,255,255,.075); --track:rgba(255,255,255,.09); --seg-active:#48484c;
+    --sel:rgba(120,120,128,.22); --hover:rgba(255,255,255,.06); --track:rgba(255,255,255,.09);
+    --seg-active:#48484c;
     --shadow-ctl:0 1px 1.5px rgba(0,0,0,.45);
-    --shadow-pop:0 18px 50px rgba(0,0,0,.62);
+    --shadow-card:0 1px 2px rgba(0,0,0,.44), 0 10px 30px rgba(0,0,0,.28);
+    --shadow-pop:0 24px 64px rgba(0,0,0,.66), 0 0 0 .5px rgba(255,255,255,.06);
   }
 }
 :root[data-theme=dark]{
   color-scheme:dark;
-  --canvas:#131315; --window:#1e1e20; --sidebar:#232326; --panel:#2a2a2d;
-  --field:#2c2c2f; --line:rgba(255,255,255,.10); --line-strong:rgba(255,255,255,.19);
-  --text:#f5f5f7; --muted:#9a9aa1;
-  --accent:#0a84ff; --accent-soft:rgba(10,132,255,.24);
-  --danger:#ff6961; --danger-soft:rgba(255,105,97,.16);
+  --canvas:#131316; --window:#1c1c1e; --sidebar:#202023; --panel:#2a2a2d; --panel-2:#313135;
+  --field:#2c2c2f; --line:rgba(255,255,255,.12); --line-strong:rgba(255,255,255,.20);
+  --bevel:rgba(255,255,255,.055);
+  --text:#f5f5f7; --muted:#a1a1a8;
+  --accent:#0a84ff; --accent-link:#409cff; --accent-fill:#0060df; --accent-ink:#ffffff;
+  --accent-soft:rgba(64,156,255,.18);
+  --danger:#ff8a84; --danger-soft:rgba(255,138,132,.16); --danger-fill:#d70015;
   --ok:#4cd964; --ok-soft:rgba(76,217,100,.16);
   --warn:#ffb340; --warn-soft:rgba(255,179,64,.16);
-  --hover:rgba(255,255,255,.075); --track:rgba(255,255,255,.09); --seg-active:#48484c;
+  --sel:rgba(120,120,128,.22); --hover:rgba(255,255,255,.06); --track:rgba(255,255,255,.09);
+  --seg-active:#48484c;
   --shadow-ctl:0 1px 1.5px rgba(0,0,0,.45);
-  --shadow-pop:0 18px 50px rgba(0,0,0,.62);
+  --shadow-card:0 1px 2px rgba(0,0,0,.44), 0 10px 30px rgba(0,0,0,.28);
+  --shadow-pop:0 24px 64px rgba(0,0,0,.66), 0 0 0 .5px rgba(255,255,255,.06);
 }
 
 *{box-sizing:border-box}
@@ -688,7 +709,7 @@ body{margin:0;background:var(--window);color:var(--text);
   "Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
   -webkit-font-smoothing:antialiased;
   display:flex;flex-direction:column;overflow:hidden}
-a{color:var(--accent);text-decoration:none}
+a{color:var(--accent-link);text-decoration:none}
 a:hover{text-decoration:underline}
 ::selection{background:var(--accent-soft)}
 :focus-visible{outline:2px solid var(--accent);outline-offset:1px}
@@ -718,33 +739,49 @@ a:hover{text-decoration:underline}
 .segmented{display:inline-flex;gap:2px;padding:2px;border-radius:var(--radius-sm);
   background:var(--track)}
 .segmented button{border:0;background:none;box-shadow:none;color:var(--muted);
-  font:inherit;font-size:12px;font-weight:600;padding:3px 11px;border-radius:7px;cursor:pointer}
+  font:inherit;font-size:12px;font-weight:600;padding:3px 11px;border-radius:6px;cursor:pointer}
 .segmented button:hover{color:var(--text)}
 .segmented button[aria-pressed=true]{background:var(--seg-active);color:var(--text);
   box-shadow:var(--shadow-ctl)}
 
 /* ---------------- Kerangka: bilah sisi + isi, memenuhi layar ---------------- */
 .shell{flex:1;display:flex;align-items:stretch;min-height:0;background:var(--window)}
-.sidebar{width:234px;flex:none;overflow-y:auto;padding:12px 10px 20px;
+.sidebar{width:238px;flex:none;overflow-y:auto;padding:12px 10px 20px;
   background:color-mix(in srgb,var(--sidebar) 66%,transparent);
   backdrop-filter:saturate(180%) blur(24px);-webkit-backdrop-filter:saturate(180%) blur(24px);
   border-right:1px solid var(--line)}
-.sidebar__label{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.07em;
-  color:var(--muted);padding:6px 10px 7px}
-.nav{display:flex;flex-direction:column;gap:1px}
-.nav a{display:flex;align-items:center;gap:9px;padding:5px 8px;border-radius:7px;
+.sidebar__label{font-size:11.5px;font-weight:600;color:var(--muted);padding:6px 9px 8px}
+.nav{display:flex;flex-direction:column;gap:2px}
+.nav a{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:6px;
   color:var(--text);font-size:13px;line-height:1.35}
 .nav a:hover{background:var(--hover);text-decoration:none}
-.nav a.on{background:var(--accent);color:#fff;font-weight:600}
-.nav__icon{width:19px;height:19px;flex:none;border-radius:var(--radius-xs);
+/*
+ * Pemilihan TIDAK memakai --accent penuh.
+ *
+ * Tiga alasan, ketiganya terukur: teks putih di atas --accent hanya 3,65:1;
+ * ubin ikon "Dunia" memakai gradien biru yang sama, sehingga ubinnya hilang
+ * saat barisnya terpilih; dan satu baris biru mematikan kode warna dua belas
+ * ikon di bawahnya. System Settings memakai isian kelabu tembus pandang.
+ */
+.nav a.on{background:var(--sel);font-weight:600}
+.nav__icon{width:18px;height:18px;flex:none;border-radius:var(--radius-xs);
   display:grid;place-items:center;color:#fff;
   background:linear-gradient(160deg,var(--i-a),var(--i-b));
-  box-shadow:inset 0 0 0 .5px rgba(255,255,255,.3), 0 1px 1.5px rgba(0,0,0,.22)}
-.nav__icon svg{width:12px;height:12px;display:block}
+  box-shadow:inset 0 0 0 .5px rgba(255,255,255,.28), 0 1px 1.5px rgba(0,0,0,.22)}
+.nav__icon svg{width:11px;height:11px;display:block}
 .nav__text{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
 main{flex:1;min-width:0;overflow-y:auto;padding:28px 32px 64px;background:var(--window)}
-main>*{max-width:var(--content);margin-left:auto;margin-right:auto}
+/*
+ * margin-inline, BUKAN margin shorthand.
+ *
+ * Aturan h1/h2/.sub di bawah memakai shorthand margin dengan spesifisitas yang
+ * sama, dan shorthand itu menghapus auto pada sisi kiri-kanan. Akibatnya judul
+ * menempel ke tepi kiri sementara kartu tetap di tengah — terukur 207px pada
+ * lebar 1908px, di SETIAP halaman panel. Menulis margin-inline di sini membuat
+ * kedua sisi tidak lagi bertabrakan.
+ */
+main>*{max-width:var(--content);margin-inline:auto}
 @media(max-width:900px){
   .shell{flex-direction:column}
   .sidebar{width:auto;border-right:0;border-bottom:1px solid var(--line);padding:8px 10px}
@@ -756,38 +793,85 @@ main>*{max-width:var(--content);margin-left:auto;margin-right:auto}
 }
 
 /* ---------------- Tipografi ---------------- */
-h1{font-size:22px;margin:0 0 6px;font-weight:600;letter-spacing:-.015em}
-h2{font-size:12px;margin:28px 0 9px;color:var(--muted);text-transform:uppercase;
-  letter-spacing:.06em;font-weight:600}
-h2 span{text-transform:none;letter-spacing:normal}
-.sub{color:var(--muted);margin:0 0 20px;font-size:12.5px}
+/*
+ * Skala lama tidak punya undakan: seluruhnya antara 10,5 dan 13,5px, dan DUA
+ * tingkat memakai huruf besar semua (h2 12px, th 10,5px) sehingga keduanya
+ * justru lebih kecil daripada teks isi 13,5px — judul bagian lebih kecil dari
+ * paragrafnya, kepala kolom lebih kecil dari datanya. Huruf besar semua juga
+ * bukan kebiasaan macOS; System Settings memakai huruf biasa.
+ */
+h1{font-size:20px;line-height:1.25;letter-spacing:-.021em;font-weight:600;margin-block:0 6px}
+h2{font-size:13px;line-height:1.35;font-weight:600;letter-spacing:-.005em;
+  margin-block:32px 10px;color:var(--text)}
+h2 span{font-weight:500}
+.sub{color:var(--muted);margin-block:0 20px;font-size:13px;line-height:1.5}
 .sub strong{color:var(--text);font-weight:600}
 .muted{color:var(--muted)}
 .mono{font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace;font-size:11.5px}
 .right{text-align:right}
 
+/* ---------------- Kepala halaman ---------------- */
+.page-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.page-head h1{margin-block:0}
+.page-head .sub{margin-block:7px 20px}
+
 /* ---------------- Permukaan ---------------- */
+/*
+ * Di tema gelap, isian saja tidak pernah cukup: --panel di atas --window hanya
+ * 1,16:1. Yang memisahkan kartu dari latarnya adalah TIGA isyarat sekaligus —
+ * sorot tipis di tepi atas, bayangan jatuh, dan garis rambut. Tanpa ketiganya
+ * kartu tenggelam dan halaman terbaca datar.
+ */
 .card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
-  padding:16px;margin-bottom:16px}
+  padding:20px;margin-bottom:16px;
+  box-shadow:inset 0 1px 0 var(--bevel), var(--shadow-card)}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(184px,1fr))}
-.stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px 15px}
-.stat b{display:block;font-size:23px;font-weight:600;margin-bottom:1px;letter-spacing:-.02em}
-.stat span{color:var(--muted);font-size:11.5px}
-.empty{color:var(--muted);padding:26px;text-align:center;
-  border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:12.5px}
+/*
+ * Kartu yang isinya daftar bergrup: tanpa padding, supaya barisnya menyentuh
+ * tepi kartu seperti System Settings. overflow:hidden yang membulatkan sudut
+ * baris pertama dan terakhir, jadi tidak perlu aturan first/last-child yang
+ * akan salah ketika daftarnya hanya berisi satu baris.
+ */
+.card--list{padding:0;overflow:hidden}
+.card--list .sub{margin:16px 16px 0}
+.stat{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);
+  padding:16px 18px;box-shadow:inset 0 1px 0 var(--bevel), var(--shadow-card)}
+.stat b{display:block;font-size:24px;font-weight:600;line-height:1.2;margin-bottom:2px;
+  letter-spacing:-.022em}
+.stat span{color:var(--muted);font-size:12px}
+.empty{color:var(--muted);padding:28px;text-align:center;
+  border:1px dashed var(--line-strong);border-radius:var(--radius);font-size:13px}
+
+/* ---------------- Daftar bergrup ---------------- */
+.list{display:flex;flex-direction:column}
+.list__item{display:flex;align-items:center;gap:14px;padding:11px 16px;color:var(--text);
+  border-bottom:1px solid var(--line)}
+.list__item:last-child{border-bottom:0}
+.list__item:hover{background:var(--hover);text-decoration:none}
+.list__main{flex:1;min-width:0}
+.list__title{font-size:13.5px;font-weight:500;line-height:1.35}
+.list__meta{color:var(--muted);font-size:12px;line-height:1.45;margin-top:3px}
+.list__side{flex:none;display:flex;align-items:center;gap:14px;color:var(--muted);font-size:12px}
+.list__chev{flex:none;color:var(--muted);display:grid;place-items:center;opacity:.8}
 
 /* ---------------- Tabel ---------------- */
-table{width:100%;border-collapse:separate;border-spacing:0;font-size:12.5px}
-th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--line);vertical-align:top}
-th{background:transparent;color:var(--muted);font-size:10.5px;text-transform:uppercase;
-  letter-spacing:.055em;font-weight:600;white-space:nowrap}
+/*
+ * vertical-align:middle, bukan top. Dengan top, baris setinggi 52px menaruh
+ * angka di tepi atas dan menyisakan sekitar 35px kosong di bawahnya — itulah
+ * yang membuat tabel tampak melompong meski isinya sedikit.
+ */
+table{width:100%;border-collapse:separate;border-spacing:0;font-size:13px}
+th,td{text-align:left;padding:10px 14px;border-bottom:1px solid var(--line);
+  vertical-align:middle}
+th{color:var(--muted);font-size:11.5px;font-weight:500;white-space:nowrap}
+td{font-variant-numeric:tabular-nums}
 tbody tr:last-child td{border-bottom:0}
 tbody tr:hover td{background:var(--hover)}
 
 /* ---------------- Formulir ---------------- */
-label{display:block;margin-bottom:13px}
-label span{display:block;color:var(--muted);font-size:11.5px;margin-bottom:4px}
-input,select,textarea{width:100%;padding:6px 10px;background:var(--field);color:var(--text);
+label{display:block;margin-bottom:14px}
+label span{display:block;color:var(--muted);font-size:12px;font-weight:500;margin-bottom:5px}
+input,select,textarea{width:100%;padding:7px 11px;background:var(--field);color:var(--text);
   border:1px solid var(--line-strong);border-radius:var(--radius-sm);font:inherit;font-size:13px;
   box-shadow:inset 0 1px 1.5px rgba(0,0,0,.045)}
 input:focus,select:focus,textarea:focus{outline:none;border-color:var(--accent);
@@ -800,12 +884,12 @@ input[type=range]{padding:0;background:none;border:none;box-shadow:none}
  * satu-satunya kontrol yang masih terlihat seperti tahun 2010 di tengah panel
  * yang lain.
  */
-input[type=file]{padding:4px}
-input[type=file]::file-selector-button{margin-right:8px;padding:4px 11px;
+input[type=file]{padding:5px}
+input[type=file]::file-selector-button{margin-right:8px;padding:5px 12px;
   border:1px solid var(--line-strong);border-radius:var(--radius-xs);background:var(--window);
-  color:var(--text);font:inherit;font-size:12px;font-weight:500;cursor:pointer}
+  color:var(--text);font:inherit;font-size:12.5px;font-weight:500;cursor:pointer}
 input[type=file]::file-selector-button:hover{background:var(--hover)}
-textarea{min-height:84px;resize:vertical}
+textarea{min-height:88px;resize:vertical}
 select{appearance:none;-webkit-appearance:none;
   background-image:linear-gradient(45deg,transparent 50%,var(--muted) 50%),
     linear-gradient(135deg,var(--muted) 50%,transparent 50%);
@@ -813,29 +897,37 @@ select{appearance:none;-webkit-appearance:none;
   background-size:5px 5px,5px 5px;background-repeat:no-repeat;padding-right:28px}
 
 /* ---------------- Tombol ---------------- */
-button{padding:5px 13px;border-radius:var(--radius-sm);border:1px solid transparent;
-  background:var(--accent);color:var(--accent-ink);font:inherit;font-size:12.5px;font-weight:600;
-  cursor:pointer;box-shadow:var(--shadow-ctl)}
-button:hover{filter:brightness(1.07)}
-button:active{filter:brightness(.93)}
+/*
+ * Isian tombol memakai --accent-fill, bukan --accent. Di tema gelap --accent
+ * adalah biru terang (#0a84ff) yang hanya memberi 3,65:1 untuk teks putih di
+ * atasnya; --accent-fill yang lebih tua memberi 5,62:1. Tautan tetap memakai
+ * --accent-link yang terang, karena di sana teksnya yang berwarna, bukan
+ * latarnya.
+ */
+button{padding:6px 14px;border-radius:var(--radius-sm);border:1px solid transparent;
+  background:var(--accent-fill);color:var(--accent-ink);font:inherit;font-size:13px;
+  font-weight:600;cursor:pointer;box-shadow:var(--shadow-ctl)}
+button:hover{filter:brightness(1.08)}
+button:active{filter:brightness(.94)}
 button:disabled{opacity:.4;cursor:default;filter:none}
 button.ghost{background:var(--window);color:var(--text);border-color:var(--line-strong);
   font-weight:500}
 button.ghost:hover{background:var(--hover);filter:none}
 button.danger{background:var(--danger-soft);color:var(--danger);
   border-color:color-mix(in srgb,var(--danger) 32%,transparent);font-weight:500;box-shadow:none}
-button.danger:hover{background:var(--danger);color:#fff;filter:none}
-button.link{background:none;border:none;color:var(--accent);padding:0;font-weight:500;
-  box-shadow:none;font-size:12.5px}
+button.danger:hover{background:var(--danger-fill);color:#fff;border-color:transparent;
+  filter:none}
+button.link{background:none;border:none;color:var(--accent-link);padding:0;font-weight:500;
+  box-shadow:none;font-size:13px}
 button.link:hover{text-decoration:underline;filter:none}
 .row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
 .between{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap}
 .inline{display:inline}
-.two{display:grid;gap:14px;grid-template-columns:1fr 1fr}
+.two{display:grid;gap:16px;grid-template-columns:1fr 1fr}
 @media(max-width:680px){.two{grid-template-columns:1fr}}
 
 /* ---------------- Pemberitahuan dan pil ---------------- */
-.notice{padding:10px 13px;border-radius:var(--radius-sm);margin-bottom:16px;font-size:12.5px;
+.notice{padding:11px 14px;border-radius:var(--radius-sm);margin-bottom:16px;font-size:13px;
   border:1px solid transparent}
 .notice.ok{background:var(--ok-soft);border-color:color-mix(in srgb,var(--ok) 30%,transparent);
   color:var(--ok)}
@@ -843,7 +935,7 @@ button.link:hover{text-decoration:underline;filter:none}
   border-color:color-mix(in srgb,var(--danger) 30%,transparent);color:var(--danger)}
 .notice.info{background:var(--accent-soft);
   border-color:color-mix(in srgb,var(--accent) 30%,transparent);color:var(--text)}
-.pill{display:inline-block;padding:1px 8px;border-radius:99px;font-size:11px;
+.pill{display:inline-block;padding:2px 9px;border-radius:99px;font-size:11.5px;
   border:1px solid var(--line-strong);color:var(--muted);white-space:nowrap}
 .pill.ok{border-color:color-mix(in srgb,var(--ok) 40%,transparent);color:var(--ok);
   background:var(--ok-soft)}
@@ -864,7 +956,7 @@ button.link:hover{text-decoration:underline;filter:none}
   backdrop-filter:saturate(160%) blur(4px);-webkit-backdrop-filter:saturate(160%) blur(4px)}
 .sheet-layer[hidden]{display:none}
 .sheet{width:min(460px,100%);background:var(--window);border:1px solid var(--line-strong);
-  border-radius:var(--radius);box-shadow:var(--shadow-pop);overflow:hidden;
+  border-radius:var(--radius-lg);box-shadow:var(--shadow-pop);overflow:hidden;
   transition:width .22s cubic-bezier(.32,.72,0,1)}
 .sheet--zoom{width:min(940px,100%)}
 .sheet--min{width:min(320px,100%);align-self:end;justify-self:start;margin-left:24px}
@@ -875,8 +967,7 @@ button.link:hover{text-decoration:underline;filter:none}
   transition:transform .12s ease,filter .12s ease}
 .traffic--live .traffic__dot:hover{filter:brightness(1.12)}
 .traffic--live .traffic__dot:active{transform:scale(.9)}
-.sheet__title{margin:0;font-size:13px;font-weight:600;color:var(--text);
-  text-transform:none;letter-spacing:normal}
+.sheet__title{margin:0;font-size:13px;font-weight:600;color:var(--text)}
 .sheet__body{padding:20px 18px}
 .sheet__text{margin:0;font-size:13px;line-height:1.55}
 .sheet__foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px;
@@ -892,6 +983,20 @@ button.link:hover{text-decoration:underline;filter:none}
 /* ---------------------------------------------------------------- */
 /* Potongan yang sering dipakai                                      */
 /* ---------------------------------------------------------------- */
+
+/**
+ * Tanda panah kecil di ujung baris daftar.
+ *
+ * Baris daftar bergrup adalah satu-satunya penanda bahwa barisnya dapat dibuka,
+ * jadi tanda ini dipakai bersama oleh daftar dunia dan daftar draf. Digambar
+ * sebagai SVG sebaris, bukan karakter panah: karakter panah dirender berbeda
+ * oleh setiap font sistem, sedangkan panel ini memakai font apa pun yang ada.
+ */
+export const CHEVRON = safe(
+  '<svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" ' +
+    'stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+    '<path d="M4.5 2.5 8 6l-3.5 3.5"/></svg>',
+);
 
 /**
  * Tabel dengan kolom yang diberikan.
@@ -916,8 +1021,14 @@ export function table(headers: string[], rows: (SafeHtml | string)[], emptyText:
  * `label` dipakai bila teks yang dilihat admin berbeda dari nilai mentahnya —
  * mis. status dunia `retired` yang lebih bermakna sebagai "ditarik". Nilainya
  * tetap di-escape `html()`, jadi aman walau berasal dari basis data.
+ *
+ * `title` adalah tempat yang benar untuk nilai mentah itu. Sebelumnya ia
+ * dicetak sebagai baris kedua di bawah pil, dan hasilnya satu sel memuat fakta
+ * yang sama dua kali — "terbit" di atas "published" — sehingga barisnya dua
+ * kali lebih tinggi tanpa menambah satu pun keterangan. Sebagai tooltip ia
+ * tetap ada bagi yang membutuhkannya, tanpa mengotori baris yang dipindai.
  */
-export function statusPill(status: string, label?: string): SafeHtml {
+export function statusPill(status: string, label?: string, title?: string): SafeHtml {
   const known: Record<string, string> = {
     published: 'ok',
     active: 'ok',
@@ -936,7 +1047,7 @@ export function statusPill(status: string, label?: string): SafeHtml {
     off: 'off',
   };
   const cls = known[status] ?? '';
-  return html`<span class="pill ${cls}">${label ?? status}</span>`;
+  return html`<span class="pill ${cls}"${title ? html` title="${title}"` : ''}>${label ?? status}</span>`;
 }
 
 /**

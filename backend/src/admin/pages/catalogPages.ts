@@ -10,10 +10,11 @@
  */
 
 import type { SafeHtml } from '../html';
-import { esc, escOr, formatTime, html, inputValue, safe, selected, statusPill, table } from '../html';
+import { CHEVRON, esc, escOr, formatTime, html, inputValue, safe, selected, statusPill, table } from '../html';
 import { RELATION_STATUSES } from '../../contracts/types';
 import { worldStatusLabel, type WorldStatus } from '../catalogAdminRepository';
 import type { AdminPageContext } from './context';
+import { draftResumePanel } from './wizardPages';
 
 /**
  * Empat keadaan dunia, dengan kata-kata yang dipakai admin sehari-hari.
@@ -33,12 +34,16 @@ const STATUS_OPTIONS: { value: WorldStatus; label: string; help: string }[] = [
 /**
  * Pil status dunia dengan label yang dapat dibaca.
  *
- * Nilai mentahnya (`published`, `retired`, …) tetap ditampilkan terpisah di
- * bawah pil pada daftar dunia: nilai itulah yang dipakai kueri dan log, jadi
- * admin perlu melihatnya juga — bukan hanya terjemahannya.
+ * Nilai mentahnya (`published`, `retired`, …) TIDAK lagi dicetak sebagai baris
+ * kedua di bawah pil. Dulu ia begitu, dengan alasan bahwa nilai itulah yang
+ * dipakai kueri dan log — tetapi itu keperluan DIAGNOSA, dan diagnosa tidak
+ * punya tempat di baris yang sedang dipindai orang. Hasilnya satu sel memuat
+ * fakta yang sama dua kali, "terbit" di atas "published", dan tinggi barisnya
+ * berlipat tanpa menambah keterangan. Nilai mentah itu kini menjadi tooltip,
+ * dan tetap tertulis lengkap di halaman rincian dunia.
  */
 function worldStatusPill(status: string): SafeHtml {
-  return statusPill(status, worldStatusLabel(status));
+  return statusPill(status, worldStatusLabel(status), status);
 }
 
 const RATING_OPTIONS: { value: string; label: string }[] = [
@@ -49,47 +54,77 @@ const RATING_OPTIONS: { value: string; label: string }[] = [
 
 const LOCALE_OPTIONS = ['id-ID', 'en-US'] as const;
 
+/**
+ * Daftar dunia — halaman yang memuatnya, bukan sekadar tabelnya.
+ *
+ * Halaman ini menyusun dirinya sendiri lengkap: judul, tindakan utama, bagian
+ * draf, lalu arsipnya. Sebelumnya bagian draf disusun dari luar (di
+ * `adminRoutes.ts`) dan ditempelkan DI DEPAN fungsi ini, sehingga `<h2>` draf
+ * mendahului `<h1>` Dunia — urutan judul yang terbalik, dan judul besar
+ * "Dunia" muncul di tengah halaman seperti judul kedua. Dengan kepemilikan
+ * tunggal, urutannya tidak dapat terbalik lagi.
+ */
 export async function worldsList(ctx: AdminPageContext): Promise<SafeHtml> {
-  const worlds = await ctx.catalog.listWorlds();
+  const [worlds, drafts, genres] = await Promise.all([
+    ctx.catalog.listWorlds(),
+    ctx.drafts.listDrafts(),
+    ctx.genres.list(),
+  ]);
 
   // Label, bukan id. Kolom ini dibaca manusia, dan "Romansa" adalah nama yang
   // dipakai admin di formulir — menampilkan `romance` di sini memaksa admin
   // menerjemahkan sendiri antara apa yang ia centang dan apa yang ia lihat.
   // Id mentahnya tetap ada di formulir dunia bagi yang memerlukannya.
-  const labelOf = new Map((await ctx.genres.list()).map((genre) => [genre.genreId, genre.labelId]));
+  const labelOf = new Map(genres.map((genre) => [genre.genreId, genre.labelId]));
 
-  const rows = worlds.map(
-    (world) =>
-      html`<tr>
-  <td>
-    <a href="/admin/worlds/${esc(world.worldId)}">${escOr(world.title, '<span class="muted">tanpa judul</span>')}</a>
-    <div class="muted mono" style="font-size:11px">${world.worldId} · v${String(world.worldVersion)}</div>
-  </td>
-  <td>
+  /*
+   * Draf dikeluarkan dari daftar ini.
+   *
+   * Sebelumnya sebuah draf tampil DUA KALI pada satu layar — sekali di bagian
+   * draf, sekali lagi di tabel di bawahnya — dan siapa pun yang melihatnya
+   * wajar mengira ada dua catatan. Draf kini hanya punya satu tempat, lengkap
+   * dengan tombol lanjutannya.
+   */
+  const arsip = worlds.filter((world) => world.status !== 'draft');
+
+  const items = arsip.map((world) => {
+    const genresText = world.genres.map((genre) => labelOf.get(genre) ?? genre).join(', ');
+    const meta = [
+      genresText === '' ? 'Tanpa genre' : genresText,
+      `${String(world.characterCount)} karakter`,
+      `${String(world.journeyCount)} perjalanan`,
+    ].join(' · ');
+
+    return html`<a class="list__item" href="/admin/worlds/${esc(world.worldId)}">
+  <div class="list__main">
+    <div class="list__title">${escOr(world.title, 'Tanpa judul')}</div>
+    <div class="list__meta">${meta}</div>
+  </div>
+  <div class="list__side">
     ${worldStatusPill(world.status)}
-    <div class="muted mono" style="font-size:11px">${esc(world.status)}</div>
-  </td>
-  <td class="muted">${world.genres.map((genre) => labelOf.get(genre) ?? genre).join(', ') || '—'}</td>
-  <td class="right mono">${String(world.characterCount)}</td>
-  <td class="right mono">${String(world.journeyCount)}</td>
-  <td class="right muted mono">${formatTime(world.createdAt)}</td>
-</tr>`,
-  );
+    <span>Dibuat ${formatTime(world.createdAt)}</span>
+    <span class="list__chev">${CHEVRON}</span>
+  </div>
+</a>`;
+  });
 
-  return html`<h1>Dunia</h1>
-<p class="sub">
-  Menyunting dunia yang sudah terbit akan membuat <strong>versi baru</strong>.
-  Cerita yang sedang dimainkan pemain tetap memakai versi lamanya dan tidak berubah.
-</p>
-<div class="between" style="margin-bottom:14px">
-  <span class="muted">${String(worlds.length)} dunia</span>
+  return html`<div class="page-head">
+  <div>
+    <h1>Dunia</h1>
+    <p class="sub">
+      Menyunting dunia yang sudah terbit akan membuat <strong>versi baru</strong>.
+      Cerita yang sedang dimainkan pemain tetap memakai versi lamanya dan tidak berubah.
+    </p>
+  </div>
   <a href="/admin/worlds-new"><button type="button">Dunia baru</button></a>
 </div>
-<div class="card">${table(
-    ['Judul', 'Status', 'Genre', 'Karakter', 'Perjalanan', 'Dibuat'],
-    rows,
-    'Belum ada dunia.',
-  )}</div>`;
+${draftResumePanel(drafts)}
+<h2>Terbit &amp; arsip <span class="muted">${String(arsip.length)} dunia</span></h2>
+<div class="card card--list">${
+    items.length > 0
+      ? html`<div class="list">${items}</div>`
+      : html`<div class="empty" style="margin:16px">Belum ada dunia yang terbit.</div>`
+  }</div>`;
 }
 
 export async function worldsForm(ctx: AdminPageContext, worldId: string | null): Promise<SafeHtml> {

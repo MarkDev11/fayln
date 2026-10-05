@@ -1827,12 +1827,17 @@ describe('siklus hidup dunia', () => {
 
     const page = await app.inject({ method: 'GET', url: '/admin/worlds', headers: { cookie } });
     expect(page.statusCode).toBe(200);
-    expectRenderedMarkup(page.body, ['<td', '<table']);
+    // Daftar dunia kini baris bergrup, bukan tabel: setiap barisnya satu
+    // tautan yang dapat dibuka, bukan enam sel yang harus dibaca berkolom.
+    expectRenderedMarkup(page.body, ['<a class="list__item"']);
 
-    // Labelnya terbaca, dan nilai mentahnya tetap terlihat karena itulah yang
-    // dipakai kueri serta log.
+    // Labelnya terbaca. Nilai mentahnya TIDAK lagi berdiri sebagai baris kedua
+    // di bawah pil — dulu begitu, dan hasilnya satu baris memuat fakta yang
+    // sama dua kali. Ia kini menjadi tooltip, tempat yang sama terjangkaunya
+    // tanpa menggandakan tinggi baris.
     expect(page.body).toContain('dicabut');
-    expect(page.body).toContain('>revoked<');
+    expect(page.body).toContain('title="revoked"');
+    expect(page.body, 'nilai mentah masih tercetak sebagai teks').not.toContain('>revoked<');
   });
 
   it('menarik dunia mengeluarkan versi terbitnya dari katalog', async () => {
