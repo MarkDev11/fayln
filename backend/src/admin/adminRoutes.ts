@@ -2046,6 +2046,27 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       apiKey,
     );
 
+    if (!result.ok) {
+      /*
+       * Kegagalan di sini tercatat di log server, bukan hanya di layar.
+       *
+       * Sebabnya: pesan yang tampil di halaman sengaja pendek, sedangkan yang
+       * dibutuhkan untuk mendiagnosis — "gambarnya sampai atau tidak" — kadang
+       * baru terjawab oleh jawaban penuh modelnya. Log ini tidak memuat kunci
+       * API dan tidak memuat isi gambarnya.
+       */
+      request.log.warn(
+        {
+          reason: result.reason,
+          model: body.data.modelKey,
+          provider: provider.providerId,
+          mediaId: body.data.mediaId,
+          detail: result.detail,
+        },
+        'Analisis gambar lokasi gagal.',
+      );
+    }
+
     return reply.send(result);
   });
 

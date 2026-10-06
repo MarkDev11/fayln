@@ -233,7 +233,7 @@ function bulkSheet(categories: LocationCategoryRow[], providers: ProviderRow[]):
         </label>
       </div>
 
-      <label><span>Model visi</span>
+      <label><span>Model visi — pilih yang dapat melihat gambar</span>
         <select data-bulk-model><option value="">(pilih provider lebih dulu)</option></select>
       </label>
       <div class="field__status" data-bulk-model-status>Daftar model diambil dari provider yang dipilih.</div>

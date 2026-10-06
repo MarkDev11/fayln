@@ -45,11 +45,13 @@ export const VISION_TIMEOUT_MS = 45_000;
 const MAX_ANSWER_TOKENS = 400;
 
 /** Batas panjang badan respons yang disimpan untuk pesan galat. */
-const ERROR_SNIPPET = 180;
+const ERROR_SNIPPET = 400;
 
 /** Batas panjang nama dan keterangan yang diterima dari model. */
 export const MAX_VISION_NAME = 120;
 export const MAX_VISION_DESCRIPTION = 600;
+/** Batas panjang alasan yang disebutkan model saat ia tidak dapat menamai. */
+export const MAX_VISION_REASON = 300;
 
 /**
  * System prompt.
@@ -79,9 +81,10 @@ export const VISION_SYSTEM_PROMPT = [
   '- Describe only what is visible. Never invent history, characters, events,',
   '  or the names of people.',
   '- Do not mention that this is an image, a photo, a screenshot, or AI-made.',
-  '- If the image cannot be used as a place (blank, text only, a portrait, or',
-  '  something that is not a location at all), reply with empty strings:',
-  '  {"name": "", "description": ""}. Do not guess.',
+  '- If you CANNOT name the place, do not guess. Reply with the same shape plus',
+  '  a reason, and say plainly what you see or do not see:',
+  '  {"name": "", "description": "", "reason": "<one short sentence, in Indonesian>"}',
+  '  For example, if no image reached you at all, the reason must say that.',
 ].join('\n');
 
 export type VisionFailure =
@@ -244,7 +247,14 @@ export async function describeLocationImage(
 
   const text = extractAnswerText(raw);
   if (text === null) {
-    return { ok: false, reason: 'bad-response', detail: detailOf(raw, apiKey) };
+    // Tidak ada teks yang dapat dibaca sama sekali. Badan responsnya ditampilkan
+    // karena hanya itu yang tersisa untuk dilihat — dan bentuk jawaban yang tidak
+    // kita kenali justru hal yang perlu diketahui admin.
+    return {
+      ok: false,
+      reason: 'bad-response',
+      detail: `Jawaban model tidak memuat teks yang dapat dibaca. Isinya: ${detailOf(raw, apiKey)}`,
+    };
   }
 
   const parsed = extractNameAndDescription(text);
@@ -255,13 +265,25 @@ export async function describeLocationImage(
   }
 
   if (parsed.name.length === 0) {
-    // Model memakai jalan keluar yang memang disediakan prompt-nya. Itu jawaban
-    // yang sah, bukan kegagalan teknis — dan menampilkannya sebagai kegagalan
-    // teknis akan menyesatkan.
+    /*
+     * Model memakai jalan keluar yang memang disediakan prompt-nya.
+     *
+     * Yang ditampilkan adalah ALASAN YANG DIKATAKAN MODEL, bukan kesimpulan yang
+     * saya tarik. Bedanya menentukan: "model menilai gambar ini tidak dapat
+     * dipakai" adalah tebakan saya, dan ketika gambarnya ternyata tidak pernah
+     * sampai ke modelnya, tebakan itu menyesatkan ke arah yang salah sama sekali
+     * — admin akan mengganti fotonya berulang kali tanpa hasil. Kalimat model
+     * sendiri ("tidak ada gambar yang saya terima") langsung menunjukkan
+     * masalahnya.
+     */
+    const alasan = parsed.reason.length > 0 ? parsed.reason : '';
     return {
       ok: false,
       reason: 'declined',
-      detail: 'Model menilai gambar ini tidak dapat dipakai sebagai lokasi.',
+      detail:
+        alasan.length > 0
+          ? `Model tidak memberi nama. Alasannya: ${detailOf(alasan, apiKey)}`
+          : `Model tidak memberi nama, dan tidak menyebut alasannya. Jawabannya: ${detailOf(text, apiKey)}`,
     };
   }
 
@@ -291,10 +313,21 @@ function extractAnswerText(raw: string): string | null {
   if (Array.isArray(choices) && choices.length > 0) {
     const first = choices[0] as Record<string, unknown> | undefined;
     const message = first?.message as Record<string, unknown> | undefined;
-    const content = message?.content;
-    const fromChoice = flattenContent(content);
+    const fromChoice = flattenContent(message?.content);
     if (fromChoice !== null) {
       return fromChoice;
+    }
+    /*
+     * Sebagian penyedia menaruh teksnya di bidang lain ketika model menolak
+     * atau ketika jawabannya dianggap "penalaran". Mencari ketiganya lebih murah
+     * daripada menampilkan "jawaban tidak dikenali" untuk jawaban yang sebenarnya
+     * ada — dan jawaban itulah yang dibutuhkan admin untuk mendiagnosis.
+     */
+    for (const kunci of ['refusal', 'reasoning_content', 'text']) {
+      const nilai = message?.[kunci];
+      if (typeof nilai === 'string' && nilai.trim().length > 0) {
+        return nilai;
+      }
     }
   }
 
@@ -335,7 +368,9 @@ function flattenContent(content: unknown): string | null {
  * jadi yang dicari adalah objek JSON PERTAMA di dalam teks, bukan teks itu
  * sendiri.
  */
-function extractNameAndDescription(text: string): { name: string; description: string } | null {
+function extractNameAndDescription(
+  text: string,
+): { name: string; description: string; reason: string } | null {
   const start = text.indexOf('{');
   const end = text.lastIndexOf('}');
   if (start < 0 || end <= start) {
@@ -356,10 +391,15 @@ function extractNameAndDescription(text: string): { name: string; description: s
   const name = typeof record.name === 'string' ? record.name.trim() : '';
   const description =
     typeof record.description === 'string' ? record.description.trim() : '';
+  // Bidang ini hanya dipakai saat model tidak dapat menamai tempatnya. Ia
+  // ditambahkan SETELAH kejadian nyata: jawaban kosong tanpa alasan tidak dapat
+  // dibedakan antara "model menolak" dan "gambar tidak pernah sampai".
+  const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
 
   return {
     name: clamp(name, MAX_VISION_NAME),
     description: clamp(description, MAX_VISION_DESCRIPTION),
+    reason: clamp(reason, MAX_VISION_REASON),
   };
 }
 

@@ -751,15 +751,32 @@ export const WIZARD_JS = `
 
       function ringkas(sebab) {
         var gagal = 0;
+        var ditolak = 0;
         for (var k = 0; k < tugas.length; k++) {
-          if (tugas[k].ui.baris.getAttribute('data-state') === 'error') { gagal += 1; }
+          if (tugas[k].ui.baris.getAttribute('data-state') === 'error') {
+            gagal += 1;
+            if (tugas[k].sebab === 'declined') { ditolak += 1; }
+          }
         }
         var berhasil = tugas.length - gagal;
-        katakan(
-          sebab + ' ' + berhasil + ' dari ' + tugas.length + ' gambar menjadi lokasi' +
-          (gagal > 0 ? ', ' + gagal + ' gagal.' : '.'),
-          gagal > 0 ? 'error' : 'ok'
-        );
+
+        var pesan = sebab + ' ' + berhasil + ' dari ' + tugas.length + ' gambar menjadi lokasi' +
+          (gagal > 0 ? ', ' + gagal + ' gagal.' : '.');
+
+        /*
+         * Semua gambar ditolak model adalah pola yang khas, dan sebabnya hampir
+         * selalu sama: gambarnya tidak pernah sampai ke modelnya — biasanya
+         * karena model yang dipilih memang tidak dapat melihat gambar. Tanpa
+         * kalimat ini, admin akan menyimpulkan fotonya yang salah, lalu mengganti
+         * gambar berulang kali tanpa hasil.
+         */
+        if (gagal > 0 && ditolak === gagal) {
+          pesan += ' Semuanya ditolak model. Periksa jawaban modelnya di tiap baris:'
+            + ' kalau ia menjawab tidak melihat gambar, berarti model yang dipilih'
+            + ' tidak dapat melihat gambar — ganti ke model visi.';
+        }
+
+        katakan(pesan, gagal > 0 ? 'error' : 'ok');
         berjalan = false;
         tombolMulai.disabled = false;
       }
@@ -799,6 +816,7 @@ export const WIZARD_JS = `
                 t.description = hasil.description;
                 setBaris(t.ui, 'ok', 'Dinamai: ' + hasil.name, '\u2713');
               } else {
+                t.sebab = hasil && hasil.reason ? hasil.reason : '';
                 var sebab = hasil && hasil.detail ? hasil.detail : 'sebab tidak diketahui';
                 setBaris(t.ui, 'error', 'Gagal dianalisis: ' + sebab, '\u00d7');
               }

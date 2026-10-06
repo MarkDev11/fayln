@@ -35,9 +35,13 @@ function fakeFetch(status: number, body: string): { calls: Panggilan[]; impl: ty
 }
 
 /** Jawaban bergaya OpenAI yang memuat JSON yang kita minta. */
-function openAiAnswer(name: string, description: string): string {
+function openAiAnswer(name: string, description: string, reason?: string): string {
+  const isi: Record<string, string> = { name, description };
+  if (reason !== undefined) {
+    isi.reason = reason;
+  }
   return JSON.stringify({
-    choices: [{ message: { content: JSON.stringify({ name, description }) } }],
+    choices: [{ message: { content: JSON.stringify(isi) } }],
   });
 }
 
@@ -205,6 +209,66 @@ describe('panggilan model visi', () => {
     }
   });
 
+  it('menampilkan ALASAN dari model, bukan kesimpulan yang ditarik kode', async () => {
+    /*
+     * Jawaban kosong tanpa alasan tidak dapat dibedakan antara "model menolak
+     * gambar ini" dan "gambar tidak pernah sampai ke modelnya" — dan keduanya
+     * membutuhkan tindakan yang sama sekali berbeda dari admin. Karena itu
+     * promptnya meminta alasan, dan alasannya yang ditampilkan.
+     */
+    const { impl } = fakeFetch(
+      200,
+      openAiAnswer('', '', 'Tidak ada gambar yang saya terima pada permintaan ini.'),
+    );
+
+    const hasil = await describeLocationImage(OPENAI, KUNCI, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('declined');
+      expect(hasil.detail).toContain('Tidak ada gambar yang saya terima');
+      /*
+       * Jalur cadangannya memuat SELURUH JSON, jadi kehadiran teks itu saja belum
+       * membuktikan alasannya benar-benar dibaca. Yang membedakannya: JSON mentah
+       * memuat nama bidangnya.
+       */
+      expect(hasil.detail).not.toContain('"reason"');
+      // Kesimpulan lama tidak boleh muncul lagi: ia menyesatkan ke arah yang salah.
+      expect(hasil.detail).not.toContain('tidak dapat dipakai sebagai lokasi');
+    }
+  });
+
+  it('mengatakan terus terang saat model tidak menyebut alasan apa pun', async () => {
+    const { impl } = fakeFetch(200, openAiAnswer('', ''));
+
+    const hasil = await describeLocationImage(OPENAI, KUNCI, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('declined');
+      expect(hasil.detail).toContain('tidak menyebut alasannya');
+    }
+  });
+
+  it('membaca teks dari bidang lain ketika content kosong', async () => {
+    // Sebagian penyedia menaruh teksnya di `refusal` atau `reasoning_content`
+    // ketika model menolak. Menampilkan "jawaban tidak dikenali" untuk jawaban
+    // yang sebenarnya ada berarti membuang satu-satunya petunjuk yang dimiliki.
+    const { impl } = fakeFetch(
+      200,
+      JSON.stringify({
+        choices: [{ message: { content: null, refusal: 'I cannot help with that request.' } }],
+      }),
+    );
+
+    const hasil = await describeLocationImage(OPENAI, KUNCI, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.detail).toContain('cannot help');
+    }
+  });
+
   it('memotong nama yang keterlaluan panjangnya', async () => {
     const panjang = 'A'.repeat(MAX_VISION_NAME + 80);
     const { impl } = fakeFetch(200, openAiAnswer(panjang, 'B'));
@@ -233,12 +297,18 @@ describe('panggilan model visi', () => {
     }
   });
 
-  it('meminta keluaran bahasa Indonesia di dalam system prompt', async () => {
+  it('meminta keluaran bahasa Indonesia, dan alasan saat model tidak dapat menamai', async () => {
     // Promptnya berbahasa Inggris, tetapi yang dihasilkan dipakai pemain —
     // jadi bahasanya harus disebut eksplisit.
     expect(VISION_SYSTEM_PROMPT).toContain('Indonesian');
     expect(VISION_SYSTEM_PROMPT).toContain('JSON');
-    // Dan jalan keluar jujurnya harus ada, kalau tidak model akan mengarang.
-    expect(VISION_SYSTEM_PROMPT).toContain('Do not guess');
+    // Jalan keluar jujurnya harus ada, kalau tidak model akan mengarang nama.
+    expect(VISION_SYSTEM_PROMPT.toLowerCase()).toContain('do not guess');
+    /*
+     * Dan jalan keluarnya harus MEMINTA ALASAN. Tanpa itu, jawaban kosong tidak
+     * dapat dibedakan antara "model menolak gambar ini" dan "gambar tidak pernah
+     * sampai" — dua masalah dengan tindakan yang sama sekali berbeda.
+     */
+    expect(VISION_SYSTEM_PROMPT).toContain('"reason"');
   });
 });
