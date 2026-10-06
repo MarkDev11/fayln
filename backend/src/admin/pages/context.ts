@@ -67,4 +67,19 @@ export type AdminPageContext = {
   providers: ProvidersRepository;
   /** Berkas gambar unggahan; dipakai halaman Aset untuk menghitung pemakaian. */
   media: MediaRepository;
+  /**
+   * Batas paket yang sedang berlaku, dibaca dari konfigurasi server.
+   *
+   * Halaman model memakainya untuk menerjemahkan "biaya per giliran" menjadi
+   * "≈ N giliran per hari" — angka yang dapat dibayangkan, dan yang membuat
+   * salah isi langsung terlihat. Jatahnya SENGAJA tidak ditulis ulang di
+   * halaman: angka yang ditulis ulang akan berbeda dari yang benar-benar
+   * ditegakkan begitu seseorang menyetel variabel lingkungannya, dan halaman
+   * yang menyebut jatah keliru lebih buruk daripada halaman yang tidak
+   * menyebutnya sama sekali.
+   */
+  plan: {
+    free: { dailyTokens: number; contextTokens: number };
+    paid: { dailyTokens: number; contextTokens: number };
+  };
 };

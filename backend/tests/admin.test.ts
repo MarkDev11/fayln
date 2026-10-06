@@ -99,6 +99,8 @@ async function buildTestApp(): Promise<FastifyInstance> {
     characters,
     locations,
     providers: new ProvidersRepository(ctx.db),
+
+    plan: testConfig().plan,
     media: new MediaRepository(ctx.db),
   };
 
@@ -3121,7 +3123,7 @@ describe('provider', () => {
       });
 
       expect(response.statusCode).toBe(200);
-      expect(response.json()).toEqual({ ok: true, ids: ['model-a', 'model-b'] });
+      expect(response.json()).toEqual({ ok: true, ids: ['model-a', 'model-b'], contexts: {} });
       // Alamat yang dipanggil diturunkan dari base URL provider, bukan dari
       // apa pun yang dikirim klien.
       expect(dipanggil).toBe('https://sumber.example.test/v1/models');

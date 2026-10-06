@@ -58,7 +58,20 @@ export type ProviderModelsFailure =
   | 'bad-response';
 
 export type ProviderModelsResult =
-  | { ok: true; ids: string[] }
+  | {
+      ok: true;
+      ids: string[];
+      /**
+       * Batas konteks yang DIKABARKAN provider, per nama model.
+       *
+       * Hanya berisi model yang providernya benar-benar menyebutkan angkanya.
+       * Banyak penyedia tidak menyebutkannya sama sekali — dan itu wajar, bukan
+       * kegagalan. Yang penting: angka ini KABARAN, bukan hasil ukur. Halaman
+       * memakainya sebagai titik awal yang boleh dikoreksi, dan tidak pernah
+       * sebagai kebenaran.
+       */
+      contexts: Record<string, number>;
+    }
   | { ok: false; reason: ProviderModelsFailure; detail: string };
 
 /** Yang dibutuhkan fungsi ini — sengaja bukan seluruh baris provider. */
@@ -134,11 +147,15 @@ export async function fetchProviderModels(
     };
   }
 
-  const ids = parseModelIds(body);
-  if (ids === null) {
+  const parsed = parseModels(body);
+  if (parsed === null) {
     return { ok: false, reason: 'bad-response', detail: detailOf(body, apiKey) };
   }
-  return { ok: true, ids: ids.slice(0, MAX_SUGGESTED_MODELS) };
+  return {
+    ok: true,
+    ids: parsed.ids.slice(0, MAX_SUGGESTED_MODELS),
+    contexts: parsed.contexts,
+  };
 }
 
 /**
@@ -169,7 +186,7 @@ async function readBody(response: Response): Promise<string> {
 }
 
 /**
- * Membaca daftar id dari bentuk jawaban yang lazim.
+ * Membaca daftar model dari bentuk jawaban yang lazim.
  *
  * Tiga bentuk diterima karena ketiganya nyata: `{data:[{id}]}` (OpenAI dan
  * Anthropic), `{models:[{name}]}`, dan larik id langsung. Mengenali ketiganya
@@ -179,7 +196,7 @@ async function readBody(response: Response): Promise<string> {
  * "daftar kosong", karena provider yang benar-benar tidak punya model adalah
  * hal yang berbeda dari jawaban yang tidak kita pahami.
  */
-function parseModelIds(body: string): string[] | null {
+function parseModels(body: string): { ids: string[]; contexts: Record<string, number> } | null {
   let parsed: unknown;
   try {
     parsed = JSON.parse(body);
@@ -188,15 +205,26 @@ function parseModelIds(body: string): string[] | null {
   }
 
   const collected = new Set<string>();
+  const contexts: Record<string, number> = {};
+
+  const absorb = (item: unknown): void => {
+    const id = typeof item === 'string' ? item.trim() : pickId(item);
+    if (!id) {
+      return;
+    }
+    collected.add(id);
+
+    const context = pickContext(item);
+    if (context !== null) {
+      contexts[id] = context;
+    }
+  };
 
   if (Array.isArray(parsed)) {
     for (const item of parsed) {
-      const id = typeof item === 'string' ? item : pickId(item);
-      if (id) {
-        collected.add(id);
-      }
+      absorb(item);
     }
-    return [...collected];
+    return { ids: [...collected], contexts };
   }
 
   if (parsed && typeof parsed === 'object') {
@@ -210,12 +238,9 @@ function parseModelIds(body: string): string[] | null {
       return null;
     }
     for (const item of list) {
-      const id = pickId(item);
-      if (id) {
-        collected.add(id);
-      }
+      absorb(item);
     }
-    return [...collected];
+    return { ids: [...collected], contexts };
   }
 
   return null;
@@ -234,6 +259,38 @@ function pickId(item: unknown): string | null {
     const value = record[key];
     if (typeof value === 'string' && value.trim().length > 0) {
       return value.trim();
+    }
+  }
+  return null;
+}
+
+/**
+ * Mengambil batas konteks bila provider menyebutkannya.
+ *
+ * Empat nama bidang diterima karena tidak ada satu pun yang standar: OpenAI dan
+ * Anthropic tidak menyebutkannya sama sekali, sedangkan gateway seperti
+ * OpenRouter memakai `context_length` — kadang di dalam `top_provider`. Yang
+ * tidak menyebutkan cukup dilewati; memaksa menebak akan mengisi formulir
+ * dengan angka karangan, dan itu persis yang tidak boleh terjadi.
+ */
+function pickContext(item: unknown): number | null {
+  if (!item || typeof item !== 'object') {
+    return null;
+  }
+  const record = item as Record<string, unknown>;
+
+  const nested = record.top_provider;
+  const sources: Record<string, unknown>[] = [record];
+  if (nested && typeof nested === 'object') {
+    sources.push(nested as Record<string, unknown>);
+  }
+
+  for (const source of sources) {
+    for (const key of ['context_length', 'context_window', 'max_input_tokens', 'max_context_tokens']) {
+      const value = source[key];
+      if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+        return Math.floor(value);
+      }
     }
   }
   return null;

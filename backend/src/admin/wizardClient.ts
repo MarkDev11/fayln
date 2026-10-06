@@ -297,17 +297,17 @@ export const WIZARD_JS = `
     }
   }
 
-  /* ---------------- Saran nama model dari provider ---------------- */
+  /* ---------------- Combobox nama model ---------------- */
 
   /*
-   * Mengisi <datalist> dari GET /admin/providers/<id>/models.
+   * Daftar saran nama model, digambar sendiri.
    *
-   * Hasilnya SARAN, bukan daftar tertutup: input tetap dapat diketik bebas.
-   * Penyedia menambah model lebih cepat daripada halaman ini dimuat ulang, dan
-   * mengunci pilihan hanya akan menghalangi pekerjaan yang sah.
-   *
-   * Daftar dimuat ulang setiap kali providernya berganti, karena nama model
-   * berbeda antar penyedia — saran dari provider lama justru menyesatkan.
+   * Bukan <datalist> dan bukan <select>: keduanya dirender PERAMBAN, dan
+   * daftar bawaannya tidak dapat digayakan sama sekali — di Windows ia muncul
+   * sebagai kotak abu-abu persegi di tengah panel yang serba membulat. Daftar
+   * yang digambar sendiri juga memungkinkan dua hal yang tidak mungkin dengan
+   * <select>: isiannya tetap bebas diketik, dan saranannya ikut berganti saat
+   * providernya berganti.
    *
    * Semua kegagalan berakhir sebagai pesan di baris status, bukan sebagai
    * halaman yang diam: provider yang belum punya kunci atau tidak menjawab
@@ -315,12 +315,15 @@ export const WIZARD_JS = `
    */
   function bindModelKeySync() {
     var input = document.querySelector('[data-model-key-input]');
-    var options = document.querySelector('[data-model-key-options]');
+    var menu = document.querySelector('[data-model-key-menu]');
     var status = document.querySelector('[data-model-key-status]');
     var select = document.querySelector('select[name=providerId]');
-    if (!input || !options || !select) { return; }
+    if (!input || !menu || !select) { return; }
 
-    var terakhir = null;
+    var semua = [];
+    var konteks = {};
+    var aktif = -1;
+    var providerDimuat = null;
 
     var pesanGagal = {
       'no-key': 'Provider ini belum punya kunci API, jadi daftar model tidak dapat diambil. Isi namanya manual.',
@@ -336,12 +339,106 @@ export const WIZARD_JS = `
       else { status.removeAttribute('data-state'); }
     }
 
+    function items() {
+      return menu.querySelectorAll('.combo__item');
+    }
+
+    function tutup() {
+      menu.hidden = true;
+      aktif = -1;
+      input.setAttribute('aria-expanded', 'false');
+      input.removeAttribute('aria-activedescendant');
+    }
+
+    /*
+     * Menyorot satu baris.
+     *
+     * Indeksnya berputar di ujung daftar, dan pembaca layar mengikutinya lewat
+     * aria-activedescendant — tanpa itu, panah atas-bawah tidak mengatakan apa
+     * pun kepada pengguna pembaca layar.
+     */
+    function sorot(index) {
+      var baris = items();
+      if (baris.length === 0) { aktif = -1; return; }
+      if (index < 0) { index = baris.length - 1; }
+      if (index >= baris.length) { index = 0; }
+      aktif = index;
+      for (var i = 0; i < baris.length; i++) {
+        baris[i].setAttribute('data-active', i === index ? 'true' : 'false');
+      }
+      var terpilih = baris[index];
+      input.setAttribute('aria-activedescendant', terpilih.id);
+      if (terpilih.scrollIntoView) { terpilih.scrollIntoView({ block: 'nearest' }); }
+    }
+
+    function buka() {
+      var kata = input.value.trim().toLowerCase();
+      var cocok = [];
+      for (var i = 0; i < semua.length; i++) {
+        if (kata === '' || semua[i].toLowerCase().indexOf(kata) >= 0) { cocok.push(semua[i]); }
+      }
+
+      menu.innerHTML = '';
+      aktif = -1;
+
+      if (cocok.length === 0) {
+        var kosong = document.createElement('li');
+        kosong.className = 'combo__empty';
+        kosong.textContent = semua.length === 0
+          ? 'Belum ada saran dari provider. Nama boleh diketik bebas.'
+          : 'Tidak ada nama yang cocok. Nama boleh diketik bebas.';
+        menu.appendChild(kosong);
+      } else {
+        for (var j = 0; j < cocok.length; j++) {
+          var item = document.createElement('li');
+          item.className = 'combo__item';
+          item.id = 'm-key-opt-' + j;
+          item.setAttribute('role', 'option');
+          item.setAttribute('data-value', cocok[j]);
+          item.textContent = cocok[j];
+          menu.appendChild(item);
+        }
+      }
+
+      menu.hidden = false;
+      input.setAttribute('aria-expanded', 'true');
+    }
+
+    function pilih(nilai) {
+      input.value = nilai;
+      tutup();
+
+      /*
+       * Batas konteks dari provider hanya MENGISI YANG MASIH KOSONG.
+       *
+       * Angka provider adalah kabaran, bukan hasil ukur — dan begitu admin
+       * pernah mengisinya sendiri, isian itulah yang dipercaya. Menimpanya
+       * otomatis akan menghapus hasil pengukuran hanya karena nama modelnya
+       * dipilih ulang dari daftar.
+       */
+      var bidangKonteks = document.querySelector('[name=contextTokens]');
+      var angka = konteks[nilai];
+      if (bidangKonteks && angka && bidangKonteks.value.trim() === '') {
+        bidangKonteks.value = String(angka);
+        bidangKonteks.dispatchEvent(new Event('input', { bubbles: true }));
+        say(
+          'Batas konteks ' + ribuan(angka) + ' token diisikan dari provider. Angka ini kabaran — ganti bila uji Anda menunjukkan lain.',
+          null
+        );
+      }
+
+      // Penjaga perubahan belum tersimpan mendengarkan peristiwa input; tanpa
+      // ini, memilih dari daftar tidak dianggap sebagai perubahan.
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+
     function muat() {
       var id = select.value;
-      if (!id || id === terakhir) { return; }
-      terakhir = id;
+      if (!id || id === providerDimuat) { return; }
+      providerDimuat = id;
 
-      options.innerHTML = '';
+      semua = [];
+      tutup();
       say('Mengambil daftar model...', null);
 
       fetch('/admin/providers/' + encodeURIComponent(id) + '/models', {
@@ -355,25 +452,124 @@ export const WIZARD_JS = `
             say(teks + (data && data.detail ? ' (' + data.detail + ')' : ''), 'error');
             return;
           }
-          var ids = data.ids || [];
-          for (var i = 0; i < ids.length; i++) {
-            var option = document.createElement('option');
-            option.value = ids[i];
-            options.appendChild(option);
-          }
-          if (ids.length === 0) {
+          semua = data.ids || [];
+          konteks = data.contexts || {};
+          if (semua.length === 0) {
             say('Provider tidak mengembalikan satu pun nama model. Isi namanya manual.', 'error');
             return;
           }
-          say(ids.length + ' nama model tersedia. Boleh dipilih, boleh diketik sendiri.', 'ok');
+          var sebut = 0;
+          for (var k in konteks) { if (konteks.hasOwnProperty(k)) { sebut += 1; } }
+          say(
+            semua.length + ' nama model tersedia. Boleh dipilih, boleh diketik sendiri.' +
+            (sebut > 0 ? ' ' + sebut + ' di antaranya menyebutkan batas konteks.' : ''),
+            'ok'
+          );
         })
         .catch(function () {
           say('Daftar model tidak dapat diambil. Isi namanya manual.', 'error');
         });
     }
 
+    input.addEventListener('focus', buka);
+    input.addEventListener('click', buka);
+    input.addEventListener('input', buka);
+
+    input.addEventListener('keydown', function (event) {
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        if (menu.hidden) { buka(); } else { sorot(aktif + 1); }
+        return;
+      }
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        if (menu.hidden) { buka(); } else { sorot(aktif - 1); }
+        return;
+      }
+      if (event.key === 'Enter') {
+        // Enter hanya memilih bila ada baris tersorot. Kalau tidak, biarkan
+        // formulir terkirim seperti biasa.
+        if (!menu.hidden && aktif >= 0) {
+          var baris = items();
+          if (baris[aktif]) {
+            event.preventDefault();
+            pilih(baris[aktif].getAttribute('data-value'));
+          }
+        }
+        return;
+      }
+      if (event.key === 'Escape') { tutup(); return; }
+      if (event.key === 'Tab') { tutup(); }
+    });
+
+    /*
+     * mousedown, bukan click.
+     *
+     * Pada click, isian kehilangan fokus lebih dulu dan daftarnya sudah tertutup
+     * sebelum pilihannya tercatat. preventDefault di sini menahan fokus tetap di
+     * isian — dan itu juga yang membuat menggulir daftar yang panjang tidak
+     * menutupnya.
+     */
+    menu.addEventListener('mousedown', function (event) {
+      event.preventDefault();
+      var item = event.target && event.target.closest ? event.target.closest('.combo__item') : null;
+      if (item) { pilih(item.getAttribute('data-value')); }
+    });
+
+    input.addEventListener('blur', tutup);
     select.addEventListener('change', muat);
     muat();
+  }
+
+  /* ---------------- Biaya per giliran, dalam bahasa yang dapat dibayangkan ---------------- */
+
+  /*
+   * "3.500 token per giliran" tidak mengatakan apa pun. "≈ 28 giliran per hari"
+   * mengatakan segalanya — dan itu juga cara tercepat melihat bahwa angkanya
+   * salah isi: biaya 500.000 pada jatah 100.000 menghasilkan 0 giliran, dan itu
+   * jelas keliru tanpa perlu tahu apa itu token.
+   *
+   * Jatahnya dibaca dari opsi tier yang sedang dipilih, jadi berpindah tier
+   * langsung mengubah hitungannya tanpa memanggil server.
+   */
+  function bindCostHelper() {
+    var biaya = document.querySelector('[name=estimatedTurnCost]');
+    var tier = document.querySelector('select[name=tier]');
+    var keluaran = document.querySelector('[data-cost-helper]');
+    if (!biaya || !tier || !keluaran) { return; }
+
+    function hitung() {
+      var angka = Number(biaya.value);
+      var opsi = tier.options[tier.selectedIndex];
+      var jatah = opsi ? Number(opsi.getAttribute('data-daily-tokens')) : NaN;
+
+      if (!isFinite(angka) || angka <= 0 || !isFinite(jatah) || jatah <= 0) {
+        keluaran.textContent = 'Isi angkanya untuk melihat berapa giliran yang muat dalam sehari.';
+        keluaran.removeAttribute('data-state');
+        return;
+      }
+
+      var giliran = Math.floor(jatah / angka);
+      if (giliran < 1) {
+        // Bukan angka yang "kurang tepat" — dengan angka ini TIDAK ADA pemain
+        // yang pernah dapat dilayani, di tier mana pun.
+        keluaran.textContent = 'Dengan jatah ' + ribuan(jatah) + ' token/hari, satu giliran pun tidak muat. Angkanya terlalu besar.';
+        keluaran.setAttribute('data-state', 'error');
+        return;
+      }
+
+      keluaran.textContent = 'Dengan jatah ' + ribuan(jatah) + ' token/hari, angka ini berarti sekitar ' + ribuan(giliran) + ' giliran per hari.';
+      keluaran.setAttribute('data-state', 'ok');
+    }
+
+    biaya.addEventListener('input', hitung);
+    tier.addEventListener('change', hitung);
+    hitung();
+  }
+
+  /** Pemisah ribuan dengan titik, seperti kebiasaan Indonesia. */
+  function ribuan(angka) {
+    return String(angka).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   }
 
   /* ---------------- Peringatan meninggalkan halaman ---------------- */
@@ -430,6 +626,7 @@ export const WIZARD_JS = `
     );
     bindUnsavedGuard();
     bindModelKeySync();
+    bindCostHelper();
   }
 
   if (document.readyState === 'loading') {

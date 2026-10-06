@@ -956,6 +956,35 @@ select{appearance:none;-webkit-appearance:none;
 .field__status[data-state=ok]{color:var(--ok)}
 .field__status[data-state=error]{color:var(--danger)}
 
+/*
+ * Combobox: isian yang tetap bebas diketik, dengan daftar saran melayang.
+ *
+ * Mengapa bukan <datalist> atau <select>: keduanya dirender oleh PERAMBAN, dan
+ * daftar bawaan peramban tidak dapat digayakan sama sekali — di Windows ia
+ * muncul sebagai kotak abu-abu persegi di tengah panel yang serba membulat, dan
+ * tidak ada satu properti CSS pun yang dapat mengubahnya. Satu-satunya cara
+ * mendapatkan daftar bergaya macOS adalah menggambarnya sendiri.
+ *
+ * <select> juga bukan pilihan di sini karena ia MENGUNCI pilihan: penyedia
+ * menambah model lebih cepat daripada halaman ini dimuat ulang, dan nama yang
+ * belum terdaftar harus tetap dapat diketik.
+ */
+.combo{position:relative}
+.combo__menu{position:absolute;z-index:40;top:calc(100% + 6px);left:0;right:0;
+  max-height:264px;overflow-y:auto;margin:0;padding:5px;list-style:none;
+  background:var(--panel);border:1px solid var(--line-strong);border-radius:10px;
+  box-shadow:0 14px 34px rgba(0,0,0,.24),0 2px 7px rgba(0,0,0,.14)}
+.combo__menu[hidden]{display:none}
+.combo__item{padding:6px 10px;border-radius:6px;font-size:13px;line-height:1.35;
+  cursor:default;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  font-family:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,monospace}
+/*
+ * Sorotan memakai --accent-fill dengan --accent-ink, pasangan yang sama dengan
+ * tombol: di tema gelap --accent terlalu terang untuk teks putih di atasnya.
+ */
+.combo__item[data-active=true]{background:var(--accent-fill);color:var(--accent-ink)}
+.combo__empty{padding:8px 10px;font-size:12.5px;line-height:1.5;color:var(--muted)}
+
 /* ---------------- Tombol ---------------- */
 /*
  * Isian tombol memakai --accent-fill, bukan --accent. Di tema gelap --accent

@@ -91,24 +91,31 @@ function textField(
     maxlength?: number;
     type?: string;
     mono?: boolean;
-    /** Id `<datalist>` penyedia saran. Isian tetap bebas diketik. */
-    list?: string;
     /** Atribut tambahan, mis. kait JavaScript. */
     attrs?: Record<string, string>;
+    /** Daftar saran melayang, tepat di bawah isian. Lihat gaya .combo. */
+    menu?: SafeHtml;
     /** Elemen di bawah bantuan — mis. baris status. */
     after?: SafeHtml;
   },
 ): SafeHtml {
-  return html`<div class="field">
-  <label class="field__label" for="${base.id}">${base.label}</label>
-  <input id="${base.id}" name="${base.name}" type="${base.type ?? 'text'}"
+  const input = html`<input id="${base.id}" name="${base.name}" type="${base.type ?? 'text'}"
          aria-describedby="${base.id}-hint"
          ${base.required ? 'required' : ''}
          ${base.maxlength ? safe(` maxlength="${String(base.maxlength)}"`) : ''}
          ${base.placeholder ? safe(` placeholder="${esc(base.placeholder)}"`) : ''}
-         ${base.mono ? safe(' class="field__mono"') : ''}
-         ${base.list ? safe(` list="${esc(base.list)}"`) : ''}${extraAttrs(base.attrs)}
-         value="${inputValue(base.value)}">
+         ${base.mono ? safe(' class="field__mono"') : ''}${extraAttrs(base.attrs)}
+         value="${inputValue(base.value)}">`;
+
+  return html`<div class="field">
+  <label class="field__label" for="${base.id}">${base.label}</label>
+  ${
+    base.menu
+      ? // Pembungkus ini yang menjadi acuan posisi daftarnya; tanpa itu daftar
+        // menempel ke halaman, bukan ke isiannya.
+        html`<div class="combo">${input}${base.menu}</div>`
+      : input
+  }
   ${hintFor(base.id, base.hint, base.required)}
   ${base.after ?? ''}
 </div>`;
@@ -118,7 +125,14 @@ function selectField(
   base: FieldBase & {
     name: string;
     value: string;
-    options: { value: string; label: string }[];
+    /**
+     * `data` menempelkan angka pada opsinya, bukan pada halamannya.
+     *
+     * Dipakai jatah harian: skrip di peramban perlu tahu jatah tier yang sedang
+     * dipilih untuk menghitung "≈ N giliran per hari" tanpa memanggil server.
+     * Menaruhnya di opsi membuatnya ikut berganti sendiri saat tier berganti.
+     */
+    options: { value: string; label: string; data?: Record<string, string> }[];
   },
 ): SafeHtml {
   return html`<div class="field">
@@ -127,7 +141,7 @@ function selectField(
           ${base.required ? 'required' : ''}>
     ${base.options.map(
       (option) =>
-        html`<option value="${inputValue(option.value)}"${selected(base.value, option.value)}>${esc(option.label)}</option>`,
+        html`<option value="${inputValue(option.value)}"${extraAttrs(option.data)}${selected(base.value, option.value)}>${esc(option.label)}</option>`,
     )}
   </select>
   ${hintFor(base.id, base.hint, base.required)}
@@ -576,10 +590,23 @@ ${
 }
 
 export async function modelForm(ctx: AdminPageContext, modelId: string | null): Promise<SafeHtml> {
-  const [model, providers] = await Promise.all([
+  const [model, providers, freeMultiplier, paidMultiplier] = await Promise.all([
     modelId ? ctx.models.findModel(modelId) : Promise.resolve(null),
     ctx.providers.listOfferable(),
+    ctx.settings.quotaMultiplier('free'),
+    ctx.settings.quotaMultiplier('paid'),
   ]);
+
+  /*
+   * Jatah harian yang SEDANG berlaku, dihitung dari konfigurasi server dikali
+   * pengali promosi. Angkanya tidak ditulis ulang di halaman: halaman yang
+   * menyebut jatah keliru lebih buruk daripada halaman yang tidak menyebutnya,
+   * karena admin akan mengisi biaya per giliran berdasarkan angka yang salah.
+   */
+  const dailyQuota = {
+    free: Math.round(ctx.plan.free.dailyTokens * freeMultiplier),
+    paid: Math.round(ctx.plan.paid.dailyTokens * paidMultiplier),
+  };
 
   if (modelId && !model) {
     return html`<h1>Tidak ditemukan</h1>
@@ -641,10 +668,20 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
     placeholder: 'mis. mistral-medium-latest',
     maxlength: 120,
     mono: true,
-    list: 'm-key-options',
-    attrs: { 'data-model-key-input': '' },
-    after: html`<span class="field__status" data-model-key-status>Menunggu daftar model dari provider&hellip;</span>
-<datalist id="m-key-options" data-model-key-options></datalist>`,
+    attrs: {
+      'data-model-key-input': '',
+      // Peran combobox diumumkan ke pembaca layar; tanpa ini, daftar yang
+      // muncul di bawahnya tidak dikaitkan dengan isiannya sama sekali.
+      role: 'combobox',
+      'aria-expanded': 'false',
+      'aria-controls': 'm-key-menu',
+      'aria-autocomplete': 'list',
+      // Mematikannya penting: tanpa ini peramban menampilkan daftar riwayatnya
+      // SENDIRI di atas daftar kita, dan keduanya berebut tempat yang sama.
+      autocomplete: 'off',
+    },
+    menu: html`<ul class="combo__menu" id="m-key-menu" role="listbox" data-model-key-menu hidden></ul>`,
+    after: html`<span class="field__status" data-model-key-status>Menunggu daftar model dari provider&hellip;</span>`,
     value: model?.modelKey ?? '',
   })}
 
@@ -661,11 +698,19 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
     name: 'tier',
     label: 'Tier',
     required: true,
-    hint: 'Menentukan rantai mana yang memakai model ini, dan jatah token pemain yang mana.',
+    hint: 'Menentukan rantai mana yang memakai model ini, dan jatah token pemain yang mana. Angka jatah di bawah dibaca dari konfigurasi server, jadi ia yang benar-benar ditegakkan.',
     value: model?.tier ?? 'free',
     options: [
-      { value: 'free', label: 'Free — 64.000 token/hari' },
-      { value: 'paid', label: 'Paid — 256.000 token/hari' },
+      {
+        value: 'free',
+        label: `Free — ${formatNumber(dailyQuota.free)} token/hari`,
+        data: { 'data-daily-tokens': String(dailyQuota.free) },
+      },
+      {
+        value: 'paid',
+        label: `Paid — ${formatNumber(dailyQuota.paid)} token/hari`,
+        data: { 'data-daily-tokens': String(dailyQuota.paid) },
+      },
     ],
   })}
 
@@ -684,17 +729,18 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
     name: 'estimatedTurnCost',
     label: 'Perkiraan biaya per giliran (token)',
     required: true,
-    hint: 'Dipakai memeriksa anggaran SEBELUM model dipanggil. Isi angka yang sudah diukur, bukan perkiraan kasar.',
+    hint: 'Jumlahkan token prompt dan token jawaban untuk SATU giliran — mis. 3.000 token prompt + 500 token jawaban = 3.500. Angka ini menahan permintaan SEBELUM model dipanggil, jadi terlalu kecil membuat jatah pemain jebol, dan terlalu besar membuat pemain ditolak padahal masih cukup.',
     type: 'number',
+    after: html`<span class="field__status" data-cost-helper>Isi angkanya untuk melihat berapa giliran yang muat dalam sehari.</span>`,
     value: String(model?.estimatedTurnCost ?? ''),
   })}
 
   ${textField({
     id: 'm-context',
     name: 'contextTokens',
-    label: 'Batas konteks (token)',
+    label: 'Batas konteks (max token)',
     required: true,
-    hint: 'Ambang pemadatan riwayat. Isi konteks EFEKTIF yang sudah diuji, bukan angka di brosur.',
+    hint: 'Batas maksimum teks yang dapat dipegang model sekaligus. Dipakai sebagai ambang pemadatan: saat riwayat satu perjalanan mendekati angka ini, cerita lama dipadatkan supaya tetap muat. Isi konteks EFEKTIF yang sudah diuji — mutu jawaban biasanya turun jauh sebelum batas brosur tercapai.',
     type: 'number',
     value: String(model?.contextTokens ?? ''),
   })}

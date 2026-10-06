@@ -114,6 +114,8 @@ async function build(): Promise<FastifyInstance> {
     characters: new CharactersRepository(ctx.db),
     locations: new LocationsRepository(ctx.db),
     providers: new ProvidersRepository(ctx.db),
+
+    plan: testConfig().plan,
     media: new MediaRepository(ctx.db),
   };
 

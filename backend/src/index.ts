@@ -117,6 +117,8 @@ async function main(): Promise<void> {
     characters: new CharactersRepository(db),
     locations: new LocationsRepository(db),
     providers: new ProvidersRepository(db),
+
+    plan: config.plan,
     media: mediaRepository,
   };
 

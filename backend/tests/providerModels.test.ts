@@ -92,7 +92,11 @@ describe('daftar model provider', () => {
     for (const [body, harapan] of bentuk) {
       const { impl } = fakeFetch(200, body);
       const hasil = await fetchProviderModels(OPENAI, KUNCI, impl);
-      expect(hasil, `bentuk jawaban tidak dikenali: ${body}`).toEqual({ ok: true, ids: harapan });
+      expect(hasil, `bentuk jawaban tidak dikenali: ${body}`).toEqual({
+        ok: true,
+        ids: harapan,
+        contexts: {},
+      });
     }
   });
 
@@ -101,7 +105,7 @@ describe('daftar model provider', () => {
 
     const hasil = await fetchProviderModels(OPENAI, KUNCI, impl);
 
-    expect(hasil).toEqual({ ok: true, ids: ['a', 'b'] });
+    expect(hasil).toEqual({ ok: true, ids: ['a', 'b'], contexts: {} });
   });
 
   it('membatasi jumlah saran', async () => {
@@ -157,7 +161,58 @@ describe('daftar model provider', () => {
     // jawaban yang tidak kita pahami — yang pertama berhasil, yang kedua tidak.
     const kosong = fakeFetch(200, '{"data":[]}');
     const hasilKosong = await fetchProviderModels(OPENAI, KUNCI, kosong.impl);
-    expect(hasilKosong).toEqual({ ok: true, ids: [] });
+    expect(hasilKosong).toEqual({ ok: true, ids: [], contexts: {} });
+  });
+
+  it('mengambil batas konteks bila provider menyebutkannya', async () => {
+    /*
+     * Tidak ada nama bidang yang standar di sini: OpenAI dan Anthropic tidak
+     * menyebutkannya sama sekali, sedangkan gateway seperti OpenRouter memakai
+     * `context_length` — kadang di dalam `top_provider`. Yang tidak menyebutkan
+     * cukup dilewati; menebak akan mengisi formulir dengan angka karangan.
+     */
+    const { impl } = fakeFetch(
+      200,
+      JSON.stringify({
+        data: [
+          { id: 'a', context_length: 128000 },
+          { id: 'b', context_window: 32000 },
+          { id: 'c', top_provider: { context_length: 1000000 } },
+          { id: 'd' },
+        ],
+      }),
+    );
+
+    const hasil = await fetchProviderModels(OPENAI, KUNCI, impl);
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      expect(hasil.ids).toEqual(['a', 'b', 'c', 'd']);
+      // Model tanpa keterangan TIDAK muncul sebagai 0 atau null — ia tidak
+      // muncul sama sekali, supaya halaman dapat membedakan "tidak disebutkan"
+      // dari "nol token".
+      expect(hasil.contexts).toEqual({ a: 128000, b: 32000, c: 1000000 });
+    }
+  });
+
+  it('mengabaikan batas konteks yang bukan angka masuk akal', async () => {
+    const { impl } = fakeFetch(
+      200,
+      JSON.stringify({
+        data: [
+          { id: 'a', context_length: 'banyak' },
+          { id: 'b', context_length: 0 },
+          { id: 'c', context_length: -5 },
+        ],
+      }),
+    );
+
+    const hasil = await fetchProviderModels(OPENAI, KUNCI, impl);
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      expect(hasil.contexts).toEqual({});
+    }
   });
 
   it('menolak memanggil provider yang belum punya kunci', async () => {

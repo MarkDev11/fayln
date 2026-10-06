@@ -37,6 +37,7 @@ import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ProvidersRepository } from '../src/admin/providersRepository';
 import { SECRETS_KEY_ENV } from '../src/admin/secretBox';
 import { ModelsRepository } from '../src/admin/modelsRepository';
+import { formatNumber } from '../src/admin/pages/dashboardPages';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
 import { SettingsRepository } from '../src/admin/settingsRepository';
@@ -108,6 +109,8 @@ async function buildTestApp(): Promise<FastifyInstance> {
     characters: new CharactersRepository(ctx.db),
     locations: new LocationsRepository(ctx.db),
     providers: new ProvidersRepository(ctx.db),
+
+    plan: testConfig().plan,
     media: new MediaRepository(ctx.db),
   };
 
@@ -1089,6 +1092,55 @@ describe('provider: keadaan kosong dan berisi', () => {
     );
   });
 
+  /**
+   * Kejelasan tiga bidang yang paling mudah disalahpahami.
+   *
+   * Penjaga yang paling penting di sini: jatah harian HARUS dibaca dari
+   * konfigurasi. Sebelumnya halaman menulis "Free — 64.000 token/hari" secara
+   * tetap, padahal yang benar-benar ditegakkan sistem adalah
+   * `config.plan.free.dailyTokens` (100.000 pada konfigurasi bawaan). Halaman
+   * yang menyebut jatah keliru lebih buruk daripada halaman yang diam: admin
+   * mengisi biaya per giliran berdasarkan angka yang salah.
+   */
+  it('menyebut jatah harian yang benar-benar ditegakkan, bukan angka tetap', async () => {
+    const cookie = await login();
+    await seedProvider();
+
+    const body = await sweep(cookie, '/admin/models-form');
+
+    const jatahFree = formatNumber(testConfig().plan.free.dailyTokens);
+    const jatahPaid = formatNumber(testConfig().plan.paid.dailyTokens);
+
+    expect(body, 'jatah Free tidak muncul di pilihan tier').toContain(jatahFree);
+    expect(body, 'jatah Paid tidak muncul di pilihan tier').toContain(jatahPaid);
+    // Angka tetap yang dulu dipakai tidak boleh kembali.
+    expect(body, 'jatah masih ditulis tetap di halaman').not.toContain('64.000 token/hari');
+
+    // Skrip menghitung "≈ N giliran per hari" dari angka ini, jadi angkanya
+    // harus ikut pada opsinya — bukan pada halamannya.
+    expect(body, 'jatah tidak menempel pada opsi tier').toContain('data-daily-tokens=');
+  });
+
+  it('menerangkan biaya per giliran dan batas konteks dengan kalimat yang jelas', async () => {
+    const cookie = await login();
+    await seedProvider();
+
+    const body = await sweep(cookie, '/admin/models-form');
+
+    // Rumusnya harus tertulis: "berapa token" tidak cukup tanpa "dari mana".
+    expect(body, 'rumus biaya per giliran tidak dijelaskan').toMatch(/token prompt/i);
+    expect(body, 'contoh hitungan tidak ada').toMatch(/3\.000/);
+
+    // Baris hitungan giliran/hari dirender kosong, lalu diisi skrip.
+    expect(body, 'baris hitungan giliran tidak dirender').toContain('data-cost-helper');
+    // Dicari PEMANGGILANNYA, bukan definisinya: fungsi yang terdefinisi tetapi
+    // tidak pernah dipanggil menghasilkan baris yang diam-diam tetap kosong.
+    expect(body, 'skrip hitungan giliran tidak dipanggil').toContain('bindCostHelper();');
+
+    // Bidang konteks harus menyebut "max token" — istilah yang dicari orang.
+    expect(body, 'bidang konteks tidak menyebut max token').toMatch(/Batas konteks \(max token\)/);
+  });
+
   it('menghidupkan pesan "tidak ditemukan" saat id provider tidak ada', async () => {
     const cookie = await login();
     const body = await sweep(cookie, '/admin/providers-form?provider=prov_tidak_ada');
@@ -1103,8 +1155,9 @@ describe('provider: keadaan kosong dan berisi', () => {
    *
    * Bidangnya tetap isian bebas — daftar tertutup akan menghalangi nama model
    * yang belum muncul di `/models` provider, dan penyedia menambah model lebih
-   * cepat daripada halaman ini dimuat ulang. Karena itu yang dirender adalah
-   * `<datalist>`, bukan `<select>`.
+   * cepat daripada halaman ini dimuat ulang. Karena itu daftarnya digambar
+   * sendiri (combobox), bukan `<datalist>` atau `<select>`: keduanya dirender
+   * peramban, dan daftar bawaannya tidak dapat digayakan sama sekali.
    */
   it('menyediakan saran nama model tanpa mengunci isiannya', async () => {
     const cookie = await login();
@@ -1112,17 +1165,32 @@ describe('provider: keadaan kosong dan berisi', () => {
 
     const body = await sweep(cookie, '/admin/models-form');
 
-    expect(body, 'bidang nama model tidak menunjuk daftar saran').toMatch(/list="m-key-options"/);
-    expect(body, 'datalist tidak dirender').toContain('<datalist id="m-key-options"');
-    expect(body, 'kait JavaScript pengisian tidak ada').toContain('data-model-key-input');
+    // Isiannya harus tetap <input>, bukan <select>.
+    expect(body).toMatch(/<input[^>]*name="modelKey"/);
+
+    // Peran combobox mengaitkan isian dengan daftar yang muncul di bawahnya.
+    expect(body, 'isian tidak mengumumkan dirinya sebagai combobox').toMatch(
+      /role="combobox"/,
+    );
+    expect(body, 'daftar saran tidak dikaitkan ke isiannya').toContain('aria-controls="m-key-menu"');
+    // Tanpa ini peramban menampilkan daftar riwayatnya sendiri di atas daftar
+    // kita, dan keduanya berebut tempat yang sama.
+    expect(body, 'autocomplete tidak dimatikan').toMatch(/autocomplete="off"/);
+
+    expect(body, 'daftar saran tidak dirender').toContain('data-model-key-menu');
     expect(body, 'baris status tidak dirender').toContain('data-model-key-status');
-    // Daftar sarannya diisi oleh WIZARD_JS. Tanpa skrip itu ia tetap kosong dan
+
+    // Daftar yang tidak berada di dalam pembungkusnya akan menempel ke halaman,
+    // bukan ke isiannya — dan itu hanya terlihat saat dipakai, bukan di markup.
+    const combo = body.match(/<div class="combo">([\s\S]*?)<\/div>/);
+    expect(combo, 'pembungkus .combo tidak ada').not.toBeNull();
+    expect(combo![1], 'daftar saran berada di luar pembungkusnya').toContain('data-model-key-menu');
+
+    // Daftarnya diisi oleh WIZARD_JS. Tanpa skrip itu ia tetap kosong dan
     // bidangnya tampak seperti isian biasa — tanpa galat apa pun.
     expect(body, 'skrip pengambil daftar model tidak ikut dimuat').toContain(
       "'/admin/providers/'",
     );
-    // Isiannya harus tetap <input>, bukan <select>.
-    expect(body).toMatch(/<input[^>]*name="modelKey"/);
   });
 
   /**
