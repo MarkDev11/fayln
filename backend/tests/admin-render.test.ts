@@ -1121,41 +1121,47 @@ describe('provider: keadaan kosong dan berisi', () => {
     expect(body, 'jatah tidak menempel pada opsi tier').toContain('data-daily-tokens=');
   });
 
-  it('menerangkan biaya per giliran dan batas konteks dengan kalimat yang jelas', async () => {
+  it('tidak lagi meminta perkiraan token per giliran', async () => {
     const cookie = await login();
     await seedProvider();
 
     const body = await sweep(cookie, '/admin/models-form');
 
-    // Rumusnya harus tertulis: "berapa token" tidak cukup tanpa "dari mana".
-    expect(body, 'rumus token per giliran tidak dijelaskan').toMatch(/token prompt/i);
-    expect(body, 'contoh hitungan tidak ada').toMatch(/3\.000/);
-    // Satuannya harus tidak dapat disalahartikan sebagai uang.
-    expect(body, 'satuan token tidak ditegaskan').toMatch(/bukan uang/i);
-
-    // Baris hitungan giliran/hari dirender kosong, lalu diisi skrip.
-    expect(body, 'baris hitungan giliran tidak dirender').toContain('data-cost-helper');
-    // Dicari PEMANGGILANNYA, bukan definisinya: fungsi yang terdefinisi tetapi
-    // tidak pernah dipanggil menghasilkan baris yang diam-diam tetap kosong.
-    expect(body, 'skrip hitungan giliran tidak dipanggil').toContain('bindCostHelper();');
+    /*
+     * Bidang itu dibuang karena ia TIDAK DIPAKAI: pemeriksaan anggaran
+     * (`assertQuotaAvailable`) mengambil angkanya dari konstanta simulator, bukan
+     * dari kolom ini. Halaman yang meminta angka yang tidak dipakai lebih buruk
+     * daripada halaman yang tidak memintanya — ia menghabiskan perhatian dan
+     * menimbulkan pertanyaan yang tidak dapat dijawab.
+     */
+    expect(body, 'bidang token per giliran masih diminta').not.toContain('estimatedTurnCost');
+    expect(body, 'baris hitungan giliran per hari masih dirender').not.toContain('data-cost-helper');
+    expect(body, 'skrip hitungan giliran masih ikut dimuat').not.toContain('bindCostHelper');
+    expect(body, 'kolom token per giliran masih ada di daftar').not.toContain('Token/giliran');
 
     /*
      * Kata "biaya" menyiratkan UANG, dan di panel ini tidak ada uang sama sekali:
      * seluruh pemeriksaan anggaran membandingkan token dengan jatah token harian
-     * pemain. Halaman Promosi bahkan sudah menulisnya sejak awal ("hadiah berupa
-     * token, bukan mata uang terpisah"). Kata itu pernah membuat pemilik produk
-     * mengira ada kurs yang harus diisi.
+     * pemain. Kata itu pernah membuat pemilik produk mengira ada kurs yang harus
+     * diisi.
      *
      * Yang diperiksa hanya teks yang DILIHAT pengguna: skrip dan gaya dibuang
      * lebih dulu, karena di dalamnya kata itu muncul sebagai kiasan yang sah
-     * ("menerima keduanya tidak berbiaya apa pun"). Memeriksa seluruh berkas
-     * akan memerahkan uji karena komentar, dan uji yang memerahkan karena
-     * komentar akan dimatikan orang.
+     * ("menerima keduanya tidak berbiaya apa pun"). Memeriksa seluruh berkas akan
+     * memerahkan uji karena komentar, dan uji yang memerahkan karena komentar
+     * akan dimatikan orang.
      */
     const terlihat = body
       .replace(/<script[\s\S]*?<\/script>/gi, '')
       .replace(/<style[\s\S]*?<\/style>/gi, '');
     expect(terlihat, 'kata "biaya" muncul lagi di teks halaman model').not.toMatch(/biaya/i);
+  });
+
+  it('menamai bidang konteks dengan istilah yang jelas', async () => {
+    const cookie = await login();
+    await seedProvider();
+
+    const body = await sweep(cookie, '/admin/models-form');
 
     /*
      * Bidangnya bernama "Context window" — istilah yang dipakai dokumentasi

@@ -1371,7 +1371,7 @@ describe('model dan rantai fallback', () => {
     return created.providerId;
   }
 
-  it('menyimpan model beserta biaya per gilirannya', async () => {
+  it('menyimpan model beserta context window-nya', async () => {
     const cookie = await login();
     const providerId = await seedProvider();
 
@@ -1384,7 +1384,6 @@ describe('model dan rantai fallback', () => {
         label: 'Model Uji',
         providerId,
         modelKey: 'model-uji-latest',
-        estimatedTurnCost: '900',
         contextTokens: '64000',
         position: '0',
         tier: 'free',
@@ -1397,7 +1396,7 @@ describe('model dan rantai fallback', () => {
     const list = await models.listModels();
     const created = list.find((model) => model.label === 'Model Uji');
     expect(created).toBeDefined();
-    expect(created?.estimatedTurnCost).toBe(900);
+    expect(created?.contextTokens).toBe(64_000);
     expect(created?.isActive).toBe(true);
     // Id lengkap yang dikenal penyedia tersusun dari prefix provider + nama model.
     expect(resolvedModelId(created!)).toBe('uji/model-uji-latest');
@@ -1490,7 +1489,7 @@ describe('model dan rantai fallback', () => {
     expect(paid?.hasPrimary).toBe(false);
   });
 
-  it('menolak biaya per giliran nol atau negatif', async () => {
+  it('menolak context window nol atau negatif', async () => {
     const cookie = await login();
     const providerId = await seedProvider();
 
@@ -1500,20 +1499,21 @@ describe('model dan rantai fallback', () => {
       headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
       payload: form({
         modelId: '',
-        label: 'Model Gratis',
+        label: 'Model Tanpa Konteks',
         providerId,
         modelKey: 'model-uji',
-        estimatedTurnCost: '0',
-        contextTokens: '32000',
+        contextTokens: '0',
         position: '0',
         tier: 'free',
       }),
     });
 
     const models = new ModelsRepository(ctx.db);
-    const list = await models.listModels();
-    // Biaya nol akan membuat pemeriksaan anggaran FR-50 selalu lolos.
-    expect(list.find((model) => model.label === 'Model Gratis')).toBeUndefined();
+    // Context window nol berarti ambang pemadatan di titik nol: setiap riwayat
+    // langsung dianggap terlalu panjang, dan cerita tidak pernah bisa berjalan.
+    expect(
+      (await models.listModels()).find((model) => model.label === 'Model Tanpa Konteks'),
+    ).toBeUndefined();
   });
 });
 

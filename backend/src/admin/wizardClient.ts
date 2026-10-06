@@ -520,53 +520,6 @@ export const WIZARD_JS = `
     select.addEventListener('change', muat);
     muat();
   }
-
-  /* ---------------- Token per giliran, dalam bahasa yang dapat dibayangkan ---------------- */
-
-  /*
-   * "3.500 token per giliran" tidak mengatakan apa pun. "≈ 28 giliran per hari"
-   * mengatakan segalanya — dan itu juga cara tercepat melihat bahwa angkanya
-   * salah isi: token 500.000 pada jatah 100.000 menghasilkan 0 giliran, dan itu
-   * jelas keliru tanpa perlu tahu apa itu token.
-   *
-   * Jatahnya dibaca dari opsi tier yang sedang dipilih, jadi berpindah tier
-   * langsung mengubah hitungannya tanpa memanggil server.
-   */
-  function bindCostHelper() {
-    var bidangToken = document.querySelector('[name=estimatedTurnCost]');
-    var tier = document.querySelector('select[name=tier]');
-    var keluaran = document.querySelector('[data-cost-helper]');
-    if (!bidangToken || !tier || !keluaran) { return; }
-
-    function hitung() {
-      var angka = Number(bidangToken.value);
-      var opsi = tier.options[tier.selectedIndex];
-      var jatah = opsi ? Number(opsi.getAttribute('data-daily-tokens')) : NaN;
-
-      if (!isFinite(angka) || angka <= 0 || !isFinite(jatah) || jatah <= 0) {
-        keluaran.textContent = 'Isi angkanya untuk melihat berapa giliran yang muat dalam sehari.';
-        keluaran.removeAttribute('data-state');
-        return;
-      }
-
-      var giliran = Math.floor(jatah / angka);
-      if (giliran < 1) {
-        // Bukan angka yang "kurang tepat" — dengan angka ini TIDAK ADA pemain
-        // yang pernah dapat dilayani, di tier mana pun.
-        keluaran.textContent = 'Dengan jatah ' + ribuan(jatah) + ' token/hari, satu giliran pun tidak muat. Angkanya terlalu besar.';
-        keluaran.setAttribute('data-state', 'error');
-        return;
-      }
-
-      keluaran.textContent = 'Dengan jatah ' + ribuan(jatah) + ' token/hari, angka ini berarti sekitar ' + ribuan(giliran) + ' giliran per hari.';
-      keluaran.setAttribute('data-state', 'ok');
-    }
-
-    bidangToken.addEventListener('input', hitung);
-    tier.addEventListener('change', hitung);
-    hitung();
-  }
-
   /** Pemisah ribuan dengan titik, seperti kebiasaan Indonesia. */
   function ribuan(angka) {
     return String(angka).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
@@ -626,7 +579,6 @@ export const WIZARD_JS = `
     );
     bindUnsavedGuard();
     bindModelKeySync();
-    bindCostHelper();
   }
 
   if (document.readyState === 'loading') {

@@ -1,0 +1,31 @@
+-- Membuang kolom `estimated_turn_cost` dari model_configs.
+--
+-- ---------------------------------------------------------------------------
+-- MENGAPA DIBUANG, PADAHAL IA TERLIHAT PENTING
+-- ---------------------------------------------------------------------------
+-- Kolom ini dimaksudkan sebagai perkiraan token satu giliran, dan dipakai
+-- memeriksa anggaran SEBELUM model dipanggil (FR-50). Niatnya benar, tetapi
+-- yang benar-benar memeriksa anggaran hari ini adalah konstanta di simulator
+-- (`storyEngine.ts`: SIM_PROMPT_TOKENS + SIM_COMPLETION_TOKENS), BUKAN kolom
+-- ini. Tidak ada satu pun jalur cerita yang membacanya.
+--
+-- Akibatnya bidang ini menjadi hiasan yang menjanjikan sesuatu yang tidak
+-- dilakukan sistem: admin mengisinya, lalu tidak ada yang memakainya. Halaman
+-- yang meminta angka yang tidak dipakai lebih buruk daripada halaman yang tidak
+-- memintanya — ia menghabiskan perhatian dan menimbulkan pertanyaan yang tidak
+-- dapat dijawab ("ini hitungannya bagaimana?").
+--
+-- Angka biaya per giliran akan ditentukan saat B-01 menghubungkan model
+-- sungguhan, dan saat itu angkanya harus datang dari PENGUKURAN — bukan dari
+-- tebakan yang diketik lebih dulu. Kalau nanti ia memang perlu per model, ia
+-- kembali sebagai kolom baru dengan alasan yang sudah terbukti.
+--
+-- Kolom "Token/giliran" di halaman Model ikut dibuang: ia hanya menampilkan
+-- kolom ini.
+--
+-- Catatan pg-mem: `DROP CONSTRAINT IF EXISTS` dan `DROP COLUMN` diuji di
+-- `tests/schema.test.ts`. Constraint `model_configs_cost_positive` dibuang lebih
+-- dulu karena ia menunjuk kolom yang akan hilang.
+
+ALTER TABLE model_configs DROP CONSTRAINT IF EXISTS model_configs_cost_positive;
+ALTER TABLE model_configs DROP COLUMN estimated_turn_cost;

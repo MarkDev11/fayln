@@ -488,7 +488,6 @@ export async function modelsList(ctx: AdminPageContext): Promise<SafeHtml> {
   </td>
   <td>${model.tier === 'paid' ? pill('paid', 'ok') : pill('free')}</td>
   <td class="muted">${escOr(model.providerName, '—')}</td>
-  <td class="right mono">${formatNumber(model.estimatedTurnCost)}</td>
   <td class="right">
     <form method="post" action="/admin/models/toggle" class="inline"
           data-confirm="Nyalakan ${esc(model.label)}?"
@@ -505,9 +504,8 @@ export async function modelsList(ctx: AdminPageContext): Promise<SafeHtml> {
   return html`<h1>Model</h1>
 <p class="sub">
   Setiap tier punya <strong>rantai</strong>-nya sendiri. Posisi 0 dicoba lebih dulu; bila
-  gagal, posisi 1; dan seterusnya. Token per giliran dipakai memeriksa anggaran
-  <strong>sebelum</strong> model dipanggil — angka yang salah berarti pemain dapat memakai
-  token lebih banyak daripada jatahnya, atau ditolak padahal masih cukup.
+  gagal, posisi 1; dan seterusnya. Yang menentukan model mana yang dipakai adalah urutan
+  ini — bukan pilihan pemain.
 </p>
 
 ${chains}
@@ -519,7 +517,7 @@ ${
   Model nonaktif tidak dicoba sama sekali. Ia tetap terdaftar supaya angkanya tidak hilang.
 </p>
 <div class="card">${table(
-          ['Model', 'Tier', 'Provider', 'Token/giliran', ''],
+          ['Model', 'Tier', 'Provider', ''],
           outsideRows,
           'Tidak ada model nonaktif.',
         )}</div>`
@@ -532,7 +530,7 @@ ${
 </div>
 
 <div class="notice err" style="margin-top:18px">
-  Model yang pemakaian tokennya belum diukur <strong>tidak boleh dinyalakan</strong>.
+  Model yang belum diverifikasi <strong>tidak boleh dinyalakan</strong>.
   Selama sebuah tier tidak punya model aktif, permintaan pemain pada tier itu tidak
   dilayani oleh model apa pun.
 </div>`;
@@ -541,7 +539,7 @@ ${
 function chainSection(
   tier: 'free' | 'paid',
   chain: ModelConfigRow[],
-  summary: { activeCount: number; hasPrimary: boolean; totalCost: number } | undefined,
+  summary: { activeCount: number; hasPrimary: boolean } | undefined,
 ): SafeHtml {
   const label = tier === 'paid' ? 'Paid' : 'Free';
 
@@ -549,7 +547,6 @@ function chainSection(
     const meta = [
       index === 0 ? 'dicoba pertama' : `fallback ke-${String(index)}`,
       escOr(model.providerName, 'provider belum dipilih'),
-      `${formatNumber(model.estimatedTurnCost)} token/giliran`,
       `konteks ${formatNumber(model.contextTokens)}`,
     ].join(' · ');
 
@@ -572,9 +569,7 @@ function chainSection(
     problems.push('Tidak ada model di posisi 0, jadi tidak ada yang dicoba lebih dulu.');
   }
 
-  return html`<h2>Rantai ${label} <span class="muted">${String(chain.length)} model aktif${
-    summary ? ` · ${formatNumber(summary.totalCost)} token/giliran bila semuanya dicoba` : ''
-  }</span></h2>
+  return html`<h2>Rantai ${label} <span class="muted">${String(chain.length)} model aktif</span></h2>
 ${
     problems.length > 0
       ? html`<div class="notice err">${problems.join(' ')}</div>`
@@ -725,28 +720,6 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
   })}
 
   ${textField({
-    id: 'm-cost',
-    name: 'estimatedTurnCost',
-    /*
-     * "Perkiraan token per giliran", bukan "biaya per giliran".
-     *
-     * Kata "biaya" dalam bahasa Indonesia hampir selalu berarti uang, dan
-     * bidang ini BUKAN uang: satuannya token, dan sistem tidak pernah menghitung
-     * rupiah atau dolar di mana pun. Seluruh pemeriksaan anggaran adalah
-     * perbandingan token dengan jatah token harian pemain — persis seperti yang
-     * sudah ditulis di halaman Promosi ("hadiah berupa token, bukan mata uang
-     * terpisah"). Nama yang menyiratkan uang membuat admin mengira ada kurs yang
-     * harus diisi.
-     */
-    label: 'Perkiraan token per giliran',
-    required: true,
-    hint: 'Jumlahkan token prompt dan token jawaban untuk SATU giliran — mis. 3.000 token prompt + 500 token jawaban = 3.500. Satuannya TOKEN, bukan uang: sistem hanya membandingkan angka ini dengan jatah token harian pemain, dan tidak pernah menghitung rupiah atau dolar. Angka ini menahan permintaan SEBELUM model dipanggil — terlalu kecil membuat jatah pemain jebol, dan terlalu besar membuat pemain ditolak padahal masih cukup.',
-    type: 'number',
-    after: html`<span class="field__status" data-cost-helper>Isi angkanya untuk melihat berapa giliran yang muat dalam sehari.</span>`,
-    value: String(model?.estimatedTurnCost ?? ''),
-  })}
-
-  ${textField({
     id: 'm-context',
     name: 'contextTokens',
     /*
@@ -801,7 +774,7 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
 </form>
 
 <p class="sub" style="margin-top:16px">
-  Model yang pemakaian tokennya belum diukur disimpan sebagai catatan, bukan dinyalakan.
+  Model yang belum diverifikasi disimpan sebagai catatan, bukan dinyalakan.
   Aturan proyek ini jelas: <strong>jangan mengarang harga, versi model, atau angka
   benchmark</strong> — dan model Paid belum boleh dijual sebelum O-08b lolos.
 </p>

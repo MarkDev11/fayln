@@ -52,6 +52,7 @@ describe('migrasi', () => {
     '012_lokasi_sederhana.sql',
     '013_providers.sql',
     '014_provider_api_key.sql',
+    '015_buang_token_per_giliran.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
@@ -554,8 +555,24 @@ describe('batasan yang menegakkan aturan domain', () => {
     await expect(
       ctx.db.query(
         `INSERT INTO model_configs (
-           model_id, label, provider_id, model_key, estimated_turn_cost, context_tokens
-         ) VALUES ('m_hantu', 'Hantu', 'prov_hantu', 'x', 100, 1000)`,
+           model_id, label, provider_id, model_key, context_tokens
+         ) VALUES ('m_hantu', 'Hantu', 'prov_hantu', 'x', 1000)`,
+      ),
+    ).rejects.toThrow();
+  });
+
+  it('tidak lagi menyimpan perkiraan token per giliran di baris model', async () => {
+    /*
+     * Kolom `estimated_turn_cost` dibuang oleh migrasi 015 karena TIDAK PERNAH
+     * dibaca jalur mana pun: pemeriksaan anggaran mengambil angkanya dari
+     * konstanta simulator. Kalau kolom itu muncul kembali tanpa alasan, uji ini
+     * yang memberi tahu — dan itu penting, karena kolom yang tidak dibaca tidak
+     * menghasilkan galat apa pun saat ia salah.
+     */
+    await expect(
+      ctx.db.query(
+        `INSERT INTO model_configs (model_id, label, context_tokens, estimated_turn_cost)
+         VALUES ('m_lama', 'Lama', 1000, 100)`,
       ),
     ).rejects.toThrow();
   });
@@ -567,8 +584,8 @@ describe('batasan yang menegakkan aturan domain', () => {
     );
     await ctx.db.query(
       `INSERT INTO model_configs (
-         model_id, label, provider_id, model_key, estimated_turn_cost, context_tokens
-       ) VALUES ('m_dipakai', 'M', 'prov_dipakai', 'x', 100, 1000)`,
+         model_id, label, provider_id, model_key, context_tokens
+       ) VALUES ('m_dipakai', 'M', 'prov_dipakai', 'x', 1000)`,
     );
 
     await expect(

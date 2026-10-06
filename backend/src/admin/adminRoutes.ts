@@ -263,7 +263,6 @@ const modelBody = z.object({
   // apa pun. Bentuknya tetap dijaga di sini sebagai lapis pertama.
   providerId: z.string().optional().default(''),
   modelKey: z.string().optional().default(''),
-  estimatedTurnCost: z.coerce.number().int().positive(),
   contextTokens: z.coerce.number().int().positive(),
   position: z.coerce.number().int().min(0),
   tier: z.enum(['free', 'paid']),
@@ -1843,7 +1842,6 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       label: parsed.data.label,
       providerId: parsed.data.providerId,
       modelKey: parsed.data.modelKey,
-      estimatedTurnCost: parsed.data.estimatedTurnCost,
       contextTokens: parsed.data.contextTokens,
       position: parsed.data.position,
       tier: parsed.data.tier,

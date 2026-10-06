@@ -45,7 +45,6 @@ export type ModelConfigRow = {
   /** Awalan id model milik provider; kosong bila provider belum dipilih. */
   providerPrefix: string;
   modelKey: string;
-  estimatedTurnCost: number;
   contextTokens: number;
   position: number;
   tier: 'free' | 'paid';
@@ -59,7 +58,6 @@ export type ModelSaveInput = {
   label: string;
   providerId: string;
   modelKey: string;
-  estimatedTurnCost: number;
   contextTokens: number;
   position: number;
   tier: 'free' | 'paid';
@@ -109,7 +107,6 @@ export class ModelsRepository {
       label: string;
       provider_id: string | null;
       model_key: string;
-      estimated_turn_cost: number;
       context_tokens: number;
       position: number;
       tier: string;
@@ -117,7 +114,7 @@ export class ModelsRepository {
       notes: string;
       updated_at: Date | string;
     }>(
-      `SELECT model_id, label, provider_id, model_key, estimated_turn_cost,
+      `SELECT model_id, label, provider_id, model_key,
               context_tokens, position, tier, is_active, notes, updated_at
        FROM model_configs ORDER BY tier ASC, position ASC, model_id ASC`,
     );
@@ -141,7 +138,6 @@ export class ModelsRepository {
         providerName: provider?.name ?? '',
         providerPrefix: provider?.prefix ?? '',
         modelKey: row.model_key,
-        estimatedTurnCost: row.estimated_turn_cost,
         contextTokens: row.context_tokens,
         position: row.position,
         tier: row.tier as 'free' | 'paid',
@@ -191,19 +187,18 @@ export class ModelsRepository {
 
     await this.db.query(
       `INSERT INTO model_configs (
-         model_id, label, provider_id, model_key, estimated_turn_cost,
+         model_id, label, provider_id, model_key,
          context_tokens, position, tier, is_active, notes, updated_at
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10, now())
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9, now())
        ON CONFLICT (model_id) DO UPDATE SET
-         label = $2, provider_id = $3, model_key = $4, estimated_turn_cost = $5,
-         context_tokens = $6, position = $7, tier = $8, is_active = $9,
-         notes = $10, updated_at = now()`,
+         label = $2, provider_id = $3, model_key = $4,
+         context_tokens = $5, position = $6, tier = $7, is_active = $8,
+         notes = $9, updated_at = now()`,
       [
         modelId,
         label,
         providerId,
         modelKey,
-        input.estimatedTurnCost,
         input.contextTokens,
         input.position,
         input.tier,
@@ -267,7 +262,7 @@ export class ModelsRepository {
 
   /** Ringkasan kesehatan rantai: dipakai halaman Model untuk memperingatkan. */
   async chainHealth(): Promise<
-    { tier: 'free' | 'paid'; activeCount: number; hasPrimary: boolean; totalCost: number }[]
+    { tier: 'free' | 'paid'; activeCount: number; hasPrimary: boolean }[]
   > {
     const all = await this.listModels();
     return (['free', 'paid'] as const).map((tier) => {
@@ -278,7 +273,6 @@ export class ModelsRepository {
         tier,
         activeCount: chain.length,
         hasPrimary: chain.some((row) => row.position === 0),
-        totalCost: chain.reduce((sum, row) => sum + row.estimatedTurnCost, 0),
       };
     });
   }
