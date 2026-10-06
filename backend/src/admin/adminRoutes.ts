@@ -289,6 +289,7 @@ const providerBody = z.object({
    * bukan panel, melainkan panggilan pertamanya nanti.
    */
   apiKey: z.string().max(2000).optional().default(''),
+  imagePart: z.string().max(20).optional().default('object'),
   apiKeyEnv: z.string().max(120).optional().default(''),
   notes: z.string().max(300).optional().default(''),
   isActive: z.union([z.literal('on'), z.literal('true'), z.undefined()]).optional(),
@@ -1892,6 +1893,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       baseUrl: data.baseUrl,
       apiKey: data.apiKey,
       apiKeyEnv: data.apiKeyEnv,
+      imagePart: data.imagePart,
       isActive: data.isActive !== undefined,
       notes: data.notes,
     };
@@ -2039,6 +2041,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       {
         baseUrl: provider.baseUrl,
         apiType: provider.apiType,
+        imagePart: provider.imagePart,
         modelKey: body.data.modelKey,
         imageBase64: media.bytes.toString('base64'),
         contentType: media.media.contentType,
@@ -2061,6 +2064,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
           model: body.data.modelKey,
           provider: provider.providerId,
           mediaId: body.data.mediaId,
+          imageBytes: media.bytes.length,
+          imagePart: provider.imagePart,
           detail: result.detail,
         },
         'Analisis gambar lokasi gagal.',
@@ -2660,6 +2665,10 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
         'Provider ini masih dipakai model, jadi tidak dihapus — model itu akan ' +
         'kehilangan alamat tujuannya. Pindahkan modelnya ke provider lain lebih dulu.',
     },
+    'provider-image-part-invalid': {
+      kind: 'error',
+      text: 'Bentuk lampiran gambar harus dipilih salah satu dari daftar.',
+    },
     'provider-secrets-unavailable': {
       kind: 'error',
       text:
@@ -2800,6 +2809,8 @@ function providerNotice(reason: ProviderFailure): string {
       return 'provider-base-url-invalid';
     case 'invalid-key-env':
       return 'provider-key-env-invalid';
+    case 'invalid-image-part':
+      return 'provider-image-part-invalid';
     case 'secrets-unavailable':
       return 'provider-secrets-unavailable';
     case 'in-use':

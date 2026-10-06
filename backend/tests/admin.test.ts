@@ -2797,6 +2797,58 @@ describe('provider', () => {
     expect(await providers.find(row!.providerId)).toBeNull();
   });
 
+  it('menyimpan bentuk lampiran gambar milik provider', async () => {
+    /*
+     * Bentuk ini berbeda antar penyedia, dan salah pilih TIDAK menghasilkan
+     * galat — modelnya hanya menjawab bahwa ia tidak menerima gambar. Karena itu
+     * nilainya disimpan per provider, bukan dipatok di kode.
+     */
+    const cookie = await login();
+    await saveProvider(cookie, {
+      providerId: '',
+      name: 'Mistral',
+      prefix: 'mistral',
+      apiType: 'chat-completions',
+      baseUrl: 'https://api.mistral.ai/v1',
+      imagePart: 'string',
+      isActive: 'true',
+    });
+
+    const [provider] = await new ProvidersRepository(ctx.db).list();
+    expect(provider?.imagePart).toBe('string');
+  });
+
+  it('memakai bentuk objek bila provider tidak menyebutkannya', async () => {
+    // Bawaan harus aman untuk kasus terbanyak: OpenAI dan mayoritas gateway.
+    const cookie = await login();
+    await saveProvider(cookie, {
+      providerId: '',
+      name: 'Tanpa Bentuk',
+      prefix: 'tanpabentuk',
+      apiType: 'chat-completions',
+      baseUrl: 'https://x.example.test/v1',
+      isActive: 'true',
+    });
+
+    const [provider] = await new ProvidersRepository(ctx.db).list();
+    expect(provider?.imagePart).toBe('object');
+  });
+
+  it('menolak bentuk lampiran gambar yang tidak dikenal', async () => {
+    const cookie = await login();
+    const tujuan = await saveProvider(cookie, {
+      providerId: '',
+      name: 'Bentuk Aneh',
+      prefix: 'aneh',
+      apiType: 'chat-completions',
+      baseUrl: 'https://aneh.example.test/v1',
+      imagePart: 'entah-apa',
+      isActive: 'true',
+    });
+
+    expect(tujuan).toContain('notice=provider-image-part-invalid');
+  });
+
   it('menolak prefix yang sudah dipakai provider lain', async () => {
     const cookie = await login();
     await saveProvider(cookie, {

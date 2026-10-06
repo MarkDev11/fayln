@@ -28,7 +28,7 @@
 import type { SafeHtml } from '../html';
 import { CHEVRON, esc, escOr, formatTime, html, inputValue, pill, safe, selected, table } from '../html';
 import { formatNumber } from './dashboardPages';
-import { API_TYPES, API_TYPE_LABELS, type ProviderRow } from '../providersRepository';
+import { API_TYPES, API_TYPE_LABELS, IMAGE_PARTS, IMAGE_PART_LABELS, type ProviderRow } from '../providersRepository';
 import { resolvedModelId, type ModelConfigRow } from '../modelsRepository';
 import { secretsKeyConfigured } from '../secretBox';
 import type { AdminPageContext } from './context';
@@ -346,6 +346,16 @@ export async function providerForm(
     hint: 'Bentuk permintaan yang dipahami alamat itu. Salah pilih berarti setiap panggilan ditolak.',
     value: provider?.apiType ?? 'chat-completions',
     options: API_TYPES.map((type) => ({ value: type, label: API_TYPE_LABELS[type] })),
+  })}
+
+  ${selectField({
+    id: 'p-image-part',
+    name: 'imagePart',
+    label: 'Bentuk lampiran gambar',
+    required: true,
+    hint: 'Bagaimana gambar dibungkus saat dikirim ke model. Salah pilih TIDAK menghasilkan galat — modelnya hanya akan menjawab bahwa ia tidak menerima gambar apa pun. OpenAI dan mayoritas gateway memakai bentuk objek; Mistral memakai bentuk teks.',
+    value: provider?.imagePart ?? 'object',
+    options: IMAGE_PARTS.map((part) => ({ value: part, label: IMAGE_PART_LABELS[part] })),
   })}
 
   ${textField({

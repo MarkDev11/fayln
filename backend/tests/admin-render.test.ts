@@ -1231,6 +1231,26 @@ describe('provider: keadaan kosong dan berisi', () => {
     expect(body, 'istilah "max token" yang menyesatkan muncul kembali').not.toContain('max token');
   });
 
+  it('menawarkan bentuk lampiran gambar di formulir provider', async () => {
+    /*
+     * Bedanya hanya satu tingkat pembungkusan, tetapi salah pilih tidak
+     * menghasilkan galat apa pun — modelnya hanya menjawab bahwa ia tidak
+     * menerima gambar. Karena itu pilihannya harus terlihat dan dapat diubah.
+     */
+    const cookie = await login();
+    await seedProvider();
+
+    const body = await sweep(cookie, '/admin/providers-form');
+
+    expect(body, 'bidang bentuk lampiran gambar tidak ada').toMatch(/name="imagePart"/);
+    // Kedua nilai harus ditawarkan, dan disebutkan penyedianya — admin tidak
+    // dapat menebak mana yang dipakai penyedianya.
+    expect(body, 'pilihan bentuk objek tidak ada').toContain('OpenAI');
+    expect(body, 'pilihan bentuk teks tidak ada').toContain('Mistral');
+    // Salah pilih tidak menghasilkan galat, jadi peringatannya harus tertulis.
+    expect(body, 'akibat salah pilih tidak dijelaskan').toMatch(/tidak menerima gambar apa pun/i);
+  });
+
   it('menghidupkan pesan "tidak ditemukan" saat id provider tidak ada', async () => {
     const cookie = await login();
     const body = await sweep(cookie, '/admin/providers-form?provider=prov_tidak_ada');

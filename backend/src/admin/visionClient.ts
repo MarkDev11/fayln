@@ -36,7 +36,7 @@
  * JELAS, bukan sebagai teks yang tampak seperti nama lokasi.
  */
 
-import type { ApiType } from './providersRepository';
+import type { ApiType, ImagePart } from './providersRepository';
 
 /** Batas waktu satu permintaan, dalam milidetik. */
 export const VISION_TIMEOUT_MS = 45_000;
@@ -106,6 +106,15 @@ export type VisionResult =
 export type VisionRequest = {
   baseUrl: string;
   apiType: ApiType;
+  /**
+   * Bagaimana gambar dibungkus pada pesan.
+   *
+   * "OpenAI-compatible" tidak seragam dalam hal ini, dan salah pilih TIDAK
+   * menghasilkan galat — penyedia membuang bagian yang bentuknya tidak dikenali,
+   * lalu modelnya menjawab "tidak ada gambar yang diberikan". Itu terjadi pada
+   * 6 Oktober 2026 dan menghabiskan 20 gambar sekaligus.
+   */
+  imagePart: ImagePart;
   /** Nama model di sisi penyedia, mis. "gpt-4o-mini". */
   modelKey: string;
   /** Isi gambar, sudah dalam base64 tanpa awalan data URL. */
@@ -150,6 +159,8 @@ function buildRequest(request: VisionRequest): { path: string; body: unknown } {
     };
   }
 
+  const dataUrl = `data:${request.contentType};base64,${request.imageBase64}`;
+
   return {
     path: '/chat/completions',
     body: {
@@ -163,7 +174,13 @@ function buildRequest(request: VisionRequest): { path: string; body: unknown } {
             { type: 'text', text: 'Catalogue this location.' },
             {
               type: 'image_url',
-              image_url: { url: `data:${request.contentType};base64,${request.imageBase64}` },
+              /*
+               * Bedanya hanya satu tingkat pembungkusan, dan itulah seluruh
+               * sebab kegagalan 6 Oktober: OpenAI (dan mayoritas gateway)
+               * menuntut objek ber-`url`, sedangkan Mistral menuntut teksnya
+               * langsung. Yang salah dibuang diam-diam oleh penyedia.
+               */
+              image_url: request.imagePart === 'string' ? dataUrl : { url: dataUrl },
             },
           ],
         },

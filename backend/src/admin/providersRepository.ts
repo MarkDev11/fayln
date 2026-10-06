@@ -57,6 +57,22 @@ export const PREFIX_PATTERN = /^[a-z0-9][a-z0-9-]{0,31}$/;
 /** Nama variabel lingkungan: huruf besar, angka, garis bawah. */
 export const ENV_NAME_PATTERN = /^[A-Z][A-Z0-9_]{0,119}$/;
 
+/**
+ * Cara gambar dilampirkan pada pesan, per penyedia.
+ *
+ * "OpenAI-compatible" tidak seragam dalam hal ini, dan salah pilih TIDAK
+ * menghasilkan galat: Mistral membuang bagian yang bentuknya tidak dikenali,
+ * lalu modelnya menjawab "tidak ada gambar yang diberikan" — gejala yang
+ * menyesatkan ke arah yang salah sama sekali.
+ */
+export const IMAGE_PARTS = ['object', 'string'] as const;
+export type ImagePart = (typeof IMAGE_PARTS)[number];
+
+export const IMAGE_PART_LABELS: Record<ImagePart, string> = {
+  object: 'Objek — {"url": "..."} (OpenAI, mayoritas gateway)',
+  string: 'Teks — "..." (Mistral)',
+};
+
 export const API_TYPES = ['chat-completions', 'responses', 'messages'] as const;
 export type ApiType = (typeof API_TYPES)[number];
 
@@ -80,6 +96,8 @@ export type ProviderRow = {
   baseUrl: string;
   /** NAMA variabel lingkungan — bukan nilainya. */
   apiKeyEnv: string;
+  /** Bentuk lampiran gambar yang dipahami penyedia ini. */
+  imagePart: ImagePart;
   position: number;
   isActive: boolean;
   notes: string;
@@ -106,6 +124,8 @@ export type ProviderInput = {
   apiType: string;
   baseUrl: string;
   apiKeyEnv: string;
+  /** Bentuk lampiran gambar: 'object' (OpenAI) atau 'string' (Mistral). */
+  imagePart: string;
   /**
    * Kunci API yang akan disimpan terenkripsi.
    *
@@ -126,6 +146,7 @@ export type ProviderFailure =
   | 'invalid-api-type'
   | 'invalid-base-url'
   | 'invalid-key-env'
+  | 'invalid-image-part'
   /**
    * Kunci enkripsi belum terpasang di lingkungan server.
    *
@@ -148,6 +169,7 @@ type Prepared = {
   apiType: ApiType;
   baseUrl: string;
   apiKeyEnv: string;
+  imagePart: ImagePart;
   isActive: boolean;
   notes: string;
 };
@@ -176,6 +198,7 @@ export class ProvidersRepository {
       base_url: string;
       api_key_env: string;
       api_key_enc: string;
+      image_part: string;
       position: number;
       is_active: boolean;
       notes: string;
@@ -183,7 +206,7 @@ export class ProvidersRepository {
       updated_at: Date | string;
     }>(
       `SELECT provider_id, name, prefix, api_type, base_url, api_key_env, api_key_enc,
-              position, is_active, notes, created_at, updated_at
+              image_part, position, is_active, notes, created_at, updated_at
        FROM providers
        ORDER BY position ASC, provider_id ASC`,
     );
@@ -203,6 +226,7 @@ export class ProvidersRepository {
       apiType: asApiType(row.api_type),
       baseUrl: row.base_url,
       apiKeyEnv: row.api_key_env,
+      imagePart: asImagePart(row.image_part),
       position: row.position,
       isActive: row.is_active,
       notes: row.notes,
@@ -242,9 +266,9 @@ export class ProvidersRepository {
     );
     await this.db.query(
       `INSERT INTO providers (
-         provider_id, name, prefix, api_type, base_url, api_key_env, api_key_enc,
+         provider_id, name, prefix, api_type, base_url, api_key_env, api_key_enc, image_part,
          position, is_active, notes
-       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+       ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         providerId,
         prepared.name,
@@ -253,6 +277,7 @@ export class ProvidersRepository {
         prepared.baseUrl,
         prepared.apiKeyEnv,
         sealed.value ?? '',
+        prepared.imagePart,
         rows[0]?.next_position ?? 1,
         prepared.isActive,
         prepared.notes,
@@ -284,7 +309,7 @@ export class ProvidersRepository {
     const { rowCount } = await this.db.query(
       `UPDATE providers SET
          name = $2, prefix = $3, api_type = $4, base_url = $5,
-         api_key_env = $6, is_active = $7, notes = $8, updated_at = now()
+         api_key_env = $6, image_part = $7, is_active = $8, notes = $9, updated_at = now()
        WHERE provider_id = $1`,
       [
         providerId,
@@ -293,6 +318,7 @@ export class ProvidersRepository {
         prepared.apiType,
         prepared.baseUrl,
         prepared.apiKeyEnv,
+        prepared.imagePart,
         prepared.isActive,
         prepared.notes,
       ],
@@ -471,6 +497,19 @@ export class ProvidersRepository {
       return { ok: false, reason: 'invalid-base-url' };
     }
 
+    /*
+     * Kosong berarti "belum dipilih" dan jatuh ke bentuk yang paling umum.
+     * Tetapi nilai yang DIISI dan tidak dikenal DITOLAK, sama seperti jenis API:
+     * diam-diam mengubahnya menjadi 'object' akan menyembunyikan kesalahan, dan
+     * kesalahan di sini tidak terlihat sampai modelnya menjawab bahwa ia tidak
+     * menerima gambar.
+     */
+    const imagePartRaw = (input.imagePart ?? '').trim();
+    if (imagePartRaw.length > 0 && !isImagePart(imagePartRaw)) {
+      return { ok: false, reason: 'invalid-image-part' };
+    }
+    const imagePart = imagePartRaw.length > 0 ? (imagePartRaw as ImagePart) : 'object';
+
     const apiKeyEnv = input.apiKeyEnv.trim();
     if (apiKeyEnv.length > 0 && !ENV_NAME_PATTERN.test(apiKeyEnv)) {
       return { ok: false, reason: 'invalid-key-env' };
@@ -482,6 +521,7 @@ export class ProvidersRepository {
       apiType: input.apiType,
       baseUrl,
       apiKeyEnv,
+      imagePart,
       isActive: input.isActive,
       notes: clamp(input.notes ?? '', MAX_PROVIDER_NOTES),
     };
@@ -547,6 +587,14 @@ function normaliseBaseUrl(raw: string): string | null {
     return null;
   }
   return trimmed;
+}
+
+function asImagePart(value: string): ImagePart {
+  return isImagePart(value) ? value : 'object';
+}
+
+function isImagePart(value: string): value is ImagePart {
+  return (IMAGE_PARTS as readonly string[]).includes(value);
 }
 
 function asApiType(value: string): ApiType {

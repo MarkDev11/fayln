@@ -34,6 +34,16 @@ function fakeFetch(status: number, body: string): { calls: Panggilan[]; impl: ty
   return { calls, impl };
 }
 
+/** Mengambil bagian gambar dari badan permintaan yang tercatat. */
+function bagianGambar(call: Panggilan | undefined): { type: string; image_url: unknown } {
+  const body = JSON.parse(String(call?.init.body)) as {
+    messages: { role: string; content: unknown }[];
+  };
+  const isi = body.messages[1]?.content as { type: string; image_url?: unknown }[];
+  const gambar = isi.find((item) => item.type === 'image_url');
+  return { type: 'image_url', image_url: gambar?.image_url };
+}
+
 /** Jawaban bergaya OpenAI yang memuat JSON yang kita minta. */
 function openAiAnswer(name: string, description: string, reason?: string): string {
   const isi: Record<string, string> = { name, description };
@@ -48,12 +58,14 @@ function openAiAnswer(name: string, description: string, reason?: string): strin
 const OPENAI: VisionRequest = {
   baseUrl: 'https://api.contoh.test/v1',
   apiType: 'chat-completions',
+  imagePart: 'object',
   modelKey: 'model-visi',
   imageBase64: 'AAAA',
   contentType: 'image/webp',
 };
 
 const ANTHROPIC: VisionRequest = { ...OPENAI, apiType: 'messages' };
+const MISTRAL: VisionRequest = { ...OPENAI, imagePart: 'string' };
 
 describe('panggilan model visi', () => {
   it('meminta ke /chat/completions untuk penyedia bergaya OpenAI', async () => {
@@ -75,6 +87,34 @@ describe('panggilan model visi', () => {
 
     expect(calls[0]?.url).toBe('https://api.contoh.test/v1/messages');
     expect(hasil).toEqual({ ok: true, name: 'Aula', description: 'Lapang.' });
+  });
+
+  it('membungkus gambar sebagai OBJEK untuk OpenAI dan gateway sejenis', async () => {
+    const { calls, impl } = fakeFetch(200, openAiAnswer('A', 'B'));
+
+    await describeLocationImage(OPENAI, KUNCI, impl);
+
+    const bagian = bagianGambar(calls[0]);
+    expect(typeof bagian.image_url).toBe('object');
+    expect((bagian.image_url as { url: string }).url).toContain('data:image/webp;base64,');
+  });
+
+  it('membungkus gambar sebagai TEKS untuk Mistral', async () => {
+    /*
+     * Inilah bug yang menghabiskan 20 gambar pada 6 Oktober 2026.
+     *
+     * Mistral menuntut `image_url` berupa teks, bukan objek ber-`url`. Bentuk
+     * yang salah TIDAK menghasilkan galat: bagiannya dibuang diam-diam, lalu
+     * modelnya menjawab "tidak ada gambar yang diberikan" — gejala yang
+     * menyesatkan ke arah yang salah sama sekali.
+     */
+    const { calls, impl } = fakeFetch(200, openAiAnswer('A', 'B'));
+
+    await describeLocationImage(MISTRAL, KUNCI, impl);
+
+    const bagian = bagianGambar(calls[0]);
+    expect(typeof bagian.image_url).toBe('string');
+    expect(bagian.image_url).toContain('data:image/webp;base64,');
   });
 
   it('memakai header autentikasi yang benar untuk tiap jenis API', async () => {
