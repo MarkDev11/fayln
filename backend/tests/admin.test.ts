@@ -19,6 +19,8 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import { createHash } from 'node:crypto';
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
@@ -3179,5 +3181,206 @@ describe('provider', () => {
       });
       expect(response.statusCode).toBe(302);
     });
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Impor massal lokasi dengan AI.
+ *
+ * Dua rute terpisah, dan pemisahan itu yang diuji di sini: analisis memanggil
+ * model yang BERBIAYA, jadi kegagalan menyimpan tidak boleh memaksa model
+ * dipanggil ulang — dan percobaan ulang tidak boleh menghasilkan dua lokasi
+ * untuk satu gambar.
+ *
+ * Jaringan diganti fungsi palsu; uji yang menghubungi penyedia model sungguhan
+ * akan gagal di mesin tanpa internet.
+ */
+describe('impor massal lokasi', () => {
+  const KUNCI_ENKRIPSI = Buffer.from('0123456789abcdef0123456789abcdef').toString('base64');
+  /** PNG 1x1 yang sah — id media adalah SHA-256 dari isinya. */
+  const PNG_B64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  let semula: string | undefined;
+
+  beforeEach(() => {
+    semula = process.env[SECRETS_KEY_ENV];
+    process.env[SECRETS_KEY_ENV] = KUNCI_ENKRIPSI;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (semula === undefined) {
+      delete process.env[SECRETS_KEY_ENV];
+    } else {
+      process.env[SECRETS_KEY_ENV] = semula;
+    }
+  });
+
+  /** Satu berkas gambar yang benar-benar dapat dibaca `readBytes()`. */
+  async function seedMedia(): Promise<string> {
+    const bytes = Buffer.from(PNG_B64, 'base64');
+    const mediaId = createHash('sha256').update(bytes).digest('hex');
+    await ctx.db.query(
+      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64, uploaded_by)
+       VALUES ($1,'image/png',$2,1,1,$3,'uji')`,
+      [mediaId, bytes.length, PNG_B64],
+    );
+    return mediaId;
+  }
+
+  async function seedProviderWithKey(cookie: string): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/providers',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        providerId: '',
+        name: 'Penyedia Visi',
+        prefix: 'visi',
+        apiType: 'chat-completions',
+        baseUrl: 'https://visi.example.test/v1',
+        apiKey: 'sk-uji',
+        isActive: 'true',
+      }),
+    });
+    expect(response.statusCode).toBe(302);
+
+    const [provider] = await new ProvidersRepository(ctx.db).list();
+    return provider!.providerId;
+  }
+
+  async function seedCategory(): Promise<string> {
+    const created = await new LocationsRepository(ctx.db).createCategory('Era Uji');
+    if (!created.ok) {
+      throw new Error('kategori uji gagal dibuat');
+    }
+    return created.categoryId;
+  }
+
+  it('menamai gambar lewat model visi', async () => {
+    const cookie = await login();
+    const mediaId = await seedMedia();
+    const providerId = await seedProviderWithKey(cookie);
+
+    let dipanggil = '';
+    vi.stubGlobal('fetch', async (url: string) => {
+      dipanggil = url;
+      return {
+        status: 200,
+        ok: true,
+        text: async () =>
+          JSON.stringify({
+            choices: [{ message: { content: '{"name":"Hutan Pinus","description":"Berkabut."}' } }],
+          }),
+      };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/locations-bulk/describe',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ mediaId, providerId, modelKey: 'model-visi' }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, name: 'Hutan Pinus', description: 'Berkabut.' });
+    expect(dipanggil).toBe('https://visi.example.test/v1/chat/completions');
+  });
+
+  it('menyimpan hasilnya sebagai lokasi, lengkap dengan kategorinya', async () => {
+    const cookie = await login();
+    const mediaId = await seedMedia();
+    const categoryId = await seedCategory();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/locations-bulk/create',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({
+        mediaId,
+        categoryId,
+        name: 'Hutan Pinus',
+        description: 'Berkabut.',
+      }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().ok).toBe(true);
+
+    const daftar = await new LocationsRepository(ctx.db).list();
+    const dibuat = daftar.find((row) => row.name === 'Hutan Pinus');
+    expect(dibuat).toBeDefined();
+    expect(dibuat?.categoryId).toBe(categoryId);
+    expect(dibuat?.mediaId).toBe(mediaId);
+  });
+
+  it('tidak memanggil apa pun bila provider belum punya kunci', async () => {
+    const cookie = await login();
+    const mediaId = await seedMedia();
+
+    const dibuat = await app.inject({
+      method: 'POST',
+      url: '/admin/providers',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        providerId: '',
+        name: 'Tanpa Kunci',
+        prefix: 'tanpakunci',
+        apiType: 'chat-completions',
+        baseUrl: 'https://tanpa.example.test/v1',
+        isActive: 'true',
+      }),
+    });
+    expect(dibuat.statusCode).toBe(302);
+    const [provider] = await new ProvidersRepository(ctx.db).list();
+
+    let dipanggil = 0;
+    vi.stubGlobal('fetch', async () => {
+      dipanggil += 1;
+      return { status: 200, ok: true, text: async () => '{}' };
+    });
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/locations-bulk/describe',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ mediaId, providerId: provider!.providerId, modelKey: 'x' }),
+    });
+
+    expect(response.json().reason).toBe('no-key');
+    expect(dipanggil).toBe(0);
+  });
+
+  it('menolak gambar yang tidak ada', async () => {
+    const cookie = await login();
+    const providerId = await seedProviderWithKey(cookie);
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/locations-bulk/describe',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({
+        mediaId: 'a'.repeat(64),
+        providerId,
+        modelKey: 'model-visi',
+      }),
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('menuntut sesi admin sebelum menyimpan', async () => {
+    // Rute ini membuat baris di master; tanpa sesi ia harus ditolak.
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/locations-bulk/create',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ mediaId: 'a'.repeat(64), categoryId: 'x', name: 'Nama' }),
+    });
+
+    expect(response.statusCode).toBe(302);
   });
 });

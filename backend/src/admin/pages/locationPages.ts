@@ -21,6 +21,7 @@ import type { SafeHtml } from '../html';
 import { CHEVRON, esc, escOr, formatTime, html, inputValue, selected } from '../html';
 import type { AdminPageContext } from './context';
 import type { LocationCategoryRow, LocationRow } from '../locationsRepository';
+import type { ProviderRow } from '../providersRepository';
 
 /** Jalur gambar yang disajikan server untuk sebuah berkas unggahan. */
 function mediaUrl(mediaId: string): string {
@@ -107,9 +108,10 @@ export async function locationsForm(
   ctx: AdminPageContext,
   locationId: string | null,
 ): Promise<SafeHtml> {
-  const [location, categories] = await Promise.all([
+  const [location, categories, providers] = await Promise.all([
     locationId ? ctx.locations.find(locationId) : Promise.resolve(null),
     ctx.locations.listCategories(),
+    ctx.providers.listOfferable(),
   ]);
 
   if (locationId && !location) {
@@ -126,7 +128,10 @@ export async function locationsForm(
 </div>`;
   }
 
-  return html`<h1>${location ? 'Ubah lokasi' : 'Lokasi baru'}</h1>
+  return html`<div class="between">
+  <h1>${location ? 'Ubah lokasi' : 'Lokasi baru'}</h1>
+  <button type="button" data-bulk-open>Bulk with AI</button>
+</div>
 <p class="sub">
   Isi nama tempat, pilih kategorinya (era), lalu unggah <strong>satu</strong> gambar latar.
   Tempat yang sama pada era lain dibuat sebagai lokasi tersendiri — mis. "Aula Kantor"
@@ -172,7 +177,80 @@ export async function locationsForm(
     <a href="/admin/locations"><button class="ghost" type="button">Batal</button></a>
   </div>
 </form>
+${bulkSheet(categories, providers)}
 ${location ? deleteCard(location) : ''}`;
+}
+
+/**
+ * Sheet "Bulk with AI".
+ *
+ * Diletakkan di halaman lokasi, bukan halaman tersendiri, karena hasilnya
+ * langsung menjadi lokasi: setelah selesai, halaman yang sama cukup dimuat ulang
+ * dan barisnya sudah ada di daftar.
+ *
+ * Markupnya dirender server-side — termasuk saat tersembunyi — supaya ikut
+ * tersapu uji render. Kalau dibuat JavaScript, markup yang salah tampil sebagai
+ * teks tidak akan tertangkap uji mana pun.
+ *
+ * Kategori (era) dipilih SEKALI untuk seluruh batch, dan itu keputusan yang
+ * disengaja: era adalah taksonomi produk, bukan sesuatu yang dapat dilihat dari
+ * gambar. Foto hutan tidak memberi tahu apakah ia "Era Modern" atau "Era
+ * Kolonial" dalam katalog ini.
+ */
+function bulkSheet(categories: LocationCategoryRow[], providers: ProviderRow[]): SafeHtml {
+  const providerOptions =
+    providers.length > 0
+      ? providers.map(
+          (provider) =>
+            html`<option value="${inputValue(provider.providerId)}">${esc(provider.name)}</option>`,
+        )
+      : [html`<option value="">(belum ada provider)</option>`];
+
+  return html`<div class="sheet-layer" data-bulk-root hidden>
+  <div class="sheet sheet--bulk" role="dialog" aria-modal="true" aria-labelledby="bulk-title">
+    <header class="sheet__bar">
+      <span class="traffic traffic--live">
+        <button type="button" class="traffic__dot traffic__dot--close" data-bulk-action="close" aria-label="Tutup" title="Tutup"></button>
+        <button type="button" class="traffic__dot traffic__dot--min" data-bulk-action="min" aria-label="Kecilkan" title="Kecilkan"></button>
+        <button type="button" class="traffic__dot traffic__dot--zoom" data-bulk-action="zoom" aria-label="Perlebar" title="Perlebar"></button>
+      </span>
+      <h2 class="sheet__title" id="bulk-title">Bulk with AI</h2>
+    </header>
+
+    <div class="sheet__body">
+      <p class="sheet__text">
+        Unggah beberapa gambar latar sekaligus. Model visi yang Anda pilih akan mengisi
+        <strong>nama</strong> dan <strong>keterangan</strong> untuk tiap gambar, lalu
+        menyimpannya sebagai lokasi. Semuanya masih dapat disunting setelah selesai.
+      </p>
+
+      <div class="two">
+        <label><span>Kategori (era) untuk semua gambar</span>
+          <select data-bulk-category>${categoryOptions(categories, '')}</select>
+        </label>
+        <label><span>Provider</span>
+          <select data-bulk-provider>${providerOptions}</select>
+        </label>
+      </div>
+
+      <label><span>Model visi</span>
+        <select data-bulk-model><option value="">(pilih provider lebih dulu)</option></select>
+      </label>
+      <div class="field__status" data-bulk-model-status>Daftar model diambil dari provider yang dipilih.</div>
+
+      <label><span>Gambar — boleh banyak sekaligus</span>
+        <input type="file" accept="image/png,image/jpeg,image/webp" multiple data-bulk-files>
+      </label>
+
+      <div class="bulk-list" data-bulk-list></div>
+    </div>
+
+    <footer class="sheet__foot">
+      <button type="button" class="ghost" data-bulk-action="close">Batal</button>
+      <button type="button" data-bulk-action="start">Mulai</button>
+    </footer>
+  </div>
+</div>`;
 }
 
 function categoryOptions(

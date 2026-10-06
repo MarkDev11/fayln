@@ -1062,6 +1062,43 @@ button.link:hover{text-decoration:underline;filter:none}
 .sheet__foot{display:flex;justify-content:flex-end;gap:8px;padding:14px 18px;
   border-top:1px solid var(--line);background:var(--panel)}
 
+/*
+ * Sheet impor massal.
+ *
+ * Lebih lebar daripada sheet konfirmasi, karena isinya daftar berkas dan bukan
+ * satu kalimat — dan lebih tinggi, tetapi TIDAK setinggi jendela: daftar 50
+ * berkas akan mendorong tombol "Mulai" keluar dari layar, dan tombol yang tidak
+ * terlihat sama saja dengan tombol yang tidak ada.
+ */
+.sheet--bulk{width:min(680px,100%)}
+.sheet--bulk .sheet__body{max-height:min(58vh,540px);overflow-y:auto}
+/*
+ * Jarak di dalam sheet ini diatur eksplisit.
+ *
+ * Label formulir di panel hanya punya jarak BAWAH, jadi bidang pertama menempel
+ * ke paragraf di atasnya dan baris status menempel ke label berikutnya. Di
+ * formulir biasa itu tidak terlihat karena selalu ada judul di antaranya; di
+ * dalam sheet, tidak.
+ */
+.sheet--bulk .sheet__text + *{margin-top:18px}
+.sheet--bulk .field__status{margin-bottom:16px}
+
+.bulk-list{margin-top:14px;display:flex;flex-direction:column;gap:6px}
+.bulk-list:empty{display:none}
+.bulk-row{display:flex;gap:10px;align-items:flex-start;padding:8px 10px;
+  border-radius:var(--radius-sm);background:var(--field);border:1px solid var(--line)}
+.bulk-row__mark{flex:0 0 16px;text-align:center;font-size:12px;line-height:1.5;color:var(--muted)}
+.bulk-row__body{flex:1;min-width:0}
+.bulk-row__name{font-size:12.5px;font-weight:500;overflow-wrap:anywhere}
+.bulk-row__state{font-size:11.5px;line-height:1.5;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
+/*
+ * Warnanya menyatakan hasil, karena "berhasil" dan "gagal" di sini hanya
+ * berbeda satu kata — dan pada daftar 50 baris, mata tidak membaca kata.
+ */
+.bulk-row[data-state=ok] .bulk-row__state{color:var(--ok)}
+.bulk-row[data-state=error] .bulk-row__state{color:var(--danger)}
+.bulk-row[data-state=error]{border-color:color-mix(in srgb,var(--danger) 35%,transparent)}
+
 /* ---------------- Halaman masuk ---------------- */
 .shell--bare{flex:1;display:grid;place-items:center;background:var(--canvas);padding:24px}
 .shell--bare main{flex:none;width:100%;max-width:360px;padding:0;background:none;overflow:visible}

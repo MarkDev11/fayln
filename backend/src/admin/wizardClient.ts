@@ -525,6 +525,340 @@ export const WIZARD_JS = `
     return String(angka).replace(/\B(?=(\d{3})+(?!\d))/g, '.');
   }
 
+  /* ---------------- Impor massal lokasi dengan AI ---------------- */
+
+  /*
+   * Mengunggah banyak gambar latar sekaligus, meminta model visi menamainya,
+   * lalu menyimpannya sebagai lokasi.
+   *
+   * TIGA FASE YANG TERPISAH, dan pemisahan itu bukan kerapian. Unggah, analisis,
+   * simpan — masing-masing dapat gagal sendiri. Kalau ketiganya digabung dalam
+   * satu permintaan, satu percobaan ulang setelah gagal menyimpan akan memanggil
+   * model sekali lagi, dan jawaban yang hilang di jaringan dapat menghasilkan DUA
+   * lokasi untuk satu gambar.
+   *
+   * DIKERJAKAN BERKELOMPOK (tiga sekaligus), bukan satu per satu dan bukan
+   * semuanya sekaligus: satu per satu terlalu lambat untuk 50 gambar, sedangkan
+   * 50 permintaan serentak akan ditolak penyedia mana pun.
+   *
+   * Setiap langkah diulang sampai tiga kali. Kegagalan yang menetap ditampilkan
+   * apa adanya — model yang tidak dapat melihat gambar tidak akan berhasil pada
+   * percobaan keempat, dan mengulanginya tanpa batas hanya membakar biaya.
+   */
+  function bindBulkImport() {
+    var layer = document.querySelector('[data-bulk-root]');
+    var pembuka = document.querySelector('[data-bulk-open]');
+    if (!layer || !pembuka) { return; }
+
+    var bidangKategori = layer.querySelector('[data-bulk-category]');
+    var bidangProvider = layer.querySelector('[data-bulk-provider]');
+    var bidangModel = layer.querySelector('[data-bulk-model]');
+    var statusModel = layer.querySelector('[data-bulk-model-status]');
+    var bidangBerkas = layer.querySelector('[data-bulk-files]');
+    var daftar = layer.querySelector('[data-bulk-list]');
+    var tombolMulai = layer.querySelector('[data-bulk-action=start]');
+    if (!bidangModel || !daftar || !tombolMulai) { return; }
+
+    var SERENTAK = 3;
+    var PERCOBAAN = 3;
+    var JEDA_ULANG_MS = 900;
+
+    var providerDimuat = null;
+    var berjalan = false;
+    var fokusTerakhir = null;
+
+    var pesanModel = {
+      'no-key': 'Provider ini belum punya kunci API, jadi daftar model tidak dapat diambil.',
+      unauthorized: 'Provider menolak kuncinya. Periksa kuncinya di halaman Provider.',
+      unreachable: 'Provider tidak dapat dihubungi.',
+      'bad-response': 'Jawaban provider tidak dikenali sebagai daftar model.'
+    };
+
+    function katakan(pesan, keadaan) {
+      if (!statusModel) { return; }
+      statusModel.textContent = pesan;
+      if (keadaan) { statusModel.setAttribute('data-state', keadaan); }
+      else { statusModel.removeAttribute('data-state'); }
+    }
+
+    /* ---------------- Buka dan tutup ---------------- */
+
+    function buka() {
+      fokusTerakhir = document.activeElement;
+      layer.hidden = false;
+      if (bidangBerkas && bidangBerkas.focus) { bidangBerkas.focus(); }
+    }
+
+    function tutup() {
+      /*
+       * Sheet tidak dapat ditutup di tengah proses. Menutupnya akan menyembunyikan
+       * kemajuan yang sedang berjalan, dan admin akan mengira pekerjaannya batal
+       * padahal modelnya masih dipanggil.
+       */
+      if (berjalan) { katakan('Tunggu sampai prosesnya selesai.', 'error'); return; }
+      layer.hidden = true;
+      if (fokusTerakhir && fokusTerakhir.focus) { fokusTerakhir.focus(); }
+    }
+
+    /* ---------------- Daftar model provider ---------------- */
+
+    function muatModel() {
+      var id = bidangProvider ? bidangProvider.value : '';
+      if (!id || id === providerDimuat) { return; }
+      providerDimuat = id;
+
+      bidangModel.innerHTML = '';
+      var menunggu = document.createElement('option');
+      menunggu.value = '';
+      menunggu.textContent = '(memuat...)';
+      bidangModel.appendChild(menunggu);
+      katakan('Mengambil daftar model dari provider...', null);
+
+      fetch('/admin/providers/' + encodeURIComponent(id) + '/models', {
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin'
+      })
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+          bidangModel.innerHTML = '';
+          var ids = data && data.ok === true && data.ids ? data.ids : [];
+          if (ids.length === 0) {
+            var kosong = document.createElement('option');
+            kosong.value = '';
+            kosong.textContent = '(tidak ada model)';
+            bidangModel.appendChild(kosong);
+            katakan(pesanModel[data && data.reason] || 'Daftar model tidak dapat diambil.', 'error');
+            return;
+          }
+          for (var i = 0; i < ids.length; i++) {
+            var opsi = document.createElement('option');
+            opsi.value = ids[i];
+            opsi.textContent = ids[i];
+            bidangModel.appendChild(opsi);
+          }
+          katakan(ids.length + ' model tersedia. Pilih yang dapat melihat gambar.', 'ok');
+        })
+        .catch(function () {
+          katakan('Daftar model tidak dapat diambil.', 'error');
+        });
+    }
+
+    /* ---------------- Baris kemajuan ---------------- */
+
+    function buatBaris(nama) {
+      var baris = document.createElement('div');
+      baris.className = 'bulk-row';
+
+      var tanda = document.createElement('span');
+      tanda.className = 'bulk-row__mark';
+      tanda.textContent = '\u00b7';
+
+      var isi = document.createElement('div');
+      isi.className = 'bulk-row__body';
+
+      var judul = document.createElement('div');
+      judul.className = 'bulk-row__name';
+      judul.textContent = nama;
+
+      var keadaan = document.createElement('div');
+      keadaan.className = 'bulk-row__state';
+      keadaan.textContent = 'Menunggu.';
+
+      isi.appendChild(judul);
+      isi.appendChild(keadaan);
+      baris.appendChild(tanda);
+      baris.appendChild(isi);
+      daftar.appendChild(baris);
+
+      return { baris: baris, tanda: tanda, keadaan: keadaan };
+    }
+
+    function setBaris(ui, keadaan, pesan, tanda) {
+      ui.baris.setAttribute('data-state', keadaan || '');
+      ui.keadaan.textContent = pesan;
+      ui.tanda.textContent = tanda || '\u00b7';
+    }
+
+    /* ---------------- Alat bantu proses ---------------- */
+
+    function kirimJson(url, muatan) {
+      return fetch(url, {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: JSON.stringify(muatan)
+      })
+        .then(function (response) { return response.json(); })
+        .catch(function () { return { ok: false, reason: 'jaringan' }; });
+    }
+
+    /** Menjalankan satu tugas untuk tiap berkas, sebanyak batas sekaligus. */
+    function berbarengan(tugas, batas, satuTugas) {
+      var berikutnya = 0;
+
+      function jalan() {
+        if (berikutnya >= tugas.length) { return Promise.resolve(); }
+        var sekarang = tugas[berikutnya];
+        berikutnya += 1;
+        return satuTugas(sekarang).then(jalan, jalan);
+      }
+
+      var awalan = [];
+      var jumlah = Math.min(batas, tugas.length);
+      for (var i = 0; i < jumlah; i++) { awalan.push(jalan()); }
+      return Promise.all(awalan);
+    }
+
+    /** Mengulang satu langkah sampai berhasil, atau sampai percobaannya habis. */
+    function ulangi(langkah, sisa) {
+      return langkah().then(function (hasil) {
+        if (hasil && hasil.ok) { return hasil; }
+        if (sisa <= 1) { return hasil; }
+        return new Promise(function (lanjut) {
+          window.setTimeout(function () { lanjut(ulangi(langkah, sisa - 1)); }, JEDA_ULANG_MS);
+        });
+      });
+    }
+
+    /* ---------------- Proses utama ---------------- */
+
+    function mulai() {
+      if (berjalan) { return; }
+
+      var berkas = bidangBerkas && bidangBerkas.files ? bidangBerkas.files : [];
+      if (berkas.length === 0) { katakan('Pilih gambar lebih dulu.', 'error'); return; }
+      if (!bidangKategori || bidangKategori.value === '') {
+        katakan('Pilih kategori (era) untuk seluruh gambar.', 'error');
+        return;
+      }
+      if (!bidangModel || bidangModel.value === '') {
+        katakan('Pilih model visi lebih dulu.', 'error');
+        return;
+      }
+
+      var kategoriId = bidangKategori.value;
+      var providerId = bidangProvider ? bidangProvider.value : '';
+      var modelKey = bidangModel.value;
+
+      berjalan = true;
+      tombolMulai.disabled = true;
+      daftar.innerHTML = '';
+
+      var tugas = [];
+      for (var i = 0; i < berkas.length; i++) {
+        tugas.push({ file: berkas[i], ui: buatBaris(berkas[i].name), mediaId: '', name: '', description: '' });
+      }
+
+      function ringkas(sebab) {
+        var gagal = 0;
+        for (var k = 0; k < tugas.length; k++) {
+          if (tugas[k].ui.baris.getAttribute('data-state') === 'error') { gagal += 1; }
+        }
+        var berhasil = tugas.length - gagal;
+        katakan(
+          sebab + ' ' + berhasil + ' dari ' + tugas.length + ' gambar menjadi lokasi' +
+          (gagal > 0 ? ', ' + gagal + ' gagal.' : '.'),
+          gagal > 0 ? 'error' : 'ok'
+        );
+        berjalan = false;
+        tombolMulai.disabled = false;
+      }
+
+      /* Fase 1 - unggah. Memakai pengecil dan pengode WebP yang sudah dipakai
+         wizard, jadi hasilnya sama persis dengan unggahan satu per satu. */
+      berbarengan(tugas, SERENTAK, function (t) {
+        setBaris(t.ui, '', 'Memperkecil dan mengunggah...', '\u2191');
+        return ulangi(function () {
+          return encode(t.file, SPECS.background)
+            .then(function (encoded) { return uploadBlob(encoded.blob); })
+            .then(function (jawaban) {
+              if (!jawaban || !jawaban.mediaId) { return { ok: false, pesan: 'jawaban server tidak memuat id gambar' }; }
+              t.mediaId = jawaban.mediaId;
+              return { ok: true };
+            })
+            .catch(function (error) { return { ok: false, pesan: error && error.message ? error.message : 'gagal' }; });
+        }, PERCOBAAN).then(function (hasil) {
+          if (hasil.ok) { setBaris(t.ui, 'ok', 'Terunggah.', '\u2713'); }
+          else { setBaris(t.ui, 'error', 'Gagal mengunggah: ' + (hasil.pesan || 'sebab tidak diketahui'), '\u00d7'); }
+        });
+      })
+        .then(function () {
+          var siap = tugas.filter(function (t) { return t.mediaId !== ''; });
+          if (siap.length === 0) { ringkas('Tidak ada gambar yang berhasil diunggah.'); return null; }
+
+          /* Fase 2 - analisis. Model dipanggil sekali per gambar. */
+          return berbarengan(siap, SERENTAK, function (t) {
+            setBaris(t.ui, '', 'Model sedang melihat gambarnya...', '\u25cb');
+            return ulangi(function () {
+              return kirimJson('/admin/locations-bulk/describe', {
+                mediaId: t.mediaId, providerId: providerId, modelKey: modelKey
+              });
+            }, PERCOBAAN).then(function (hasil) {
+              if (hasil && hasil.ok) {
+                t.name = hasil.name;
+                t.description = hasil.description;
+                setBaris(t.ui, 'ok', 'Dinamai: ' + hasil.name, '\u2713');
+              } else {
+                var sebab = hasil && hasil.detail ? hasil.detail : 'sebab tidak diketahui';
+                setBaris(t.ui, 'error', 'Gagal dianalisis: ' + sebab, '\u00d7');
+              }
+            });
+          });
+        })
+        .then(function (lanjut) {
+          if (lanjut === null) { return null; }
+
+          /* Fase 3 - simpan. Hanya yang benar-benar punya nama. */
+          var siap = tugas.filter(function (t) { return t.name !== ''; });
+          if (siap.length === 0) { ringkas('Tidak ada gambar yang berhasil dinamai.'); return null; }
+
+          return berbarengan(siap, SERENTAK, function (t) {
+            setBaris(t.ui, '', 'Menyimpan sebagai lokasi...', '\u2193');
+            return ulangi(function () {
+              return kirimJson('/admin/locations-bulk/create', {
+                mediaId: t.mediaId, categoryId: kategoriId, name: t.name, description: t.description
+              });
+            }, PERCOBAAN).then(function (hasil) {
+              if (hasil && hasil.ok) { setBaris(t.ui, 'ok', 'Tersimpan sebagai lokasi.', '\u2713'); }
+              else {
+                var sebab = hasil && hasil.reason ? hasil.reason : 'sebab tidak diketahui';
+                setBaris(t.ui, 'error', 'Gagal disimpan: ' + sebab, '\u00d7');
+              }
+            });
+          });
+        })
+        .then(function () {
+          ringkas('Selesai.');
+        })
+        .catch(function () {
+          ringkas('Berhenti karena kesalahan tak terduga.');
+        });
+    }
+
+    /* ---------------- Pemasangan ---------------- */
+
+    pembuka.addEventListener('click', buka);
+    if (bidangProvider) { bidangProvider.addEventListener('change', muatModel); }
+    tombolMulai.addEventListener('click', mulai);
+
+    Array.prototype.forEach.call(layer.querySelectorAll('[data-bulk-action]'), function (tombol) {
+      var aksi = tombol.getAttribute('data-bulk-action');
+      if (aksi === 'close') { tombol.addEventListener('click', tutup); }
+      if (aksi === 'min') {
+        tombol.addEventListener('click', function () {
+          layer.querySelector('.sheet').classList.toggle('sheet--min');
+        });
+      }
+      if (aksi === 'zoom') {
+        tombol.addEventListener('click', function () {
+          layer.querySelector('.sheet').classList.toggle('sheet--zoom');
+        });
+      }
+    });
+
+    muatModel();
+  }
+
   /* ---------------- Peringatan meninggalkan halaman ---------------- */
 
   function bindUnsavedGuard() {
@@ -579,6 +913,7 @@ export const WIZARD_JS = `
     );
     bindUnsavedGuard();
     bindModelKeySync();
+    bindBulkImport();
   }
 
   if (document.readyState === 'loading') {

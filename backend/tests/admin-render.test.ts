@@ -985,6 +985,62 @@ describe('daftar dunia', () => {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Sheet "Bulk with AI" di halaman lokasi.
+ *
+ * Markupnya dirender server-side walaupun tersembunyi, dan itu disengaja: uji
+ * sapuan hanya dapat memeriksa apa yang ada di HTML. Sheet yang dibuat
+ * JavaScript tidak akan tersapu uji mana pun — dan cacat senyap di dalamnya
+ * (atribut ter-escape, tag yang tampil sebagai teks) baru ketahuan saat dipakai.
+ */
+describe('impor massal lokasi', () => {
+  it('menyediakan pemicu, sheet, dan seluruh bidangnya', async () => {
+    const cookie = await login();
+    await pages.locations.createCategory('Era Uji');
+    await pages.providers.create({
+      name: 'Penyedia Visi',
+      prefix: 'visi',
+      apiType: 'chat-completions',
+      baseUrl: 'https://visi.example.test/v1',
+      apiKeyEnv: '',
+      isActive: true,
+      notes: '',
+    });
+
+    const body = await sweep(cookie, '/admin/locations-form');
+
+    expect(body, 'tombol pemicu tidak ada').toContain('data-bulk-open');
+    expect(body, 'sheet tidak dirender').toContain('data-bulk-root');
+    expect(body, 'pemilih kategori tidak ada').toContain('data-bulk-category');
+    expect(body, 'pemilih provider tidak ada').toContain('data-bulk-provider');
+    expect(body, 'pemilih model tidak ada').toContain('data-bulk-model');
+    expect(body, 'baris status model tidak ada').toContain('data-bulk-model-status');
+
+    // `multiple` adalah inti fiturnya: tanpa itu hanya satu berkas yang dapat dipilih.
+    expect(body, 'input berkas tidak menerima banyak berkas').toMatch(
+      /<input[^>]*multiple[^>]*data-bulk-files/,
+    );
+    expect(body, 'daftar kemajuan tidak ada').toContain('data-bulk-list');
+
+    // Sheet-nya digerakkan WIZARD_JS. Tanpa skrip itu ia tampak seperti tombol
+    // mati — tanpa galat apa pun.
+    expect(body, 'skrip sheet tidak dipanggil').toContain('bindBulkImport();');
+    // Provider yang ada harus muncul sebagai pilihan, bukan daftar kosong.
+    expect(body, 'provider tidak ditawarkan').toContain('Penyedia Visi');
+  });
+
+  it('memberi tahu saat belum ada provider, bukan menawarkan daftar kosong', async () => {
+    const cookie = await login();
+    await pages.locations.createCategory('Era Uji');
+
+    const body = await sweep(cookie, '/admin/locations-form');
+
+    expect(body).toContain('(belum ada provider)');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
  * Provider model.
  *
  * Pasangan "kosong" dan "berisi" dengan alasan yang sama seperti master lain,

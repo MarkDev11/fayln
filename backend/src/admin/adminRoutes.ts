@@ -38,6 +38,7 @@ import type { CharacterFailure } from './charactersRepository';
 import type { CategoryFailure, LocationFailure } from './locationsRepository';
 import type { ModelFailure } from './modelsRepository';
 import { fetchProviderModels } from './providerModels';
+import { describeLocationImage } from './visionClient';
 import type { ProviderFailure } from './providersRepository';
 import { html, inputValue, layout } from './html';
 import { validatePassword, verifyPassword } from './password';
@@ -1983,6 +1984,109 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     });
 
     return reply.redirect('/admin/providers?notice=deleted', 302);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Impor massal lokasi dengan AI                                     */
+  /* ---------------------------------------------------------------- */
+
+  /*
+   * Dua rute, bukan satu, dan pemisahan itu disengaja.
+   *
+   * `/describe` memanggil model visi; `/create` menyimpan hasilnya. Kalau
+   * keduanya digabung, satu percobaan ulang setelah gagal menyimpan akan
+   * memanggil model sekali lagi — dan lebih buruk: jawaban yang hilang di
+   * jaringan dapat menghasilkan DUA lokasi untuk satu gambar. Dengan dipisah,
+   * percobaan ulang hanya mengulang bagian yang gagal.
+   *
+   * Satu gambar per permintaan. Peramban yang mengulanginya berkelompok, dan itu
+   * yang membuat satu gambar gagal tidak menggagalkan sisanya.
+   */
+
+  app.post('/admin/locations-bulk/describe', async (request, reply) => {
+    const body = z
+      .object({
+        mediaId: z.string().trim().min(1),
+        providerId: z.string().trim().min(1),
+        modelKey: z.string().trim().min(1).max(120),
+      })
+      .safeParse(request.body);
+
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, reason: 'bad-request', detail: '' });
+    }
+
+    const provider = await ctx.providers.find(body.data.providerId);
+    if (!provider) {
+      return reply.code(404).send({ ok: false, reason: 'provider-not-found', detail: '' });
+    }
+
+    const media = await ctx.media.readBytes(body.data.mediaId);
+    if (!media) {
+      return reply.code(404).send({ ok: false, reason: 'media-not-found', detail: '' });
+    }
+
+    const apiKey = await ctx.providers.apiKeyFor(provider.providerId);
+    if (!apiKey) {
+      return reply.send({
+        ok: false,
+        reason: 'no-key',
+        detail: 'Provider ini belum punya kunci API, jadi modelnya tidak dapat dipanggil.',
+      });
+    }
+
+    const result = await describeLocationImage(
+      {
+        baseUrl: provider.baseUrl,
+        apiType: provider.apiType,
+        modelKey: body.data.modelKey,
+        imageBase64: media.bytes.toString('base64'),
+        contentType: media.media.contentType,
+      },
+      apiKey,
+    );
+
+    return reply.send(result);
+  });
+
+  app.post('/admin/locations-bulk/create', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({
+        mediaId: z.string().trim().min(1),
+        categoryId: z.string().trim().min(1),
+        name: z.string().trim().min(1).max(120),
+        description: z.string().trim().max(600).optional().default(''),
+      })
+      .safeParse(request.body);
+
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, reason: 'bad-request', detail: '' });
+    }
+
+    const result = await ctx.locations.create({
+      name: body.data.name,
+      categoryId: body.data.categoryId,
+      description: body.data.description,
+      mediaId: body.data.mediaId,
+    });
+
+    if (!result.ok) {
+      return reply.send({ ok: false, reason: result.reason, detail: '' });
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'location.create',
+      targetKind: 'location',
+      targetId: result.locationId,
+      // Ditandai supaya jejaknya dapat dibedakan dari pembuatan satu per satu.
+      detail: { via: 'bulk-ai' },
+      ipAddress: request.ip,
+    });
+
+    return reply.send({ ok: true, locationId: result.locationId });
   });
 
   app.post('/admin/providers/move', async (request, reply) => {
