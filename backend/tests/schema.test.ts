@@ -144,15 +144,54 @@ describe('percobaan ulang migrasi saat database belum siap', () => {
     }
 
     /*
-     * Jendela ± 23 detik terbukti terlalu pendek pada 5–6 Oktober 2026: saat
+     * Jendela 23 detik terbukti terlalu pendek pada 5–6 Oktober 2026: saat
      * deploy, database menolak koneksi lebih lama daripada itu, aplikasi keluar,
-     * platform mengulanginya lima kali, dan produksi menyajikan 503 selama
-     * beberapa menit sebelum kembali ke versi LAMA.
+     * platform mengulanginya 4–5 kali, lalu MENYERAH DAN KEMBALI KE VERSI LAMA —
+     * membatalkan deploy yang sudah berhasil dibangun.
      *
-     * Angka ini bukan target performa — ia kebijakan. Menurunkannya kembali akan
-     * mengembalikan deploy yang gagal tanpa gejala di kode.
+     * Diperiksa sebagai RENTANG, bukan batas bawah saja. Jendela yang terlalu
+     * panjang juga merugikan: pod yang menunggu 20 menit sebelum menyerah berarti
+     * deploy yang gagal tanpa kabar selama 20 menit. Angka ini kebijakan, dan
+     * kebijakan yang tidak dijaga dari dua sisi akan bergeser tanpa disadari.
      */
-    expect(total, 'jendela tunggu terlalu pendek untuk menutupi database yang belum siap').toBeGreaterThanOrEqual(40_000);
+    expect(total, 'jendela tunggu terlalu pendek untuk menutupi database yang belum siap').toBeGreaterThanOrEqual(120_000);
+    expect(total, 'jendela tunggu terlalu panjang; deploy yang gagal jadi tidak kunjung terlihat').toBeLessThanOrEqual(300_000);
+  });
+
+  it('memberi tahu setiap kali percobaan diulang', async () => {
+    /*
+     * Penantian dua menit tampak sama persis dengan proses yang menggantung kalau
+     * tidak ada jejaknya di log. Yang dicatat juga HARUS nomor percobaannya —
+     * tanpa itu, "menunggu" tidak dapat dibedakan dari "terjebak di percobaan
+     * pertama selamanya".
+     */
+    const { runMigrations } = await import('../src/db/migrate');
+    const { db } = ctx;
+
+    let sisaGagal = 2;
+    const flaky = {
+      kind: 'injected' as const,
+      async query<T>(text: string, values?: unknown[]): Promise<{ rows: T[] }> {
+        if (sisaGagal > 0) {
+          sisaGagal -= 1;
+          const error = new Error('connect ECONNREFUSED') as Error & { code: string };
+          error.code = 'ECONNREFUSED';
+          throw error;
+        }
+        return db.query<T>(text, values);
+      },
+      transaction: db.transaction,
+      close: db.close,
+    };
+
+    const percobaan: number[] = [];
+    await runMigrations(flaky, undefined, {
+      attempts: 6,
+      backoffMs: () => 0,
+      onRetry: (attempt) => percobaan.push(attempt),
+    });
+
+    expect(percobaan).toEqual([1, 2]);
   });
 
   it('tidak mencoba ulang galat SQL yang sebenarnya', async () => {

@@ -30,7 +30,7 @@ import { ProvidersRepository } from './admin/providersRepository';
 import { validatePassword } from './admin/password';
 import type { AdminPageContext } from './admin/pages/context';
 import { parseConfig } from './config';
-import { runMigrations } from './db/migrate';
+import { DEFAULT_MIGRATION_ATTEMPTS, runMigrations } from './db/migrate';
 import { createDatabase, createPool } from './db/pool';
 import { createLogger } from './logging';
 import { CatalogRepository } from './repositories/catalogRepository';
@@ -53,11 +53,35 @@ async function main(): Promise<void> {
 
   if (config.runMigrationsOnStart) {
     try {
-      const result = await runMigrations(db);
+      const result = await runMigrations(db, undefined, {
+        /*
+         * Setiap penantian dicatat.
+         *
+         * Tanpa ini, satu-satunya jejak adalah baris kegagalan TERAKHIR — dan
+         * penantian dua menit tampak sama persis dengan proses yang menggantung.
+         * Saat database blitz.cloud menolak koneksi, log inilah yang membedakan
+         * "sedang menunggu" dari "sudah mati".
+         */
+        onRetry: (attempt, error) => {
+          logger.warn(
+            {
+              attempt,
+              maxAttempts: DEFAULT_MIGRATION_ATTEMPTS,
+              message: error instanceof Error ? error.message : 'tidak diketahui',
+            },
+            'Database belum siap; menunggu lalu mencoba lagi.',
+          );
+        },
+      });
       logger.info({ applied: result.applied }, 'Migrasi diterapkan saat mulai.');
     } catch (error) {
       // Gagal migrasi berarti skema tidak sesuai harapan; lebih baik berhenti
       // daripada melayani permintaan dengan skema yang salah.
+      //
+      // Catatan: galat KONEKSI sudah dicoba ulang lebih dahulu selama jendela
+      // yang cukup panjang (lihat `DEFAULT_MIGRATION_ATTEMPTS`). Yang sampai ke
+      // sini karena itu sudah benar-benar gagal — entah karena databasenya tidak
+      // kunjung kembali, atau karena skemanya memang bermasalah.
       logger.error(
         { message: error instanceof Error ? error.message : 'tidak diketahui' },
         'Migrasi gagal; server tidak dijalankan.',

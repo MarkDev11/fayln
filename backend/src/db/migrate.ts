@@ -24,6 +24,14 @@ export type MigrationOptions = {
   attempts?: number;
   /** Jeda sebelum percobaan ke-`attempt` (berbasis nol). Disuntikkan pengujian. */
   backoffMs?: (attempt: number) => number;
+  /**
+   * Dipanggil setiap kali sebuah percobaan gagal dan akan diulang.
+   *
+   * Ada supaya penantiannya TERLIHAT di log. Tanpa ini, satu-satunya jejak adalah
+   * baris kegagalan terakhir — dan penantian tiga menit tampak sama persis dengan
+   * proses yang menggantung.
+   */
+  onRetry?: (attempt: number, error: unknown) => void;
 };
 
 /**
@@ -104,28 +112,33 @@ async function appliedMigrations(db: Database): Promise<Set<string>> {
 }
 
 /**
- * Menjalankan seluruh migrasi yang belum diterapkan, dengan percobaan ulang.
+ * Berapa lama menunggu database yang belum siap.
  *
  * Percobaan ulang diperlukan karena database dapat belum siap tepat saat aplikasi
- * bangun. Tanpa ini, satu `ECONNREFUSED` sesaat membuat proses keluar dan
- * platform menganggap aplikasi rusak — padahal hanya perlu menunggu sebentar.
+ * bangun. Tanpa ini, satu ECONNREFUSED sesaat membuat proses keluar dan platform
+ * menganggap aplikasi rusak - padahal hanya perlu menunggu sebentar.
  *
- * Backoff-nya 1s, 2s, 4s, 8s, lalu 10s sampai percobaan habis — **total ± 45
- * detik**. Angka ini dinaikkan dari ± 23 detik setelah kejadian nyata: pada
- * deploy 5–6 Oktober, database menolak koneksi lebih lama daripada jendela lama,
- * aplikasi keluar, platform mengulanginya lima kali, dan produksi menyajikan
- * 503 selama beberapa menit sebelum akhirnya kembali ke versi LAMA. Jendela yang
- * terlalu pendek bukan sekadar memperlambat — ia membuat deploy gagal.
+ * Backoff-nya 1s, 2s, 4s, 8s, lalu 10s sampai percobaan habis - TOTAL sekitar
+ * 2 MENIT 45 DETIK. Angka ini dinaikkan DUA KALI karena kejadian nyata:
+ *
+ *   1. Dari 23 detik ke 45 detik, setelah deploy 5-6 Oktober gagal karena
+ *      database menolak koneksi lebih lama daripada jendela lama.
+ *   2. Dari 45 detik ke 2 menit 45 detik, setelah kejadian yang sama terulang.
+ *      Aplikasi keluar, platform mengulanginya 4-5 kali selama sekitar 7 menit,
+ *      lalu MENYERAH DAN KEMBALI KE VERSI LAMA - membatalkan deploy yang sudah
+ *      berhasil dibangun. Pod yang menunggu tidak merugikan siapa pun; deploy
+ *      yang dibatalkan merugikan.
  *
  * Batasnya tetap ada dengan sengaja: menunggu tanpa batas berarti pod yang tidak
  * akan pernah siap, dan platform akan membunuhnya juga. Yang berubah hanya
  * seberapa lama kita bertahan sebelum menyerah.
  *
- * Hanya galat koneksi yang dicoba ulang; galat SQL yang sebenarnya langsung
- * dilempar supaya kesalahan migrasi tetap terlihat, bukan tersamarkan sebagai
- * masalah koneksi.
+ * Hanya galat KONEKSI yang dicoba ulang; galat SQL yang sebenarnya langsung
+ * dilempar supaya kesalahan migrasi tetap terlihat, bukan tersamar sebagai
+ * masalah koneksi. Prinsip "berhenti daripada melayani dengan skema yang salah"
+ * tetap berlaku - ia hanya tidak berlaku untuk database yang belum terjangkau.
  */
-export const DEFAULT_MIGRATION_ATTEMPTS = 8;
+export const DEFAULT_MIGRATION_ATTEMPTS = 20;
 
 /**
  * Jeda bawaan sebelum percobaan ke-`attempt` (berbasis nol).
@@ -157,6 +170,7 @@ export async function runMigrations(
         throw error;
       }
 
+      options.onRetry?.(attempt + 1, error);
       await delay(backoffMs(attempt));
     }
   }
