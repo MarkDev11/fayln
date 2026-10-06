@@ -1028,6 +1028,24 @@ describe('impor massal lokasi', () => {
     expect(body, 'provider tidak ditawarkan').toContain('Penyedia Visi');
   });
 
+  it('memeriksa jenis hasil pengodean, bukan mempercayainya', async () => {
+    /*
+     * `toBlob` tidak melempar ketika peramban tidak mengenal jenis yang diminta
+     * — ia diam-diam mengembalikan PNG. Diukur 6 Oktober 2026: meminta
+     * image/avif menghasilkan PNG ENAM KALI lebih besar daripada WebP untuk
+     * gambar yang sama.
+     *
+     * Jadi "pindah ke format yang lebih kecil" dapat dengan tenang menghasilkan
+     * berkas yang jauh lebih besar. Yang dicari adalah PEMERIKSAANNYA, bukan
+     * definisinya.
+     */
+    const cookie = await login();
+
+    const body = await sweep(cookie, '/admin/locations-form');
+
+    expect(body, 'jenis hasil pengodean tidak diperiksa').toContain('blob.type !== type');
+  });
+
   it('memberi tahu saat belum ada provider, bukan menawarkan daftar kosong', async () => {
     const cookie = await login();
     await pages.locations.createCategory('Era Uji');

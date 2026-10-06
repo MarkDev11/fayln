@@ -69,6 +69,26 @@ export const WIZARD_JS = `
         var type = spec.alpha ? 'image/png' : 'image/webp';
         canvas.toBlob(function (blob) {
           if (!blob) { reject(new Error('Gambar gagal dikodekan.')); return; }
+          /*
+           * JENISNYA DIPERIKSA, BUKAN DIPERCAYA.
+           *
+           * toBlob tidak melempar ketika peramban tidak mengenal jenis yang
+           * diminta — ia diam-diam mengembalikan PNG. Diukur pada Chrome 6
+           * Oktober 2026: meminta image/avif menghasilkan PNG yang ENAM KALI
+           * lebih besar daripada WebP untuk gambar yang sama (21.759 vs 3.720
+           * byte pada gambar uji).
+           *
+           * Jadi "pindah ke format yang lebih kecil" dapat dengan tenang
+           * menghasilkan berkas yang jauh lebih besar. Tanpa pemeriksaan ini,
+           * tidak ada satu pun tanda bahwa itu terjadi.
+           */
+          if (blob.type !== type) {
+            reject(new Error(
+              'Peramban ini tidak dapat mengkodekan ' + type +
+              ' — yang dihasilkan justru ' + blob.type + ', yang jauh lebih besar.'
+            ));
+            return;
+          }
           resolve({ blob: blob, width: width, height: height });
         }, type, spec.alpha ? undefined : spec.quality);
       };
