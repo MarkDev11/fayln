@@ -880,9 +880,25 @@ h2 span{font-weight:500}
 .list__thumb{flex:none;width:36px;height:54px;object-fit:cover;object-position:top center;
   border-radius:var(--radius-xs);border:1px solid var(--line);background:var(--field)}
 
-/* Latar mini pada daftar lokasi. Nisbahnya 16:9, sama seperti latar yang
-   diunggah — memakai nisbah potret akan memotong bagian tengah gambarnya. */
-.list__thumb--wide{width:64px;height:36px;object-position:center}
+/*
+ * Latar mini pada daftar lokasi.
+ *
+ * Latar dapat POTRET maupun lanskap — dokumen desain menyebut sisi panjang
+ * 1600 untuk lanskap dan 1200 untuk potret, dan aplikasinya sendiri berorientasi
+ * potret. Jadi nisbah 16:9 yang dipatok di sini BUKAN bentuk latarnya.
+ *
+ * Dengan kotak 64x36 dan object-fit cover, gambar potret terpotong sampai tinggal
+ * seperenam bagian tengahnya — dan di daftar, semua baris lalu tampak seperti
+ * potongan yang sama, sehingga justru tidak dapat dibedakan satu dari yang lain.
+ * Itu terjadi pada 6 Oktober 2026: 22 latar potret tampil sebagai deretan
+ * jalur lanskap yang nyaris identik.
+ *
+ * Tingginya dipatok dan lebarnya mengikuti bentuk gambarnya, jadi tidak ada yang
+ * terpotong dan barisnya tetap sejajar. min-width mencegah barisnya melompat
+ * saat gambar belum selesai dimuat.
+ */
+.list__thumb--wide{height:40px;width:auto;min-width:24px;max-width:96px;
+  object-fit:contain;object-position:center}
 
 /* ---------------- Tabel ---------------- */
 /*

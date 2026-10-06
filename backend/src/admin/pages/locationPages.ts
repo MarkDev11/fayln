@@ -167,9 +167,9 @@ export async function locationsForm(
   <input type="hidden" name="mediaId" data-background-media value="${inputValue(location?.mediaId ?? '')}">
   ${
     location
-      ? html`<img data-background-preview class="upload-thumb" style="width:128px;height:72px"
+      ? html`<img data-background-preview class="upload-thumb" style="height:96px;width:auto;max-width:320px"
          src="${esc(mediaUrl(location.mediaId))}" alt="">`
-      : html`<img data-background-preview class="upload-thumb" style="width:128px;height:72px" hidden alt="">`
+      : html`<img data-background-preview class="upload-thumb" style="height:96px;width:auto;max-width:320px" hidden alt="">`
   }
 
   <div class="row" style="margin-top:18px">

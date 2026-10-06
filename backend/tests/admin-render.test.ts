@@ -1251,6 +1251,44 @@ describe('provider: keadaan kosong dan berisi', () => {
     expect(body, 'akibat salah pilih tidak dijelaskan').toMatch(/tidak menerima gambar apa pun/i);
   });
 
+  it('menampilkan latar POTRET tanpa memotongnya', async () => {
+    /*
+     * Latar dapat potret maupun lanskap — dokumen desain menyebut sisi panjang
+     * 1600 untuk lanskap dan 1200 untuk potret, dan aplikasinya sendiri
+     * berorientasi potret. Jadi kotak 16:9 yang dipatok BUKAN bentuk latarnya.
+     *
+     * Kejadian 6 Oktober 2026: 22 latar potret tampil sebagai deretan jalur
+     * lanskap yang nyaris identik, karena `cover` memotongnya sampai tinggal
+     * seperenam bagian tengahnya.
+     */
+    const cookie = await login();
+
+    const body = await sweep(cookie, '/admin/locations');
+
+    expect(body, 'thumbnail latar memotong gambarnya').toMatch(
+      /\.list__thumb--wide\{[^}]*object-fit:contain/,
+    );
+    expect(body, 'thumbnail latar masih dipatok nisbah lanskap').not.toMatch(
+      /\.list__thumb--wide\{[^}]*height:36px/,
+    );
+  });
+
+  it('menampilkan pratinjau latar di formulir tanpa memotongnya', async () => {
+    const cookie = await login();
+    await pages.locations.createCategory('Era Uji');
+
+    const body = await sweep(cookie, '/admin/locations-form');
+
+    // Kotak yang dipatok lanskap akan memotong latar potret; tingginya dipatok
+    // dan lebarnya mengikuti bentuk gambarnya.
+    expect(body, 'pratinjau latar memaksa kotak lanskap').not.toContain(
+      'style="width:128px;height:72px"',
+    );
+    expect(body, 'pratinjau latar tidak mengikuti bentuk gambarnya').toContain(
+      'style="height:96px;width:auto',
+    );
+  });
+
   it('menghidupkan pesan "tidak ditemukan" saat id provider tidak ada', async () => {
     const cookie = await login();
     const body = await sweep(cookie, '/admin/providers-form?provider=prov_tidak_ada');
