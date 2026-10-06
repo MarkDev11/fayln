@@ -41,8 +41,21 @@ import type { ApiType, ImagePart } from './providersRepository';
 /** Batas waktu satu permintaan, dalam milidetik. */
 export const VISION_TIMEOUT_MS = 45_000;
 
-/** Batas token jawaban. Cukup untuk dua bidang pendek, dan diminta sebagian penyedia. */
-const MAX_ANSWER_TOKENS = 400;
+/**
+ * Batas token jawaban.
+ *
+ * Jauh lebih besar daripada panjang jawabannya (dua bidang pendek), dan itu
+ * disengaja. Pada 6 Oktober 2026 batas 400 token membuat SEMUA jawaban terpotong
+ * di tengah penalaran: modelnya menjelaskan gambar dengan panjang lebar lalu
+ * kehabisan jatah sebelum sempat menulis JSON-nya. Gejalanya menyesatkan — yang
+ * terlihat seperti "model tidak mau menjawab dengan format yang benar" sebenarnya
+ * hanya kehabisan ruang.
+ *
+ * Model yang bernalar memakai ruang itu untuk berpikir; jawabannya sendiri hanya
+ * puluhan token. Menyediakan ruang jauh lebih murah daripada menerima jawaban
+ * terpotong.
+ */
+const MAX_ANSWER_TOKENS = 2_000;
 
 /** Batas panjang badan respons yang disimpan untuk pesan galat. */
 const ERROR_SNIPPET = 400;
@@ -81,10 +94,14 @@ export const VISION_SYSTEM_PROMPT = [
   '- Describe only what is visible. Never invent history, characters, events,',
   '  or the names of people.',
   '- Do not mention that this is an image, a photo, a screenshot, or AI-made.',
-  '- If you CANNOT name the place, do not guess. Reply with the same shape plus',
+  '- If you cannot name the place, do not guess. Reply with the same shape plus',
   '  a reason, and say plainly what you see or do not see:',
   '  {"name": "", "description": "", "reason": "<one short sentence, in Indonesian>"}',
   '  For example, if no image reached you at all, the reason must say that.',
+  '',
+  'You may think first if you need to, but the LAST thing you write must be the',
+  'JSON object on its own, with nothing after it. Do not let your reasoning take',
+  'the place of the answer.',
 ].join('\n');
 
 export type VisionFailure =
@@ -276,9 +293,24 @@ export async function describeLocationImage(
 
   const parsed = extractNameAndDescription(text);
   if (parsed === null) {
-    // Model menjawab, tetapi tidak dengan JSON yang kita minta. Isi jawabannya
-    // ditampilkan supaya admin dapat melihat apa yang sebenarnya dikatakannya.
-    return { ok: false, reason: 'bad-response', detail: detailOf(text, apiKey) };
+    /*
+     * Terpotong atau tidak, itu DUA masalah yang berbeda dengan obat yang
+     * berbeda: yang satu menaikkan batas token, yang satu memperbaiki prompt.
+     * Menyebut keduanya dengan pesan yang sama akan membuat admin mencoba
+     * perbaikan yang salah.
+     */
+    if (wasTruncated(raw)) {
+      return {
+        ok: false,
+        reason: 'bad-response',
+        detail: `Jawaban model terpotong sebelum sempat menulis JSON — batas ${String(MAX_ANSWER_TOKENS)} token habis dipakai bernalar. Isinya: ${detailOf(text, apiKey)}`,
+      };
+    }
+    return {
+      ok: false,
+      reason: 'bad-response',
+      detail: `Model menjawab dengan kalimat, bukan JSON. Isinya: ${detailOf(text, apiKey)}`,
+    };
   }
 
   if (parsed.name.length === 0) {
@@ -305,6 +337,23 @@ export async function describeLocationImage(
   }
 
   return { ok: true, name: parsed.name, description: parsed.description };
+}
+
+/**
+ * Apakah penyedia menyatakan jawabannya terpotong karena kehabisan token.
+ *
+ * Penyedia yang menghormati OpenAI mengisi `finish_reason: "length"`. Kalau
+ * bidangnya tidak ada, jawabannya dianggap tidak terpotong — menuduh terpotong
+ * tanpa bukti akan mengarahkan admin ke perbaikan yang salah.
+ */
+function wasTruncated(raw: string): boolean {
+  try {
+    const parsed = JSON.parse(raw) as { choices?: { finish_reason?: unknown }[] };
+    const alasan = parsed.choices?.[0]?.finish_reason;
+    return alasan === 'length';
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -379,45 +428,113 @@ function flattenContent(content: unknown): string | null {
 /**
  * Membaca `name` dan `description` dari jawaban model.
  *
+ * DICARI DARI BELAKANG, bukan dari depan, dan itu bukan kerapian.
+ *
+ * Model yang bernalar menyebut contoh bentuk JSON di tengah penalarannya —
+ * `{"name": "...", "description": "..."}` — sebelum menulis jawaban sebenarnya
+ * di akhir. Mengambil objek PERTAMA akan mengurai contoh itu, dan hasilnya lokasi
+ * bernama tiga titik. Jawaban yang benar selalu yang terakhir.
+ *
  * Toleran dengan sengaja: model kecil sering membungkus JSON-nya dengan pagar
  * kode atau menambahkan kalimat pengantar, walaupun promptnya sudah melarang.
- * Menolak jawaban karena itu berarti membuang pekerjaan yang sebenarnya benar —
- * jadi yang dicari adalah objek JSON PERTAMA di dalam teks, bukan teks itu
- * sendiri.
+ * Menolak jawaban karena itu berarti membuang pekerjaan yang sebenarnya benar.
  */
 function extractNameAndDescription(
   text: string,
 ): { name: string; description: string; reason: string } | null {
-  const start = text.indexOf('{');
-  const end = text.lastIndexOf('}');
-  if (start < 0 || end <= start) {
-    return null;
+  for (let start = text.lastIndexOf('{'); start >= 0; start = text.lastIndexOf('{', start - 1)) {
+    const end = matchingBrace(text, start);
+    if (end < 0) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text.slice(start, end + 1));
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      continue;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    if (typeof record.name !== 'string') {
+      continue;
+    }
+
+    const name = record.name.trim();
+
+    /*
+     * Objek yang `name`-nya berisi TANPA SATU PUN HURUF adalah contoh bentuk,
+     * bukan jawaban — mis. "..." dari template di dalam penalaran. Membiarkannya
+     * lolos berarti membuat lokasi bernama tiga titik.
+     *
+     * Nama KOSONG tetap diterima: itulah jalan keluar jujur yang disediakan
+     * promptnya saat model tidak dapat menamai tempatnya.
+     */
+    if (name.length > 0 && !/\p{L}/u.test(name)) {
+      continue;
+    }
+
+    const description = typeof record.description === 'string' ? record.description.trim() : '';
+    // Bidang ini hanya dipakai saat model tidak dapat menamai tempatnya. Ia
+    // ditambahkan SETELAH kejadian nyata: jawaban kosong tanpa alasan tidak dapat
+    // dibedakan antara "model menolak" dan "gambar tidak pernah sampai".
+    const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
+
+    return {
+      name: clamp(name, MAX_VISION_NAME),
+      description: clamp(description, MAX_VISION_DESCRIPTION),
+      reason: clamp(reason, MAX_VISION_REASON),
+    };
   }
 
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-  if (!parsed || typeof parsed !== 'object') {
-    return null;
+  return null;
+}
+
+/**
+ * Indeks `}` yang sepadan dengan `{` pada `start`, atau -1.
+ *
+ * Penghitungnya menghormati teks di dalam tanda kutip: deskripsi berbahasa
+ * Indonesia dapat memuat kurung kurawal, dan menghitungnya sebagai struktur akan
+ * memotong JSON di tempat yang salah.
+ */
+function matchingBrace(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+
+  for (let i = start; i < text.length; i += 1) {
+    const character = text[i];
+
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      escaped = true;
+      continue;
+    }
+    if (character === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (character === '{') {
+      depth += 1;
+    }
+    if (character === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        return i;
+      }
+    }
   }
 
-  const record = parsed as Record<string, unknown>;
-  const name = typeof record.name === 'string' ? record.name.trim() : '';
-  const description =
-    typeof record.description === 'string' ? record.description.trim() : '';
-  // Bidang ini hanya dipakai saat model tidak dapat menamai tempatnya. Ia
-  // ditambahkan SETELAH kejadian nyata: jawaban kosong tanpa alasan tidak dapat
-  // dibedakan antara "model menolak" dan "gambar tidak pernah sampai".
-  const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
-
-  return {
-    name: clamp(name, MAX_VISION_NAME),
-    description: clamp(description, MAX_VISION_DESCRIPTION),
-    reason: clamp(reason, MAX_VISION_REASON),
-  };
+  return -1;
 }
 
 async function readBody(response: Response): Promise<string> {

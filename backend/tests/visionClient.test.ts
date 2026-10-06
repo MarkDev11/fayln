@@ -309,6 +309,109 @@ describe('panggilan model visi', () => {
     }
   });
 
+  it('mengambil jawaban TERAKHIR, bukan contoh bentuk di dalam penalaran', async () => {
+    /*
+     * Kejadian nyata 6 Oktober 2026: modelnya menulis penalaran panjang, dan di
+     * tengahnya menyebut contoh bentuk JSON — {"name": "...", "description": "..."}
+     * — sebelum menulis jawaban sebenarnya di akhir.
+     *
+     * Mengambil objek PERTAMA akan mengurai contoh itu, dan hasilnya lokasi
+     * bernama tiga titik.
+     */
+    const penalaran = [
+      'Okay, the user wants me to catalogue this image. I need to reply with',
+      '{"name": "...", "description": "..."} where the name is in Indonesian.',
+      'Looking at the image: it is a modern office with rows of desks.',
+      'So the answer is:',
+      '{"name": "Kantor Modern", "description": "Ruang kantor lapang dengan meja berjajar."}',
+    ].join('\n');
+
+    const { impl } = fakeFetch(
+      200,
+      JSON.stringify({ choices: [{ message: { content: penalaran }, finish_reason: 'stop' }] }),
+    );
+
+    const hasil = await describeLocationImage(OPENAI, KUNCI, impl);
+
+    expect(hasil).toEqual({
+      ok: true,
+      name: 'Kantor Modern',
+      description: 'Ruang kantor lapang dengan meja berjajar.',
+    });
+  });
+
+  it('tidak menerima contoh bentuk sebagai nama lokasi', async () => {
+    /*
+     * Kalau model hanya menulis contoh bentuknya dan tidak pernah sampai ke
+     * jawabannya, yang ada hanyalah {"name":"..."}. Itu BUKAN jawaban — dan
+     * menerimanya berarti membuat lokasi bernama tiga titik.
+     *
+     * Nama KOSONG tetap diterima: itu jalan keluar jujur yang disediakan
+     * promptnya saat model tidak dapat menamai tempatnya.
+     */
+    const { impl } = fakeFetch(
+      200,
+      JSON.stringify({
+        choices: [
+          {
+            message: { content: 'I should reply with {"name": "...", "description": "..."}' },
+            finish_reason: 'stop',
+          },
+        ],
+      }),
+    );
+
+    const hasil = await describeLocationImage(OPENAI, KUNCI, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('bad-response');
+    }
+  });
+
+  it('membedakan jawaban TERPOTONG dari jawaban yang bukan JSON', async () => {
+    /*
+     * Dua masalah berbeda dengan obat yang berbeda: yang satu menaikkan batas
+     * token, yang satu memperbaiki prompt. Menyebut keduanya dengan pesan yang
+     * sama membuat admin mencoba perbaikan yang salah.
+     */
+    const { impl } = fakeFetch(
+      200,
+      JSON.stringify({
+        choices: [
+          { message: { content: 'Okay, the user wants me to catalogue this image. First I need to' }, finish_reason: 'length' },
+        ],
+      }),
+    );
+
+    const hasil = await describeLocationImage(OPENAI, KUNCI, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.detail).toContain('terpotong');
+      expect(hasil.detail).toContain('token');
+    }
+  });
+
+  it('menyisakan ruang bernalar di batas token', async () => {
+    /*
+     * Batas 400 token pernah membuat SEMUA jawaban terpotong di tengah penalaran.
+     * Jawabannya sendiri hanya puluhan token; ruangnya dipakai untuk berpikir.
+     */
+    const { calls, impl } = fakeFetch(200, openAiAnswer('A', 'B'));
+
+    await describeLocationImage(OPENAI, KUNCI, impl);
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as { max_tokens: number };
+    expect(body.max_tokens).toBeGreaterThanOrEqual(1_000);
+  });
+
+  it('meminta jawaban JSON ditulis paling akhir', async () => {
+    // Model yang bernalar tetap akan bernalar; yang bisa diminta adalah agar
+    // jawabannya ditulis SETELAH penalarannya, bukan menggantikannya.
+    expect(VISION_SYSTEM_PROMPT).toContain('LAST');
+  });
+
   it('memotong nama yang keterlaluan panjangnya', async () => {
     const panjang = 'A'.repeat(MAX_VISION_NAME + 80);
     const { impl } = fakeFetch(200, openAiAnswer(panjang, 'B'));
