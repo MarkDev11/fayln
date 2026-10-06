@@ -1137,8 +1137,16 @@ describe('provider: keadaan kosong dan berisi', () => {
     // tidak pernah dipanggil menghasilkan baris yang diam-diam tetap kosong.
     expect(body, 'skrip hitungan giliran tidak dipanggil').toContain('bindCostHelper();');
 
-    // Bidang konteks harus menyebut "max token" — istilah yang dicari orang.
-    expect(body, 'bidang konteks tidak menyebut max token').toMatch(/Batas konteks \(max token\)/);
+    /*
+     * Bidangnya bernama "Context window" — istilah yang dipakai dokumentasi
+     * penyedia, dan yang dicari orang. "Max token" sengaja TIDAK dipakai: dalam
+     * percakapan sehari-hari istilah itu berarti batas token KELUARAN, padahal
+     * yang dimaksud di sini masukan DAN keluaran sekaligus.
+     */
+    expect(body, 'bidang konteks tidak memakai istilah context window').toMatch(
+      /Context window \(token\)/,
+    );
+    expect(body, 'istilah "max token" yang menyesatkan muncul kembali').not.toContain('max token');
   });
 
   it('menghidupkan pesan "tidak ditemukan" saat id provider tidak ada', async () => {

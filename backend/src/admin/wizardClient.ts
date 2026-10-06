@@ -422,7 +422,7 @@ export const WIZARD_JS = `
         bidangKonteks.value = String(angka);
         bidangKonteks.dispatchEvent(new Event('input', { bubbles: true }));
         say(
-          'Batas konteks ' + ribuan(angka) + ' token diisikan dari provider. Angka ini kabaran — ganti bila uji Anda menunjukkan lain.',
+          'Context window ' + ribuan(angka) + ' token diisikan dari provider. Angka ini kabaran — ganti bila uji Anda menunjukkan lain.',
           null
         );
       }

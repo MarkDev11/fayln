@@ -738,9 +738,18 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
   ${textField({
     id: 'm-context',
     name: 'contextTokens',
-    label: 'Batas konteks (max token)',
+    /*
+     * "Context window", bukan "batas konteks (max token)".
+     *
+     * Dua alasan. Pertama, itu istilah yang dipakai semua dokumentasi penyedia —
+     * orang mencarinya dengan nama itu. Kedua, "max token" justru MENYESATKAN:
+     * dalam percakapan sehari-hari istilah itu biasanya berarti batas token
+     * KELUARAN (`max_tokens` pada permintaan), padahal yang dimaksud di sini
+     * adalah masukan DAN keluaran sekaligus.
+     */
+    label: 'Context window (token)',
     required: true,
-    hint: 'Batas maksimum teks yang dapat dipegang model sekaligus. Dipakai sebagai ambang pemadatan: saat riwayat satu perjalanan mendekati angka ini, cerita lama dipadatkan supaya tetap muat. Isi konteks EFEKTIF yang sudah diuji — mutu jawaban biasanya turun jauh sebelum batas brosur tercapai.',
+    hint: 'Jumlah token masukan DAN keluaran yang dapat ditangani model dalam satu permintaan. Dipakai sebagai ambang pemadatan riwayat — sisakan ruang untuk jawaban, karena pemadatan yang baru mulai tepat di batas ini membuat balasannya tidak muat. Isi angka EFEKTIF yang sudah diuji: mutu jawaban biasanya turun jauh sebelum batas brosur tercapai.',
     type: 'number',
     value: String(model?.contextTokens ?? ''),
   })}
