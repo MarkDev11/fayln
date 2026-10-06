@@ -38,7 +38,7 @@ import type { CharacterFailure } from './charactersRepository';
 import type { CategoryFailure, LocationFailure } from './locationsRepository';
 import type { ModelFailure } from './modelsRepository';
 import { fetchProviderModels } from './providerModels';
-import { describeLocationImage } from './visionClient';
+import { describeCharacterPortrait, describeLocationImage } from './visionClient';
 import type { ProviderFailure } from './providersRepository';
 import { html, inputValue, layout } from './html';
 import { validatePassword, verifyPassword } from './password';
@@ -2113,6 +2113,145 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     });
 
     return reply.send({ ok: true, locationId: result.locationId });
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Impor massal potret karakter dengan AI                            */
+  /* ---------------------------------------------------------------- */
+
+  /*
+   * Sama seperti impor lokasi: satu gambar per permintaan, dua fase terpisah.
+   *
+   * TETAPI ADA SATU PERBEDAAN YANG MENENTUKAN, dan ia harus diingat oleh
+   * pemanggilnya: `CharactersRepository.update()` MENGGANTI SELURUH daftar
+   * ekspresi, bukan menambah satu baris. Jadi rute `/create` di bawah ini
+   * membaca daftar yang ada, menambahkan satu, lalu menulis ulang.
+   *
+   * Akibatnya dua permintaan `/create` yang BERBARENGAN untuk karakter yang sama
+   * akan saling menimpa: yang satu membaca daftar sebelum yang lain menulis, dan
+   * hasilnya salah satu ekspresi hilang tanpa galat apa pun. Karena itu peramban
+   * mengirim fase ini SATU PER SATU (lihat `bindBulkImport` pada karakter).
+   *
+   * Fase analisis tetap boleh berkelompok: ia hanya membaca dan memanggil model.
+   */
+
+  app.post('/admin/characters-bulk/describe', async (request, reply) => {
+    const body = z
+      .object({
+        mediaId: z.string().trim().min(1),
+        providerId: z.string().trim().min(1),
+        modelKey: z.string().trim().min(1).max(120),
+      })
+      .safeParse(request.body);
+
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, reason: 'bad-request', detail: '' });
+    }
+
+    const provider = await ctx.providers.find(body.data.providerId);
+    if (!provider) {
+      return reply.code(404).send({ ok: false, reason: 'provider-not-found', detail: '' });
+    }
+
+    const media = await ctx.media.readBytes(body.data.mediaId);
+    if (!media) {
+      return reply.code(404).send({ ok: false, reason: 'media-not-found', detail: '' });
+    }
+
+    const apiKey = await ctx.providers.apiKeyFor(provider.providerId);
+    if (!apiKey) {
+      return reply.send({
+        ok: false,
+        reason: 'no-key',
+        detail: 'Provider ini belum punya kunci API, jadi modelnya tidak dapat dipanggil.',
+      });
+    }
+
+    const result = await describeCharacterPortrait(
+      {
+        baseUrl: provider.baseUrl,
+        apiType: provider.apiType,
+        imagePart: provider.imagePart,
+        modelKey: body.data.modelKey,
+        imageBase64: media.bytes.toString('base64'),
+        contentType: media.media.contentType,
+      },
+      apiKey,
+    );
+
+    if (!result.ok) {
+      request.log.warn(
+        {
+          reason: result.reason,
+          model: body.data.modelKey,
+          provider: provider.providerId,
+          mediaId: body.data.mediaId,
+          imageBytes: media.bytes.length,
+          imagePart: provider.imagePart,
+          detail: result.detail,
+        },
+        'Analisis potret karakter gagal.',
+      );
+    }
+
+    return reply.send(result);
+  });
+
+  app.post('/admin/characters-bulk/create', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({
+        characterId: z.string().trim().min(1),
+        mediaId: z.string().trim().min(1),
+        label: z.string().trim().min(1).max(160),
+      })
+      .safeParse(request.body);
+
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, reason: 'bad-request', detail: '' });
+    }
+
+    const character = await ctx.characters.find(body.data.characterId);
+    if (!character) {
+      return reply.code(404).send({ ok: false, reason: 'character-not-found', detail: '' });
+    }
+
+    /*
+     * Keterangannya menjadi NAMA ekspresi, bukan hanya catatannya.
+     *
+     * Format yang diminta pemilik produk adalah "ekspresi, pakaian, pose", dan
+     * bagian pakaian serta pose itulah yang membedakan dua potret yang
+     * ekspresinya sama. Kalau hanya bagian pertama yang dipakai sebagai nama,
+     * "senyum, pakaian kantor, normal" dan "senyum, pakaian santai, normal" akan
+     * sama-sama bernama "senyum" — dan yang kedua DITOLAK karena nama ekspresi
+     * harus unik. Teks utuhnya dipakai di kedua bidang.
+     */
+    const existing = character.expressions.map((item) => ({
+      expression: item.expression,
+      mediaId: item.mediaId,
+      usageNote: item.usageNote,
+    }));
+
+    const result = await ctx.characters.update(body.data.characterId, {
+      name: character.name,
+      expressions: [...existing, { expression: body.data.label, mediaId: body.data.mediaId, usageNote: body.data.label }],
+    });
+
+    if (!result.ok) {
+      return reply.send({ ok: false, reason: result.reason, detail: result.detail ?? '' });
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'character.expression.add',
+      targetKind: 'character',
+      targetId: body.data.characterId,
+      detail: { via: 'bulk-ai', label: body.data.label },
+      ipAddress: request.ip,
+    });
+
+    return reply.send({ ok: true, characterId: body.data.characterId });
   });
 
   app.post('/admin/providers/move', async (request, reply) => {

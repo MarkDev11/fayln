@@ -65,6 +65,14 @@ export const MAX_VISION_NAME = 120;
 export const MAX_VISION_DESCRIPTION = 600;
 /** Batas panjang alasan yang disebutkan model saat ia tidak dapat menamai. */
 export const MAX_VISION_REASON = 300;
+/**
+ * Batas panjang keterangan potret ("ekspresi, pakaian, pose").
+ *
+ * Jauh lebih pendek daripada keterangan lokasi dengan sengaja: bentuknya tiga
+ * bagian pendek, dan label yang panjangnya ratusan huruf berarti modelnya tidak
+ * mengikuti bentuk yang diminta.
+ */
+export const MAX_EXPRESSION_LABEL = 160;
 
 /**
  * System prompt.
@@ -148,14 +156,14 @@ export type VisionRequest = {
  * memakai blok `image` dengan `source.base64` dan `system` di tingkat atas.
  * Mengirim bentuk yang salah menghasilkan 400 yang membingungkan.
  */
-function buildRequest(request: VisionRequest): { path: string; body: unknown } {
+function buildRequest(request: VisionRequest, prompt: string): { path: string; body: unknown } {
   if (request.apiType === 'messages') {
     return {
       path: '/messages',
       body: {
         model: request.modelKey,
         max_tokens: MAX_ANSWER_TOKENS,
-        system: VISION_SYSTEM_PROMPT,
+        system: prompt,
         messages: [
           {
             role: 'user',
@@ -184,7 +192,7 @@ function buildRequest(request: VisionRequest): { path: string; body: unknown } {
       model: request.modelKey,
       max_tokens: MAX_ANSWER_TOKENS,
       messages: [
-        { role: 'system', content: VISION_SYSTEM_PROMPT },
+        { role: 'system', content: prompt },
         {
           role: 'user',
           content: [
@@ -220,11 +228,24 @@ function authHeaders(apiType: ApiType, apiKey: string): Record<string, string> {
  * `fetchImpl` dapat diganti pada pengujian — jaringan sungguhan tidak boleh
  * menjadi bagian dari uji yang harus lulus di mesin mana pun.
  */
-export async function describeLocationImage(
+/**
+ * Mengirim satu gambar beserta prompt ke model, dan mengembalikan teksnya.
+ *
+ * Dipisahkan dari penguraian jawaban karena ada DUA tugas yang memakainya —
+ * menamai lokasi dan menamai potret karakter — dan yang berbeda di antara
+ * keduanya hanya prompt serta bentuk jawabannya. Pengangkutannya sama persis:
+ * kunci API, batas waktu, bentuk lampiran gambar, dan penerjemahan galat HTTP.
+ *
+ * Menggandakan bagian ini berarti menggandakan pula seluruh pelajaran mahal yang
+ * sudah tertanam di dalamnya (kunci yang tidak boleh bocor, terpotong vs bukan
+ * JSON, bentuk lampiran per penyedia).
+ */
+async function callVision(
   request: VisionRequest,
   apiKey: string,
-  fetchImpl: typeof fetch = fetch,
-): Promise<VisionResult> {
+  prompt: string,
+  fetchImpl: typeof fetch,
+): Promise<{ ok: true; text: string; raw: string } | { ok: false; reason: VisionFailure; detail: string }> {
   if (request.apiType === 'responses') {
     // Bentuk ini belum ditangani, dan mengirim permintaan dengan bentuk yang
     // salah lebih buruk daripada mengatakannya: admin akan melihat galat
@@ -236,7 +257,7 @@ export async function describeLocationImage(
     };
   }
 
-  const { path, body } = buildRequest(request);
+  const { path, body } = buildRequest(request, prompt);
   const url = `${request.baseUrl.replace(/\/+$/, '')}${path}`;
 
   let response: Response;
@@ -291,26 +312,38 @@ export async function describeLocationImage(
     };
   }
 
+  return { ok: true, text, raw };
+}
+
+/**
+ * Menerjemahkan jawaban yang tidak berbentuk JSON menjadi pesan yang menjelaskan.
+ *
+ * Terpotong atau tidak, itu DUA masalah yang berbeda dengan obat yang berbeda:
+ * yang satu menaikkan batas token, yang satu memperbaiki prompt. Menyebut
+ * keduanya dengan pesan yang sama akan membuat admin mencoba perbaikan yang salah.
+ */
+function explainUnparseable(text: string, raw: string, apiKey: string): string {
+  if (wasTruncated(raw)) {
+    return `Jawaban model terpotong sebelum sempat menulis JSON — batas ${String(MAX_ANSWER_TOKENS)} token habis dipakai bernalar. Isinya: ${detailOf(text, apiKey)}`;
+  }
+  return `Model menjawab dengan kalimat, bukan JSON. Isinya: ${detailOf(text, apiKey)}`;
+}
+
+export async function describeLocationImage(
+  request: VisionRequest,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<VisionResult> {
+  const call = await callVision(request, apiKey, VISION_SYSTEM_PROMPT, fetchImpl);
+  if (!call.ok) {
+    return call;
+  }
+
+  const { text, raw } = call;
+
   const parsed = extractNameAndDescription(text);
   if (parsed === null) {
-    /*
-     * Terpotong atau tidak, itu DUA masalah yang berbeda dengan obat yang
-     * berbeda: yang satu menaikkan batas token, yang satu memperbaiki prompt.
-     * Menyebut keduanya dengan pesan yang sama akan membuat admin mencoba
-     * perbaikan yang salah.
-     */
-    if (wasTruncated(raw)) {
-      return {
-        ok: false,
-        reason: 'bad-response',
-        detail: `Jawaban model terpotong sebelum sempat menulis JSON — batas ${String(MAX_ANSWER_TOKENS)} token habis dipakai bernalar. Isinya: ${detailOf(text, apiKey)}`,
-      };
-    }
-    return {
-      ok: false,
-      reason: 'bad-response',
-      detail: `Model menjawab dengan kalimat, bukan JSON. Isinya: ${detailOf(text, apiKey)}`,
-    };
+    return { ok: false, reason: 'bad-response', detail: explainUnparseable(text, raw, apiKey) };
   }
 
   if (parsed.name.length === 0) {
@@ -337,6 +370,102 @@ export async function describeLocationImage(
   }
 
   return { ok: true, name: parsed.name, description: parsed.description };
+}
+
+/* ------------------------------------------------------------------ */
+/* Potret karakter                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * System prompt untuk potret karakter.
+ *
+ * Berbeda dari prompt lokasi dalam satu hal yang menentukan: jawabannya BUKAN
+ * kalimat bebas, melainkan TIGA bagian bernama yang dipisah koma —
+ * ekspresi, pakaian, pose. Urutannya wajib, karena hasilnya dibaca mesin, bukan
+ * hanya dibaca manusia.
+ */
+export const PORTRAIT_SYSTEM_PROMPT = [
+  'You catalogue character portraits for a visual-novel platform.',
+  'Each image is one portrait of one character: a face and body, drawn or',
+  'rendered, on a plain or simple background.',
+  '',
+  'Reply with ONLY a JSON object. No markdown, no code fences, no commentary:',
+  '',
+  '{"label": "..."}',
+  '',
+  '"label" is EXACTLY THREE parts separated by a comma and a space, in this',
+  'order, all in Indonesian:',
+  '',
+  '  1. the expression  — how the face looks, e.g. "senyum", "malu", "marah"',
+  '  2. the clothing    — what the character wears, e.g. "pakaian kantor"',
+  '  3. the pose        — how the body is held, e.g. "normal", "menutup tubuh"',
+  '',
+  'Each part is ONE to THREE words. Lowercase. No full stop at the end.',
+  'Example of a correct label: "senyum, pakaian kantor, normal"',
+  'Another: "malu, pakaian dalam, menutup tubuh"',
+  '',
+  'Rules:',
+  '- Exactly three parts. Never two, never four, never a sentence.',
+  '- Describe only what is visible. Never invent a name, a personality, or a',
+  '  story for the character.',
+  '- Do not mention that this is an image, a drawing, or AI-made.',
+  '- If you cannot see a portrait, do not guess. Reply with an empty label and',
+  '  say plainly what you see or do not see:',
+  '  {"label": "", "reason": "<one short sentence, in Indonesian>"}',
+  '',
+  'You may think first if you need to, but the LAST thing you write must be the',
+  'JSON object on its own, with nothing after it.',
+].join('\n');
+
+export type PortraitResult =
+  | { ok: true; label: string }
+  | { ok: false; reason: VisionFailure; detail: string };
+
+/**
+ * Meminta label `ekspresi, pakaian, pose` untuk satu potret.
+ *
+ * Ketiga bagiannya DIPERIKSA jumlahnya. Model yang menjawab dua atau empat
+ * bagian menghasilkan label yang tampak wajar tetapi tidak dapat dibaca mesin —
+ * dan itu lebih buruk daripada gagal, karena tidak ada yang menyadarinya sampai
+ * mesin cerita memilih ekspresi yang salah.
+ */
+export async function describeCharacterPortrait(
+  request: VisionRequest,
+  apiKey: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<PortraitResult> {
+  const call = await callVision(request, apiKey, PORTRAIT_SYSTEM_PROMPT, fetchImpl);
+  if (!call.ok) {
+    return call;
+  }
+
+  const { text, raw } = call;
+
+  const parsed = extractLabel(text);
+  if (parsed === null) {
+    return { ok: false, reason: 'bad-response', detail: explainUnparseable(text, raw, apiKey) };
+  }
+
+  if (parsed.label.length === 0) {
+    return {
+      ok: false,
+      reason: 'declined',
+      detail:
+        parsed.reason.length > 0
+          ? `Model tidak memberi keterangan. Alasannya: ${detailOf(parsed.reason, apiKey)}`
+          : `Model tidak memberi keterangan, dan tidak menyebut alasannya. Jawabannya: ${detailOf(text, apiKey)}`,
+    };
+  }
+
+  if (parsed.parts !== 3) {
+    return {
+      ok: false,
+      reason: 'bad-response',
+      detail: `Keterangan harus tiga bagian (ekspresi, pakaian, pose) tetapi model menulis ${String(parsed.parts)}. Jawabannya: ${detailOf(parsed.label, apiKey)}`,
+    };
+  }
+
+  return { ok: true, label: parsed.label };
 }
 
 /**
@@ -426,7 +555,7 @@ function flattenContent(content: unknown): string | null {
 }
 
 /**
- * Membaca `name` dan `description` dari jawaban model.
+ * Mencari objek JSON terakhir di dalam teks yang memiliki bidang bersangkutan.
  *
  * DICARI DARI BELAKANG, bukan dari depan, dan itu bukan kerapian.
  *
@@ -439,9 +568,7 @@ function flattenContent(content: unknown): string | null {
  * kode atau menambahkan kalimat pengantar, walaupun promptnya sudah melarang.
  * Menolak jawaban karena itu berarti membuang pekerjaan yang sebenarnya benar.
  */
-function extractNameAndDescription(
-  text: string,
-): { name: string; description: string; reason: string } | null {
+function lastJsonObject(text: string, key: string): Record<string, unknown> | null {
   for (let start = text.lastIndexOf('{'); start >= 0; start = text.lastIndexOf('{', start - 1)) {
     const end = matchingBrace(text, start);
     if (end < 0) {
@@ -459,38 +586,86 @@ function extractNameAndDescription(
     }
 
     const record = parsed as Record<string, unknown>;
-    if (typeof record.name !== 'string') {
-      continue;
+    if (typeof record[key] === 'string') {
+      return record;
     }
-
-    const name = record.name.trim();
-
-    /*
-     * Objek yang `name`-nya berisi TANPA SATU PUN HURUF adalah contoh bentuk,
-     * bukan jawaban — mis. "..." dari template di dalam penalaran. Membiarkannya
-     * lolos berarti membuat lokasi bernama tiga titik.
-     *
-     * Nama KOSONG tetap diterima: itulah jalan keluar jujur yang disediakan
-     * promptnya saat model tidak dapat menamai tempatnya.
-     */
-    if (name.length > 0 && !/\p{L}/u.test(name)) {
-      continue;
-    }
-
-    const description = typeof record.description === 'string' ? record.description.trim() : '';
-    // Bidang ini hanya dipakai saat model tidak dapat menamai tempatnya. Ia
-    // ditambahkan SETELAH kejadian nyata: jawaban kosong tanpa alasan tidak dapat
-    // dibedakan antara "model menolak" dan "gambar tidak pernah sampai".
-    const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
-
-    return {
-      name: clamp(name, MAX_VISION_NAME),
-      description: clamp(description, MAX_VISION_DESCRIPTION),
-      reason: clamp(reason, MAX_VISION_REASON),
-    };
   }
 
   return null;
+}
+
+/**
+ * Membaca `name` dan `description` dari jawaban model lokasi.
+ */
+function extractNameAndDescription(
+  text: string,
+): { name: string; description: string; reason: string } | null {
+  const record = lastJsonObject(text, 'name');
+  if (record === null) {
+    return null;
+  }
+
+  const name = (record.name as string).trim();
+
+  /*
+   * Objek yang `name`-nya berisi TANPA SATU PUN HURUF adalah contoh bentuk,
+   * bukan jawaban — mis. "..." dari template di dalam penalaran. Membiarkannya
+   * lolos berarti membuat lokasi bernama tiga titik.
+   *
+   * Nama KOSONG tetap diterima: itulah jalan keluar jujur yang disediakan
+   * promptnya saat model tidak dapat menamai tempatnya.
+   */
+  if (name.length > 0 && !/\p{L}/u.test(name)) {
+    // Cari objek berikutnya yang lebih awal; contoh bentuk ada di depan jawaban.
+    const lebihAwal = text.slice(0, text.lastIndexOf('{'));
+    return lebihAwal.length > 0 ? extractNameAndDescription(lebihAwal) : null;
+  }
+
+  const description = typeof record.description === 'string' ? record.description.trim() : '';
+  // Bidang ini hanya dipakai saat model tidak dapat menamai tempatnya. Ia
+  // ditambahkan SETELAH kejadian nyata: jawaban kosong tanpa alasan tidak dapat
+  // dibedakan antara "model menolak" dan "gambar tidak pernah sampai".
+  const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
+
+  return {
+    name: clamp(name, MAX_VISION_NAME),
+    description: clamp(description, MAX_VISION_DESCRIPTION),
+    reason: clamp(reason, MAX_VISION_REASON),
+  };
+}
+
+/**
+ * Membaca `label` dari jawaban model potret, beserta jumlah bagiannya.
+ *
+ * Jumlah bagiannya dikembalikan, bukan langsung ditolak, supaya pemanggilnya
+ * dapat menjelaskan berapa bagian yang model tulis. "Keterangan tidak sah" tidak
+ * memberi admin apa pun untuk dikerjakan.
+ */
+function extractLabel(text: string): { label: string; reason: string; parts: number } | null {
+  const record = lastJsonObject(text, 'label');
+  if (record === null) {
+    return null;
+  }
+
+  const label = (record.label as string).trim();
+  const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
+
+  return {
+    label: clamp(label, MAX_EXPRESSION_LABEL),
+    reason: clamp(reason, MAX_VISION_REASON),
+    parts: countParts(label),
+  };
+}
+
+/** Menghitung bagian yang dipisah koma; label kosong dihitung nol. */
+function countParts(label: string): number {
+  if (label.length === 0) {
+    return 0;
+  }
+  return label
+    .split(',')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0).length;
 }
 
 /**

@@ -3436,3 +3436,189 @@ describe('impor massal lokasi', () => {
     expect(response.statusCode).toBe(302);
   });
 });
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Impor massal potret karakter.
+ *
+ * Yang paling penting diuji di sini adalah bahwa `create` MENAMBAH satu ekspresi
+ * dan mempertahankan yang sudah ada. `CharactersRepository.update()` mengganti
+ * seluruh daftar, jadi menambahkan dengan cara yang salah akan menghapus potret
+ * yang sudah diunggah sebelumnya — tanpa galat apa pun.
+ */
+describe('impor massal potret karakter', () => {
+  const KUNCI_ENKRIPSI = Buffer.from('0123456789abcdef0123456789abcdef').toString('base64');
+  const PNG_B64 =
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+  let semula: string | undefined;
+
+  beforeEach(() => {
+    semula = process.env[SECRETS_KEY_ENV];
+    process.env[SECRETS_KEY_ENV] = KUNCI_ENKRIPSI;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (semula === undefined) {
+      delete process.env[SECRETS_KEY_ENV];
+    } else {
+      process.env[SECRETS_KEY_ENV] = semula;
+    }
+  });
+
+  async function seedMedia(): Promise<string> {
+    const bytes = Buffer.from(PNG_B64, 'base64');
+    const mediaId = createHash('sha256').update(bytes).digest('hex');
+    /*
+     * Idempoten: satu uji dapat memanggilnya dua kali (lewat `seedKarakter` lalu
+     * langsung), dan gambar yang sama memang menghasilkan id yang sama — itu
+     * justru sifat yang diandalkan penyimpanan media.
+     */
+    await ctx.db.query(
+      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64, uploaded_by)
+       VALUES ($1,'image/png',$2,1,1,$3,'uji')
+       ON CONFLICT (media_id) DO NOTHING`,
+      [mediaId, bytes.length, PNG_B64],
+    );
+    return mediaId;
+  }
+
+  async function seedKarakter(nama: string, labelAwal: string): Promise<string> {
+    const mediaId = await seedMedia();
+    const dibuat = await new CharactersRepository(ctx.db).create({
+      name: nama,
+      expressions: [{ expression: labelAwal, mediaId, usageNote: labelAwal }],
+    });
+    if (!dibuat.ok) {
+      throw new Error(`karakter uji gagal dibuat: ${dibuat.reason}`);
+    }
+    return dibuat.characterId;
+  }
+
+  async function seedProviderBerkunci(cookie: string): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/providers',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        providerId: '',
+        name: 'Penyedia Potret',
+        prefix: 'potret',
+        apiType: 'chat-completions',
+        baseUrl: 'https://potret.example.test/v1',
+        apiKey: 'sk-uji',
+        isActive: 'true',
+      }),
+    });
+    expect(response.statusCode).toBe(302);
+
+    const [provider] = await new ProvidersRepository(ctx.db).list();
+    return provider!.providerId;
+  }
+
+  it('menamai potret lewat model visi dengan format ekspresi, pakaian, pose', async () => {
+    const cookie = await login();
+    const mediaId = await seedMedia();
+    const providerId = await seedProviderBerkunci(cookie);
+
+    vi.stubGlobal('fetch', async () => ({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          choices: [
+            {
+              message: { content: '{"label":"senyum, pakaian kantor, normal"}' },
+              finish_reason: 'stop',
+            },
+          ],
+        }),
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/characters-bulk/describe',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ mediaId, providerId, modelKey: 'model-visi' }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({ ok: true, label: 'senyum, pakaian kantor, normal' });
+  });
+
+  it('MENAMBAH ekspresi tanpa menghapus yang sudah ada', async () => {
+    /*
+     * Ini penjaga terpenting di berkas ini. `update()` menulis ulang seluruh
+     * daftar ekspresi, jadi rute yang lupa menyertakan yang lama akan menghapus
+     * potret yang sudah diunggah — tanpa galat apa pun, dan tanpa jejak bahwa
+     * ada yang hilang.
+     */
+    const cookie = await login();
+    const characterId = await seedKarakter('Elysia', 'dasar');
+    const mediaId = await seedMedia();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/characters-bulk/create',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ characterId, mediaId, label: 'senyum, pakaian kantor, normal' }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().ok).toBe(true);
+
+    const sesudah = await new CharactersRepository(ctx.db).find(characterId);
+    const label = (sesudah?.expressions ?? []).map((item) => item.expression);
+    expect(label, 'ekspresi lama hilang').toContain('dasar');
+    expect(label, 'ekspresi baru tidak masuk').toContain('senyum, pakaian kantor, normal');
+    expect(label).toHaveLength(2);
+  });
+
+  it('menolak keterangan yang sudah dipakai ekspresi lain', async () => {
+    /*
+     * Nama ekspresi harus unik per karakter. Karena keterangan 3-bagian menjadi
+     * namanya, dua potret yang keterangannya sama akan bentrok — dan penolakan
+     * itu harus muncul, bukan diam-diam menimpa.
+     */
+    const cookie = await login();
+    const characterId = await seedKarakter('Elysia', 'senyum, pakaian kantor, normal');
+    const mediaId = await seedMedia();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/characters-bulk/create',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ characterId, mediaId, label: 'senyum, pakaian kantor, normal' }),
+    });
+
+    expect(response.json().ok).toBe(false);
+    expect(response.json().reason).toBe('duplicate-expression');
+  });
+
+  it('menolak karakter yang tidak ada', async () => {
+    const cookie = await login();
+    const mediaId = await seedMedia();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/characters-bulk/create',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ characterId: 'char_tidak-ada', mediaId, label: 'a, b, c' }),
+    });
+
+    expect(response.statusCode).toBe(404);
+  });
+
+  it('menuntut sesi admin sebelum menambah ekspresi', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/characters-bulk/create',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ characterId: 'char_x', mediaId: 'a'.repeat(64), label: 'a, b, c' }),
+    });
+
+    expect(response.statusCode).toBe(302);
+  });
+});

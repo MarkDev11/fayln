@@ -26,6 +26,8 @@
  */
 
 import type { FastifyInstance } from 'fastify';
+import { createHash } from 'node:crypto';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
@@ -56,6 +58,10 @@ import { JourneyService } from '../src/services/journeyService';
 import { DeterministicStoryEngine } from '../src/services/storyEngine';
 
 import { createTestDatabase, type TestDatabase } from './helpers/testDb';
+
+/** PNG 1x1 yang sah — id media adalah SHA-256 dari isinya. */
+const PNG_1X1 =
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 let ctx: TestDatabase;
 let app: FastifyInstance;
@@ -147,6 +153,40 @@ function readCookie(header: string | string[] | undefined): string {
   }
   return `${SESSION_COOKIE}=${match[1]}`;
 }
+
+/**
+   * Karakter tanpa ekspresi.
+   *
+   * Cukup untuk menguji HALAMANNYA: yang diperiksa di sini adalah tombol dan
+   * sheetnya dirender, bukan isi ekspresinya. Diletakkan di lingkup berkas
+   * karena dua describe memakainya.
+   */
+  /**
+   * Karakter dengan satu ekspresi.
+   *
+   * Ekspresinya tidak kosong karena repositori MENOLAK karakter tanpa ekspresi
+   * bergambar (`no-expressions`) — aturan yang sama yang menjaga agar karakter
+   * tidak pernah terbit tanpa potret. Diletakkan di lingkup berkas karena dua
+   * describe memakainya.
+   */
+  async function seedCharacter(name = 'Elysia'): Promise<string> {
+    const bytes = Buffer.from(PNG_1X1, 'base64');
+    const mediaId = createHash('sha256').update(bytes).digest('hex');
+    await ctx.db.query(
+      `INSERT INTO media_blobs (media_id, content_type, byte_size, width, height, content_base64, uploaded_by)
+       VALUES ($1,'image/png',$2,1,1,$3,'uji')`,
+      [mediaId, bytes.length, PNG_1X1],
+    );
+
+    const created = await pages.characters.create({
+      name,
+      expressions: [{ expression: 'dasar', mediaId, usageNote: '' }],
+    });
+    if (!created.ok) {
+      throw new Error(`karakter uji gagal dibuat: ${created.reason}`);
+    }
+    return created.characterId;
+  }
 
 async function login(): Promise<string> {
   const response = await app.inject({
@@ -1059,6 +1099,59 @@ describe('impor massal lokasi', () => {
 /* ------------------------------------------------------------------ */
 
 /**
+ * Sheet "Bulk gambar with AI" pada formulir karakter.
+ *
+ * Hanya dirender ketika karakternya SUDAH tersimpan — ekspresi menempel pada
+ * sebuah karakter, jadi tidak ada tempat menaruhnya sebelum karakternya ada.
+ * Formulir baru karena itu harus menjelaskannya, bukan menampilkan tombol yang
+ * akan gagal.
+ */
+describe('impor massal potret karakter', () => {
+  it('menjelaskan bahwa nama harus disimpan lebih dulu pada formulir baru', async () => {
+    const cookie = await login();
+
+    const body = await sweep(cookie, '/admin/characters-form');
+
+    expect(body, 'petunjuk urutan kerja tidak ada').toContain('Simpan nama karakter lebih dulu');
+
+    /*
+     * Yang diperiksa hanya MARKUP-nya. Skrip panel menyebut
+     * `[data-portrait-bulk-open]` di dalam pemilihnya, jadi memeriksa seluruh
+     * halaman akan selalu menemukannya — termasuk saat tombolnya memang tidak
+     * dirender. Pelajaran yang sama seperti penjaga kata "biaya".
+     */
+    const markup = body
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '');
+    expect(markup, 'tombol impor muncul padahal karakter belum ada').not.toContain(
+      'data-portrait-bulk-open',
+    );
+  });
+
+  it('menyediakan tombol, sheet, dan seluruh bidangnya saat karakter sudah ada', async () => {
+    const cookie = await login();
+    const characterId = await seedCharacter();
+
+    const body = await sweep(cookie, `/admin/characters-form?character=${characterId}`);
+
+    expect(body, 'tombol pemicu tidak ada').toContain('data-portrait-bulk-open');
+    expect(body, 'sheet tidak dirender').toContain('data-portrait-bulk-root');
+    expect(body, 'id karakter tidak dibawa sheet').toContain(`data-character="${characterId}"`);
+    expect(body, 'pemilih provider tidak ada').toContain('data-portrait-bulk-provider');
+    expect(body, 'pemilih model tidak ada').toContain('data-portrait-bulk-model');
+    expect(body, 'daftar kemajuan tidak ada').toContain('data-portrait-bulk-list');
+    expect(body, 'input berkas tidak menerima banyak berkas').toMatch(
+      /<input[^>]*multiple[^>]*data-portrait-bulk-files/,
+    );
+    // Bentuk keterangan yang diminta harus tertulis di sheet, bukan hanya di prompt.
+    expect(body, 'format keterangan tidak dijelaskan').toContain('ekspresi, pakaian, pose');
+    expect(body, 'skrip sheet tidak dipanggil').toContain('bindBulkPortrait();');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
  * Provider model.
  *
  * Pasangan "kosong" dan "berisi" dengan alasan yang sama seperti master lain,
@@ -1088,6 +1181,7 @@ describe('provider: keadaan kosong dan berisi', () => {
     }
     return created.providerId;
   }
+
 
   it('menampilkan pesan kosong saat belum ada provider', async () => {
     const cookie = await login();

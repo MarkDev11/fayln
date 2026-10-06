@@ -15,8 +15,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  describeCharacterPortrait,
   describeLocationImage,
   MAX_VISION_NAME,
+  PORTRAIT_SYSTEM_PROMPT,
   VISION_SYSTEM_PROMPT,
   type VisionRequest,
 } from '../src/admin/visionClient';
@@ -453,5 +455,138 @@ describe('panggilan model visi', () => {
      * sampai" — dua masalah dengan tindakan yang sama sekali berbeda.
      */
     expect(VISION_SYSTEM_PROMPT).toContain('"reason"');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Potret karakter: keterangan berformat "ekspresi, pakaian, pose".
+ *
+ * Yang diuji di sini bukan "model menjawab", melainkan janji yang mudah
+ * dilanggar tanpa terlihat: TEPAT TIGA bagian. Label yang berisi dua atau empat
+ * bagian tampak wajar bagi mata manusia tetapi tidak dapat dibaca mesin — dan
+ * itu lebih buruk daripada gagal, karena tidak ada yang menyadarinya sampai
+ * mesin cerita memilih ekspresi yang salah.
+ */
+describe('keterangan potret karakter', () => {
+  const KUNCI = 'sk-RAHASIA-yang-tidak-boleh-bocor';
+
+  const POTRET: VisionRequest = {
+    baseUrl: 'https://api.contoh.test/v1',
+    apiType: 'chat-completions',
+    imagePart: 'object',
+    modelKey: 'model-visi',
+    imageBase64: 'AAAA',
+    contentType: 'image/webp',
+  };
+
+  type Panggilan = { url: string; init: RequestInit };
+
+  function fakeFetch(status: number, body: string): { calls: Panggilan[]; impl: typeof fetch } {
+    const calls: Panggilan[] = [];
+    const impl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return { status, ok: status >= 200 && status < 300, text: async () => body };
+    }) as unknown as typeof fetch;
+    return { calls, impl };
+  }
+
+  function jawaban(isi: Record<string, string>, finish = 'stop'): string {
+    return JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(isi) }, finish_reason: finish }],
+    });
+  }
+
+  it('menerima keterangan yang tepat tiga bagian', async () => {
+    const { impl } = fakeFetch(200, jawaban({ label: 'senyum, pakaian kantor, normal' }));
+
+    const hasil = await describeCharacterPortrait(POTRET, KUNCI, impl);
+
+    expect(hasil).toEqual({ ok: true, label: 'senyum, pakaian kantor, normal' });
+  });
+
+  it('menolak keterangan yang hanya dua bagian, dan menyebut jumlahnya', async () => {
+    /*
+     * "Keterangan tidak sah" tidak memberi admin apa pun untuk dikerjakan.
+     * Menyebut berapa bagian yang model tulis menunjukkan ke arah mana ia salah.
+     */
+    const { impl } = fakeFetch(200, jawaban({ label: 'senyum, pakaian kantor' }));
+
+    const hasil = await describeCharacterPortrait(POTRET, KUNCI, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('bad-response');
+      expect(hasil.detail).toContain('2');
+    }
+  });
+
+  it('menolak keterangan yang empat bagian', async () => {
+    const { impl } = fakeFetch(200, jawaban({ label: 'senyum, pakaian kantor, normal, duduk' }));
+
+    const hasil = await describeCharacterPortrait(POTRET, KUNCI, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.detail).toContain('4');
+    }
+  });
+
+  it('menampilkan alasan model saat ia menolak', async () => {
+    const { impl } = fakeFetch(200, jawaban({ label: '', reason: 'Tidak ada potret yang saya terima.' }));
+
+    const hasil = await describeCharacterPortrait(POTRET, KUNCI, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('declined');
+      expect(hasil.detail).toContain('Tidak ada potret yang saya terima');
+    }
+  });
+
+  it('memakai prompt potret, bukan prompt lokasi', async () => {
+    /*
+     * Dua tugas ini berbagi pengangkutan permintaan yang sama, jadi tertukarnya
+     * prompt tidak menghasilkan galat apa pun — hanya label yang bentuknya salah.
+     */
+    const { calls, impl } = fakeFetch(200, jawaban({ label: 'a, b, c' }));
+
+    await describeCharacterPortrait(POTRET, KUNCI, impl);
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as {
+      messages: { role: string; content: string }[];
+    };
+    expect(body.messages[0]?.content).toContain('portrait');
+    expect(body.messages[0]?.content).not.toContain('location');
+  });
+
+  it('mengambil label TERAKHIR, bukan contoh bentuk di dalam penalaran', async () => {
+    const penalaran = [
+      'Okay, the user wants three parts. The shape is {"label": "..."} and I',
+      'should write something like "ekspresi, pakaian, pose".',
+      'Looking at the portrait: she is smiling, wearing office clothes, standing.',
+      '{"label": "senyum, pakaian kantor, normal"}',
+    ].join('\n');
+
+    const { impl } = fakeFetch(
+      200,
+      JSON.stringify({ choices: [{ message: { content: penalaran }, finish_reason: 'stop' }] }),
+    );
+
+    const hasil = await describeCharacterPortrait(POTRET, KUNCI, impl);
+
+    expect(hasil).toEqual({ ok: true, label: 'senyum, pakaian kantor, normal' });
+  });
+
+  it('meminta tepat tiga bagian di dalam prompt', async () => {
+    expect(PORTRAIT_SYSTEM_PROMPT).toContain('EXACTLY THREE');
+    expect(PORTRAIT_SYSTEM_PROMPT).toContain('Indonesian');
+    // Jalan keluar jujurnya harus ada, kalau tidak model akan mengarang.
+    expect(PORTRAIT_SYSTEM_PROMPT.toLowerCase()).toContain('do not guess');
+    // Dan ketiga bagiannya harus disebutkan namanya, bukan hanya jumlahnya.
+    for (const bagian of ['expression', 'clothing', 'pose']) {
+      expect(PORTRAIT_SYSTEM_PROMPT, `bagian "${bagian}" tidak disebut`).toContain(bagian);
+    }
   });
 });
