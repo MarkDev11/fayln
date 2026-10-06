@@ -521,25 +521,25 @@ export const WIZARD_JS = `
     muat();
   }
 
-  /* ---------------- Biaya per giliran, dalam bahasa yang dapat dibayangkan ---------------- */
+  /* ---------------- Token per giliran, dalam bahasa yang dapat dibayangkan ---------------- */
 
   /*
    * "3.500 token per giliran" tidak mengatakan apa pun. "≈ 28 giliran per hari"
    * mengatakan segalanya — dan itu juga cara tercepat melihat bahwa angkanya
-   * salah isi: biaya 500.000 pada jatah 100.000 menghasilkan 0 giliran, dan itu
+   * salah isi: token 500.000 pada jatah 100.000 menghasilkan 0 giliran, dan itu
    * jelas keliru tanpa perlu tahu apa itu token.
    *
    * Jatahnya dibaca dari opsi tier yang sedang dipilih, jadi berpindah tier
    * langsung mengubah hitungannya tanpa memanggil server.
    */
   function bindCostHelper() {
-    var biaya = document.querySelector('[name=estimatedTurnCost]');
+    var bidangToken = document.querySelector('[name=estimatedTurnCost]');
     var tier = document.querySelector('select[name=tier]');
     var keluaran = document.querySelector('[data-cost-helper]');
-    if (!biaya || !tier || !keluaran) { return; }
+    if (!bidangToken || !tier || !keluaran) { return; }
 
     function hitung() {
-      var angka = Number(biaya.value);
+      var angka = Number(bidangToken.value);
       var opsi = tier.options[tier.selectedIndex];
       var jatah = opsi ? Number(opsi.getAttribute('data-daily-tokens')) : NaN;
 
@@ -562,7 +562,7 @@ export const WIZARD_JS = `
       keluaran.setAttribute('data-state', 'ok');
     }
 
-    biaya.addEventListener('input', hitung);
+    bidangToken.addEventListener('input', hitung);
     tier.addEventListener('change', hitung);
     hitung();
   }

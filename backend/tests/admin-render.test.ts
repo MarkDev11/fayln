@@ -1128,14 +1128,34 @@ describe('provider: keadaan kosong dan berisi', () => {
     const body = await sweep(cookie, '/admin/models-form');
 
     // Rumusnya harus tertulis: "berapa token" tidak cukup tanpa "dari mana".
-    expect(body, 'rumus biaya per giliran tidak dijelaskan').toMatch(/token prompt/i);
+    expect(body, 'rumus token per giliran tidak dijelaskan').toMatch(/token prompt/i);
     expect(body, 'contoh hitungan tidak ada').toMatch(/3\.000/);
+    // Satuannya harus tidak dapat disalahartikan sebagai uang.
+    expect(body, 'satuan token tidak ditegaskan').toMatch(/bukan uang/i);
 
     // Baris hitungan giliran/hari dirender kosong, lalu diisi skrip.
     expect(body, 'baris hitungan giliran tidak dirender').toContain('data-cost-helper');
     // Dicari PEMANGGILANNYA, bukan definisinya: fungsi yang terdefinisi tetapi
     // tidak pernah dipanggil menghasilkan baris yang diam-diam tetap kosong.
     expect(body, 'skrip hitungan giliran tidak dipanggil').toContain('bindCostHelper();');
+
+    /*
+     * Kata "biaya" menyiratkan UANG, dan di panel ini tidak ada uang sama sekali:
+     * seluruh pemeriksaan anggaran membandingkan token dengan jatah token harian
+     * pemain. Halaman Promosi bahkan sudah menulisnya sejak awal ("hadiah berupa
+     * token, bukan mata uang terpisah"). Kata itu pernah membuat pemilik produk
+     * mengira ada kurs yang harus diisi.
+     *
+     * Yang diperiksa hanya teks yang DILIHAT pengguna: skrip dan gaya dibuang
+     * lebih dulu, karena di dalamnya kata itu muncul sebagai kiasan yang sah
+     * ("menerima keduanya tidak berbiaya apa pun"). Memeriksa seluruh berkas
+     * akan memerahkan uji karena komentar, dan uji yang memerahkan karena
+     * komentar akan dimatikan orang.
+     */
+    const terlihat = body
+      .replace(/<script[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[\s\S]*?<\/style>/gi, '');
+    expect(terlihat, 'kata "biaya" muncul lagi di teks halaman model').not.toMatch(/biaya/i);
 
     /*
      * Bidangnya bernama "Context window" — istilah yang dipakai dokumentasi

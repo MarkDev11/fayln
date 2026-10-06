@@ -58,7 +58,8 @@ export async function promotionsList(ctx: AdminPageContext): Promise<SafeHtml> {
   return html`<h1>Promosi</h1>
 <p class="sub">
   Hadiah promosi berupa <strong>token</strong>, bukan mata uang terpisah. Token sejajar
-  dengan biaya model, sehingga pemeriksaan anggaran tetap satu perbandingan sederhana.
+  dengan pemakaian token model, sehingga pemeriksaan anggaran tetap satu perbandingan
+  sederhana — dan tidak ada kurs yang perlu diisi di mana pun.
 </p>
 
 <div class="grid" style="margin-bottom:18px">

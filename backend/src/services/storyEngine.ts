@@ -80,7 +80,7 @@ export const STORY_ENGINE_IS_SIMULATOR = true;
 export const SIMULATOR_MODEL_ID = 'simulator/deterministic-v1';
 const SIMULATOR_MODEL_VERSION = '1.0.0';
 
-/** Perkiraan biaya satu giliran pada simulator; bukan tokenisasi model nyata. */
+/** Perkiraan token satu giliran pada simulator; bukan tokenisasi model nyata. */
 const SIM_PROMPT_TOKENS = 18_240;
 const SIM_COMPLETION_TOKENS = 640;
 

@@ -86,7 +86,7 @@ export async function dashboard(ctx: AdminPageContext): Promise<SafeHtml> {
           ${
             STORY_ENGINE_IS_SIMULATOR
               ? 'Mesin yang terpasang adalah simulator deterministik. Belum ada model bahasa sungguhan — keluaran tidak boleh dianggap hasil AI.'
-              : 'Model sungguhan terpasang. Pastikan biaya per giliran sudah benar di halaman Model.'
+              : 'Model sungguhan terpasang. Pastikan token per giliran sudah benar di halaman Model.'
           }
         </p>
         <p class="sub" style="margin:6px 0 0">

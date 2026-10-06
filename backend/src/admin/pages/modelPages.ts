@@ -505,7 +505,7 @@ export async function modelsList(ctx: AdminPageContext): Promise<SafeHtml> {
   return html`<h1>Model</h1>
 <p class="sub">
   Setiap tier punya <strong>rantai</strong>-nya sendiri. Posisi 0 dicoba lebih dulu; bila
-  gagal, posisi 1; dan seterusnya. Biaya per giliran dipakai memeriksa anggaran
+  gagal, posisi 1; dan seterusnya. Token per giliran dipakai memeriksa anggaran
   <strong>sebelum</strong> model dipanggil — angka yang salah berarti pemain dapat memakai
   token lebih banyak daripada jatahnya, atau ditolak padahal masih cukup.
 </p>
@@ -519,7 +519,7 @@ ${
   Model nonaktif tidak dicoba sama sekali. Ia tetap terdaftar supaya angkanya tidak hilang.
 </p>
 <div class="card">${table(
-          ['Model', 'Tier', 'Provider', 'Biaya/giliran', ''],
+          ['Model', 'Tier', 'Provider', 'Token/giliran', ''],
           outsideRows,
           'Tidak ada model nonaktif.',
         )}</div>`
@@ -532,7 +532,7 @@ ${
 </div>
 
 <div class="notice err" style="margin-top:18px">
-  Model yang belum diverifikasi biayanya <strong>tidak boleh dinyalakan</strong>.
+  Model yang pemakaian tokennya belum diukur <strong>tidak boleh dinyalakan</strong>.
   Selama sebuah tier tidak punya model aktif, permintaan pemain pada tier itu tidak
   dilayani oleh model apa pun.
 </div>`;
@@ -632,7 +632,7 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
 
   return html`<h1>${model ? 'Ubah model' : 'Model baru'}</h1>
 <p class="sub">
-  Satu baris mewakili satu model pada satu provider, beserta biayanya dan posisinya
+  Satu baris mewakili satu model pada satu provider, beserta perkiraan tokennya dan posisinya
   dalam rantai fallback tier-nya.
 </p>
 <form method="post" action="/admin/models" class="card">
@@ -727,9 +727,20 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
   ${textField({
     id: 'm-cost',
     name: 'estimatedTurnCost',
-    label: 'Perkiraan biaya per giliran (token)',
+    /*
+     * "Perkiraan token per giliran", bukan "biaya per giliran".
+     *
+     * Kata "biaya" dalam bahasa Indonesia hampir selalu berarti uang, dan
+     * bidang ini BUKAN uang: satuannya token, dan sistem tidak pernah menghitung
+     * rupiah atau dolar di mana pun. Seluruh pemeriksaan anggaran adalah
+     * perbandingan token dengan jatah token harian pemain — persis seperti yang
+     * sudah ditulis di halaman Promosi ("hadiah berupa token, bukan mata uang
+     * terpisah"). Nama yang menyiratkan uang membuat admin mengira ada kurs yang
+     * harus diisi.
+     */
+    label: 'Perkiraan token per giliran',
     required: true,
-    hint: 'Jumlahkan token prompt dan token jawaban untuk SATU giliran — mis. 3.000 token prompt + 500 token jawaban = 3.500. Angka ini menahan permintaan SEBELUM model dipanggil, jadi terlalu kecil membuat jatah pemain jebol, dan terlalu besar membuat pemain ditolak padahal masih cukup.',
+    hint: 'Jumlahkan token prompt dan token jawaban untuk SATU giliran — mis. 3.000 token prompt + 500 token jawaban = 3.500. Satuannya TOKEN, bukan uang: sistem hanya membandingkan angka ini dengan jatah token harian pemain, dan tidak pernah menghitung rupiah atau dolar. Angka ini menahan permintaan SEBELUM model dipanggil — terlalu kecil membuat jatah pemain jebol, dan terlalu besar membuat pemain ditolak padahal masih cukup.',
     type: 'number',
     after: html`<span class="field__status" data-cost-helper>Isi angkanya untuk melihat berapa giliran yang muat dalam sehari.</span>`,
     value: String(model?.estimatedTurnCost ?? ''),
@@ -790,7 +801,7 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
 </form>
 
 <p class="sub" style="margin-top:16px">
-  Model yang belum diukur biayanya disimpan sebagai catatan, bukan dinyalakan.
+  Model yang pemakaian tokennya belum diukur disimpan sebagai catatan, bukan dinyalakan.
   Aturan proyek ini jelas: <strong>jangan mengarang harga, versi model, atau angka
   benchmark</strong> — dan model Paid belum boleh dijual sebelum O-08b lolos.
 </p>
