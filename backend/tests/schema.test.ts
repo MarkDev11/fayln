@@ -132,6 +132,28 @@ describe('percobaan ulang migrasi saat database belum siap', () => {
     ).rejects.toThrow(/ECONNREFUSED/);
   });
 
+  it('memberi jendela tunggu yang cukup panjang saat database belum siap', async () => {
+    const { DEFAULT_MIGRATION_ATTEMPTS, DEFAULT_MIGRATION_BACKOFF_MS } = await import(
+      '../src/db/migrate'
+    );
+
+    let total = 0;
+    for (let attempt = 0; attempt < DEFAULT_MIGRATION_ATTEMPTS - 1; attempt += 1) {
+      total += DEFAULT_MIGRATION_BACKOFF_MS(attempt);
+    }
+
+    /*
+     * Jendela ± 23 detik terbukti terlalu pendek pada 5–6 Oktober 2026: saat
+     * deploy, database menolak koneksi lebih lama daripada itu, aplikasi keluar,
+     * platform mengulanginya lima kali, dan produksi menyajikan 503 selama
+     * beberapa menit sebelum kembali ke versi LAMA.
+     *
+     * Angka ini bukan target performa — ia kebijakan. Menurunkannya kembali akan
+     * mengembalikan deploy yang gagal tanpa gejala di kode.
+     */
+    expect(total, 'jendela tunggu terlalu pendek untuk menutupi database yang belum siap').toBeGreaterThanOrEqual(40_000);
+  });
+
   it('tidak mencoba ulang galat SQL yang sebenarnya', async () => {
     const { runMigrations } = await import('../src/db/migrate');
 

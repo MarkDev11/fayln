@@ -110,17 +110,39 @@ async function appliedMigrations(db: Database): Promise<Set<string>> {
  * bangun. Tanpa ini, satu `ECONNREFUSED` sesaat membuat proses keluar dan
  * platform menganggap aplikasi rusak — padahal hanya perlu menunggu sebentar.
  *
- * Backoff-nya 1s, 2s, 4s, 8s, 8s (total ± 23 detik). Hanya galat koneksi yang
- * dicoba ulang; galat SQL yang sebenarnya langsung dilempar supaya kesalahan
- * migrasi tetap terlihat, bukan tersamarkan sebagai masalah koneksi.
+ * Backoff-nya 1s, 2s, 4s, 8s, lalu 10s sampai percobaan habis — **total ± 45
+ * detik**. Angka ini dinaikkan dari ± 23 detik setelah kejadian nyata: pada
+ * deploy 5–6 Oktober, database menolak koneksi lebih lama daripada jendela lama,
+ * aplikasi keluar, platform mengulanginya lima kali, dan produksi menyajikan
+ * 503 selama beberapa menit sebelum akhirnya kembali ke versi LAMA. Jendela yang
+ * terlalu pendek bukan sekadar memperlambat — ia membuat deploy gagal.
+ *
+ * Batasnya tetap ada dengan sengaja: menunggu tanpa batas berarti pod yang tidak
+ * akan pernah siap, dan platform akan membunuhnya juga. Yang berubah hanya
+ * seberapa lama kita bertahan sebelum menyerah.
+ *
+ * Hanya galat koneksi yang dicoba ulang; galat SQL yang sebenarnya langsung
+ * dilempar supaya kesalahan migrasi tetap terlihat, bukan tersamarkan sebagai
+ * masalah koneksi.
  */
+export const DEFAULT_MIGRATION_ATTEMPTS = 8;
+
+/**
+ * Jeda bawaan sebelum percobaan ke-`attempt` (berbasis nol).
+ *
+ * Diekspor supaya kebijakannya dapat diuji: jendela tunggu yang terlalu pendek
+ * pernah membuat deploy gagal, dan itu tidak terlihat dari kode mana pun.
+ */
+export const DEFAULT_MIGRATION_BACKOFF_MS = (attempt: number): number =>
+  Math.min(1_000 * 2 ** attempt, 10_000);
+
 export async function runMigrations(
   db: Database,
   directory = migrationsDirectory(),
   options: MigrationOptions = {},
 ): Promise<MigrationResult> {
-  const attempts = options.attempts ?? 5;
-  const backoffMs = options.backoffMs ?? ((attempt: number) => Math.min(1_000 * 2 ** attempt, 8_000));
+  const attempts = options.attempts ?? DEFAULT_MIGRATION_ATTEMPTS;
+  const backoffMs = options.backoffMs ?? DEFAULT_MIGRATION_BACKOFF_MS;
 
   let lastError: unknown;
 
