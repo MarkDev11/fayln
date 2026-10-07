@@ -160,4 +160,32 @@ describe('sintaks CSS dan JavaScript yang disimpan sebagai string', () => {
      */
     60_000,
   );
+
+  it('tidak memuat backtick liar di dalam literalnya', () => {
+    /*
+     * Backtick di dalam template literal menutupnya lebih awal. Ia SUDAH enam
+     * kali terjadi, dan selalu di dalam KOMENTAR — tempat ia tidak terlihat
+     * salah.
+     *
+     * Pemeriksaan sintaks di atas sebenarnya juga menangkapnya, tetapi pesannya
+     * menunjuk baris terakhir berkas. Yang ini menyebut nomor barisnya langsung,
+     * dan itu bedanya antara lima detik dan lima menit.
+     */
+    for (const kasus of KASUS) {
+      const baris = readFileSync(kasus.berkas, 'utf8').split('\n');
+      const mulai = baris.findIndex((b) => kasus.pembuka.test(b));
+      const penutup = baris.findIndex((b, i) => i > mulai && b === '`;');
+
+      const tersangka = baris
+        .slice(mulai + 1, penutup)
+        .map((isi, i) => (isi.includes('`') ? `baris ${String(mulai + 2 + i)}: ${isi.trim()}` : null))
+        .filter((x): x is string => x !== null);
+
+      expect(
+        tersangka,
+        `${kasus.nama}: backtick di dalam template literal menutupnya lebih awal. ` +
+          'Ganti dengan tanda kutip biasa.',
+      ).toEqual([]);
+    }
+  });
 });
