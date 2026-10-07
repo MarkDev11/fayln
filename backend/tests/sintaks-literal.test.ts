@@ -54,7 +54,19 @@ const KASUS: Kasus[] = [
 
 /** Mengambil isi template literal, dari baris pembuka sampai baris penutupnya. */
 function isiLiteral(berkas: string, pembuka: RegExp): string {
-  const baris = readFileSync(berkas, 'utf8').split('\n');
+  /*
+   * `\r` dibuang lebih dulu, dan itu bukan kenyamanan.
+   *
+   * Pola pembukanya berjangkar `$`. Checkout di Windows menghasilkan akhiran
+   * CRLF, sehingga barisnya menjadi "export const WIZARD_JS = `\r" dan `$` tidak
+   * pernah cocok — ujinya gagal padahal berkasnya benar. Terbukti saat memeriksa
+   * commit yang sudah di-push dari salinan `git archive`: empat uji sintaks
+   * memerah di Windows, sementara build di Linux (LF) bersih.
+   *
+   * Penjaga yang hanya bekerja pada satu sistem akhir baris adalah penjaga yang
+   * akan diabaikan orang.
+   */
+  const baris = readFileSync(berkas, 'utf8').split('\n').map((b) => b.replace(/\r$/, ''));
   const mulai = baris.findIndex((b) => pembuka.test(b));
   if (mulai < 0) {
     throw new Error(`pembuka literal tidak ditemukan di ${berkas}`);
@@ -172,7 +184,13 @@ describe('sintaks CSS dan JavaScript yang disimpan sebagai string', () => {
      * dan itu bedanya antara lima detik dan lima menit.
      */
     for (const kasus of KASUS) {
-      const baris = readFileSync(kasus.berkas, 'utf8').split('\n');
+      // `\r` dibuang karena alasan yang sama dengan `isiLiteral`: checkout di
+      // Windows berakhir baris CRLF, dan baris penutup `` `; `` tidak akan pernah
+      // cocok — sehingga seluruh sisa berkas diperiksa dan setiap backtick di
+      // dalamnya dilaporkan sebagai tersangka.
+      const baris = readFileSync(kasus.berkas, 'utf8')
+        .split('\n')
+        .map((b) => b.replace(/\r$/, ''));
       const mulai = baris.findIndex((b) => kasus.pembuka.test(b));
       const penutup = baris.findIndex((b, i) => i > mulai && b === '`;');
 
