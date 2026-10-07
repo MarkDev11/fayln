@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   describeCharacterPortrait,
+  generateWorldText,
+  WORLD_TEXT_SYSTEM_PROMPT,
   describeLocationImage,
   MAX_VISION_NAME,
   PORTRAIT_SYSTEM_PROMPT,
@@ -588,5 +590,146 @@ describe('keterangan potret karakter', () => {
     for (const bagian of ['expression', 'clothing', 'pose']) {
       expect(PORTRAIT_SYSTEM_PROMPT, `bagian "${bagian}" tidak disebut`).toContain(bagian);
     }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Sinopsis dan premis dunia dari judul.
+ *
+ * Tugas AI pertama yang TIDAK menyentuh gambar. Yang paling penting diuji di
+ * sini bukan "model menjawab", melainkan tiga janji yang mudah dilanggar tanpa
+ * terlihat:
+ *
+ *   - permintaannya tidak memuat gambar sama sekali;
+ *   - aturan "dilarang menyebut nama" benar-benar tertulis di promptnya;
+ *   - jatah tokennya cukup untuk sekitar seribu kata keluaran.
+ */
+describe('teks dunia dari judul', () => {
+  const KUNCI = 'sk-RAHASIA-yang-tidak-boleh-bocor';
+
+  const TEKS = { baseUrl: 'https://api.contoh.test/v1', apiType: 'chat-completions' as const, modelKey: 'model-teks' };
+
+  type Panggilan = { url: string; init: RequestInit };
+
+  function fakeFetch(status: number, body: string): { calls: Panggilan[]; impl: typeof fetch } {
+    const calls: Panggilan[] = [];
+    const impl = (async (url: string, init: RequestInit) => {
+      calls.push({ url, init });
+      return { status, ok: status >= 200 && status < 300, text: async () => body };
+    }) as unknown as typeof fetch;
+    return { calls, impl };
+  }
+
+  function jawaban(isi: Record<string, string>): string {
+    return JSON.stringify({
+      choices: [{ message: { content: JSON.stringify(isi) }, finish_reason: 'stop' }],
+    });
+  }
+
+  it('mengembalikan sinopsis dan premis', async () => {
+    const { impl } = fakeFetch(
+      200,
+      jawaban({ synopsis: 'Kantor itu tutup, tetapi kamu masih di dalamnya.', premise: 'Hujan turun sejak pagi.' }),
+    );
+
+    const hasil = await generateWorldText(TEKS, KUNCI, 'Rapat Tengah Malam', impl);
+
+    expect(hasil).toEqual({
+      ok: true,
+      synopsis: 'Kantor itu tutup, tetapi kamu masih di dalamnya.',
+      premise: 'Hujan turun sejak pagi.',
+    });
+  });
+
+  it('TIDAK mengirim gambar sama sekali', async () => {
+    /*
+     * Ini penjaga terpentingnya. Tugas visi dan tugas teks berbagi pengangkutan
+     * yang sama, jadi menyalin penyusun badan permintaan dari sana akan
+     * menyertakan lampiran gambar — dan permintaannya tetap berhasil, hanya
+     * hasilnya tidak lagi murni dari judul.
+     */
+    const { calls, impl } = fakeFetch(200, jawaban({ synopsis: 'a', premise: 'b' }));
+
+    await generateWorldText(TEKS, KUNCI, 'Judul', impl);
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as {
+      messages: { role: string; content: unknown }[];
+    };
+    const isi = JSON.stringify(body);
+
+    expect(isi, 'permintaan teks memuat lampiran gambar').not.toContain('image_url');
+    expect(isi, 'permintaan teks memuat data gambar').not.toContain('base64');
+    expect(isi, 'permintaan teks memuat data URL').not.toContain('data:image');
+
+    // Pesannya harus teks biasa, bukan larik bagian seperti pada tugas visi.
+    for (const pesan of body.messages) {
+      expect(typeof pesan.content, 'isi pesan bukan teks biasa').toBe('string');
+    }
+  });
+
+  it('memakai jalur chat completions dengan judul di dalam pesannya', async () => {
+    const { calls, impl } = fakeFetch(200, jawaban({ synopsis: 'a', premise: 'b' }));
+
+    await generateWorldText(TEKS, KUNCI, 'Rapat Tengah Malam', impl);
+
+    expect(calls[0]?.url).toBe('https://api.contoh.test/v1/chat/completions');
+    const body = JSON.parse(String(calls[0]?.init.body)) as {
+      messages: { role: string; content: string }[];
+      max_tokens: number;
+    };
+    expect(body.messages[1]?.content).toContain('Rapat Tengah Malam');
+
+    /*
+     * Jatah tokennya harus cukup untuk sekitar SERIBU kata keluaran. Dengan batas
+     * 2.000 — yang dipakai tugas visi — model yang bernalar akan menghabiskan
+     * jatahnya untuk berpikir dan jawabannya terpotong di tengah.
+     */
+    expect(body.max_tokens, 'jatah token terlalu kecil untuk seribu kata').toBeGreaterThan(4000);
+  });
+
+  it('menolak jawaban yang hanya memuat satu bidang', async () => {
+    const { impl } = fakeFetch(200, jawaban({ synopsis: 'Hanya sinopsis.', premise: '' }));
+
+    const hasil = await generateWorldText(TEKS, KUNCI, 'Judul', impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('declined');
+    }
+  });
+
+  it('menampilkan alasan model saat ia menolak', async () => {
+    const { impl } = fakeFetch(
+      200,
+      jawaban({ synopsis: '', premise: '', reason: 'Judulnya terlalu pendek untuk dikembangkan.' }),
+    );
+
+    const hasil = await generateWorldText(TEKS, KUNCI, 'X', impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.detail).toContain('Judulnya terlalu pendek');
+    }
+  });
+
+  it('melarang menyebut nama, dan menyebut peran sebagai gantinya', async () => {
+    /*
+     * ATURAN TERPENTINGNYA. Dunia ini adalah KERANGKA: karakter yang mengisinya
+     * belum tentu ada saat teksnya ditulis, dan yang memasangnya kelak bebas
+     * memilih siapa pun. Nama yang tertulis di sinopsis akan berbenturan dengan
+     * nama itu; sebutan peran tetap benar untuk siapa pun.
+     */
+    expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('NEVER WRITE A CHARACTER NAME');
+    expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('ROLE');
+    // Peran harus punya contohnya, kalau tidak model akan mengarang sendiri.
+    expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('bosmu');
+    expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('sahabatmu');
+    // Orang kedua, dan panjangnya disebut angkanya.
+    expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('"kamu"');
+    expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('500 words');
+    // Jalan keluar jujur saat judulnya kabur, bukan bertanya balik.
+    expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('invent');
   });
 });

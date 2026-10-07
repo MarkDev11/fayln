@@ -42,6 +42,24 @@ import { RELATION_STATUSES } from '../contracts/types';
  */
 export const MAX_BACKGROUNDS = 50;
 
+/**
+ * Batas panjang sinopsis dan premis dunia.
+ *
+ * Dinaikkan dari 240 dan 2000 huruf pada 7 Oktober 2026: pemilik produk menilai
+ * batas lamanya terlalu pendek untuk menuliskan latar cerita yang utuh, dan
+ * meminta ruang sekitar 500 kata untuk keduanya.
+ *
+ * Angkanya dipakai BERSAMA oleh skema permintaan di `adminRoutes.ts` dan atribut
+ * `maxlength` di halaman wizard. Sebelumnya ketiganya ditulis terpisah, dan
+ * angka yang berbeda di salah satunya akan memotong tulisan admin tanpa
+ * penjelasan — batas di peramban terasa cukup, lalu server menolaknya.
+ *
+ * 500 kata berbahasa Indonesia kira-kira 3.500 huruf; 4.000 memberi sedikit
+ * ruang lebih tanpa membiarkan bidangnya tumbuh tanpa batas.
+ */
+export const MAX_WORLD_SYNOPSIS = 4000;
+export const MAX_WORLD_PREMISE = 4000;
+
 /** Langkah wizard yang dapat dilanjutkan. */
 export type WizardStep = 1 | 2 | 3;
 

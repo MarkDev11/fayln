@@ -43,7 +43,11 @@ import { formatNumber } from '../src/admin/pages/dashboardPages';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
 import { SettingsRepository } from '../src/admin/settingsRepository';
-import { WorldDraftRepository } from '../src/admin/worldDraftRepository';
+import {
+  MAX_WORLD_PREMISE,
+  MAX_WORLD_SYNOPSIS,
+  WorldDraftRepository,
+} from '../src/admin/worldDraftRepository';
 import { resetLoginAttempts, SESSION_COOKIE } from '../src/admin/session';
 import { parseConfig, type AppConfig } from '../src/config';
 import { AccountRepository } from '../src/repositories/accountRepository';
@@ -58,7 +62,6 @@ import { JourneyService } from '../src/services/journeyService';
 import { DeterministicStoryEngine } from '../src/services/storyEngine';
 
 import { createTestDatabase, type TestDatabase } from './helpers/testDb';
-
 /** PNG 1x1 yang sah — id media adalah SHA-256 dari isinya. */
 const PNG_1X1 =
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
@@ -1594,5 +1597,74 @@ describe('provider: keadaan kosong dan berisi', () => {
         process.env[SECRETS_KEY_ENV] = semula;
       }
     }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Pengisi sinopsis dan premis pada langkah 1 wizard.
+ *
+ * Halaman ini tidak memakai gambar sama sekali, jadi yang dijaga di sini adalah
+ * hal-hal yang khas tugas teks: batas panjangnya cukup untuk 500 kata, dan
+ * bidang bantunya tidak ikut terkirim saat formulir disimpan.
+ */
+describe('pengisi teks dunia di langkah 1', () => {
+  it('menyediakan tombol, pemilih provider, dan pemilih model', async () => {
+    const cookie = await login();
+    const { worldId } = await pages.drafts.createDraft();
+
+    const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/1`);
+
+    expect(body, 'blok pengisi tidak dirender').toContain('data-world-text');
+    expect(body, 'pemilih provider tidak ada').toContain('data-world-text-provider');
+    expect(body, 'pemilih model tidak ada').toContain('data-world-text-model');
+    expect(body, 'tombol pengisi tidak ada').toContain('data-world-text-run');
+    expect(body, 'skrip pengisi tidak dipanggil').toContain('bindWorldText();');
+  });
+
+  it('memberi ruang 500 kata pada sinopsis dan premis', async () => {
+    /*
+     * Batas lama 240 huruf membuat sinopsis tidak mungkin memuat latar cerita
+     * yang utuh — itu keluhan yang memulai perubahan ini. Angkanya dipakai
+     * BERSAMA oleh skema permintaan dan atribut maxlength, jadi uji ini juga
+     * menjaga keduanya tidak melenceng.
+     */
+    const cookie = await login();
+    const { worldId } = await pages.drafts.createDraft();
+
+    const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/1`);
+
+    expect(body, 'sinopsis masih dipatok 240 huruf').not.toContain('name="synopsis" required maxlength="240"');
+    expect(body, 'sinopsis tidak diberi ruang 500 kata').toContain(
+      `maxlength="${String(MAX_WORLD_SYNOPSIS)}"`,
+    );
+    expect(body, 'premis tidak diberi ruang 500 kata').toContain(
+      `maxlength="${String(MAX_WORLD_PREMISE)}"`,
+    );
+  });
+
+  it('tidak menyumbang bidang apa pun saat formulir disimpan', async () => {
+    /*
+     * Blok pengisi berada DI DALAM formulir, jadi setiap bidang ber-`name` di
+     * dalamnya akan ikut terkirim — dan server akan menolaknya sebagai bidang
+     * tak dikenal.
+     */
+    const cookie = await login();
+    const { worldId } = await pages.drafts.createDraft();
+
+    const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/1`);
+    const form = formWith(body, 'data-world-text');
+
+    const mulai = form.indexOf('data-world-text>');
+    const akhir = form.indexOf('name="synopsis"');
+    expect(mulai, 'penanda blok pengisi tidak ditemukan').toBeGreaterThan(-1);
+    expect(akhir, 'bidang sinopsis tidak ditemukan').toBeGreaterThan(mulai);
+
+    const bagian = form.slice(mulai, akhir);
+    expect(
+      bagian.match(/\sname="/g) ?? [],
+      'bidang bantu akan ikut terkirim saat Simpan ditekan',
+    ).toEqual([]);
   });
 });

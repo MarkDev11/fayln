@@ -240,11 +240,13 @@ function authHeaders(apiType: ApiType, apiKey: string): Record<string, string> {
  * sudah tertanam di dalamnya (kunci yang tidak boleh bocor, terpotong vs bukan
  * JSON, bentuk lampiran per penyedia).
  */
-async function callVision(
-  request: VisionRequest,
+async function sendToProvider(
+  request: { baseUrl: string; apiType: ApiType },
+  path: string,
+  body: unknown,
   apiKey: string,
-  prompt: string,
   fetchImpl: typeof fetch,
+  task: string,
 ): Promise<{ ok: true; text: string; raw: string } | { ok: false; reason: VisionFailure; detail: string }> {
   if (request.apiType === 'responses') {
     // Bentuk ini belum ditangani, dan mengirim permintaan dengan bentuk yang
@@ -253,11 +255,10 @@ async function callVision(
     return {
       ok: false,
       reason: 'unsupported-api-type',
-      detail: 'Jenis API "responses" belum didukung untuk tugas visi. Pilih Chat Completions atau Messages.',
+      detail: `Jenis API "responses" belum didukung untuk ${task}. Pilih Chat Completions atau Messages.`,
     };
   }
 
-  const { path, body } = buildRequest(request, prompt);
   const url = `${request.baseUrl.replace(/\/+$/, '')}${path}`;
 
   let response: Response;
@@ -313,6 +314,22 @@ async function callVision(
   }
 
   return { ok: true, text, raw };
+}
+
+/**
+ * Menyusun permintaan VISI, lalu mengirimnya.
+ *
+ * Tipis dengan sengaja: seluruh pengangkutannya ada di `sendToProvider`, dan
+ * yang tersisa di sini hanya bagian yang memang khusus gambar.
+ */
+async function callVision(
+  request: VisionRequest,
+  apiKey: string,
+  prompt: string,
+  fetchImpl: typeof fetch,
+): Promise<{ ok: true; text: string; raw: string } | { ok: false; reason: VisionFailure; detail: string }> {
+  const { path, body } = buildRequest(request, prompt);
+  return sendToProvider(request, path, body, apiKey, fetchImpl, 'tugas visi');
 }
 
 /**
@@ -466,6 +483,156 @@ export async function describeCharacterPortrait(
   }
 
   return { ok: true, label: parsed.label };
+}
+
+/* ------------------------------------------------------------------ */
+/* Teks dunia: sinopsis dan premis dari judul                          */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Batas token untuk tugas TEKS.
+ *
+ * Jauh lebih besar daripada tugas visi, dan itu bukan kelonggaran: yang diminta
+ * di sini adalah sekitar SERIBU kata keluaran (500 untuk sinopsis, 500 untuk
+ * premis). Dengan batas 2.000 token, model yang bernalar akan menghabiskan
+ * jatahnya untuk berpikir dan jawabannya terpotong di tengah — persis kegagalan
+ * yang sudah pernah terjadi pada tugas lokasi.
+ */
+const MAX_TEXT_TOKENS = 8_000;
+
+/** Batas panjang satu bidang teks dunia yang diterima dari model. */
+const MAX_WORLD_TEXT = 4_000;
+
+/**
+ * System prompt untuk sinopsis dan premis dunia.
+ *
+ * ATURAN TERPENTINGNYA: DILARANG MENYEBUT NAMA.
+ *
+ * Dunia ini adalah KERANGKA. Karakter yang mengisinya belum tentu ada saat
+ * teksnya ditulis, dan yang memasangnya kelak bebas memilih siapa pun. Nama yang
+ * tertulis di sinopsis akan berbenturan dengan nama itu, sedangkan sebutan peran
+ * — "bosmu", "sahabatmu" — tetap benar untuk siapa pun yang mengisinya.
+ */
+export const WORLD_TEXT_SYSTEM_PROMPT = [
+  'You write the synopsis and premise for a visual novel on an Indonesian platform.',
+  'The editor gives you ONLY A TITLE. From it, write two texts, both in Indonesian.',
+  '',
+  'Reply with ONLY a JSON object. No markdown, no code fences, no commentary:',
+  '',
+  '{"synopsis": "...", "premise": "..."}',
+  '',
+  'WHAT EACH FIELD IS:',
+  '- "synopsis": the situation and the hook. It is shown on the world detail page.',
+  '- "premise": the opening scene that directs the story engine — where we are,',
+  '  who is present, and what is happening right now.',
+  '',
+  'RULES — these matter more than style:',
+  '',
+  '1. NEVER WRITE A CHARACTER NAME. Not once, in any form, not even if the title',
+  '   contains one. People are named by their ROLE or RELATIONSHIP to the reader:',
+  '   "bosmu", "sahabatmu", "mantan pacarmu", "ibu tirimu", "tetangga sebelah".',
+  '   The reader is "kamu". A role may be described further ("sahabatmu yang tahu',
+  '   masa lalumu"), but never turned into a name.',
+  '2. Second person, addressing the reader as "kamu".',
+  '3. About 500 words EACH. Not 50, not 2000. Both fields are substantial.',
+  '4. Concrete and specific: places, times, pressures, small details. Vague',
+  '   generalities are worthless to the writer who has to build scenes from this.',
+  '5. No spoilers of an ending, and no "pilihan ada di tanganmu" closing line.',
+  '6. Do not mention that this is a game, a novel, a title, or that you are an AI.',
+  '7. If the title is vague, invent a coherent, plausible setup rather than',
+  '   asking. This is a framework; someone else fills in the people.',
+  '',
+  'You may think first if you need to, but the LAST thing you write must be the',
+  'JSON object on its own, with nothing after it.',
+].join('\n');
+
+export type WorldTextResult =
+  | { ok: true; synopsis: string; premise: string }
+  | { ok: false; reason: VisionFailure; detail: string };
+
+function buildTextRequest(
+  request: { modelKey: string },
+  systemPrompt: string,
+  userPrompt: string,
+): { path: string; body: unknown } {
+  return {
+    path: '/chat/completions',
+    body: {
+      model: request.modelKey,
+      max_tokens: MAX_TEXT_TOKENS,
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt },
+      ],
+    },
+  };
+}
+
+/**
+ * Meminta sinopsis dan premis dunia dari judulnya.
+ *
+ * Tidak menyentuh media sama sekali: tugas ini hanya teks. Karena itu tidak ada
+ * gambar, tidak ada `imagePart`, dan tidak ada `contentType` — dan pemanggilnya
+ * tidak perlu menyiapkan apa pun selain judul dan pilihan model.
+ */
+export async function generateWorldText(
+  request: { baseUrl: string; apiType: ApiType; modelKey: string },
+  apiKey: string,
+  title: string,
+  fetchImpl: typeof fetch = fetch,
+): Promise<WorldTextResult> {
+  const { path, body } = buildTextRequest(
+    request,
+    WORLD_TEXT_SYSTEM_PROMPT,
+    `Judulnya: ${title}\n\nTulis sinopsis dan premisnya.`,
+  );
+
+  const call = await sendToProvider(request, path, body, apiKey, fetchImpl, 'tugas teks');
+  if (!call.ok) {
+    return call;
+  }
+
+  const parsed = extractWorldText(call.text);
+  if (parsed === null) {
+    return {
+      ok: false,
+      reason: 'bad-response',
+      detail: explainUnparseable(call.text, call.raw, apiKey),
+    };
+  }
+
+  if (parsed.synopsis.length === 0 || parsed.premise.length === 0) {
+    return {
+      ok: false,
+      reason: 'declined',
+      detail:
+        parsed.reason.length > 0
+          ? `Model tidak melengkapi sinopsis dan premis. Alasannya: ${detailOf(parsed.reason, apiKey)}`
+          : `Model tidak melengkapi sinopsis dan premis, dan tidak menyebut alasannya. Jawabannya: ${detailOf(call.text, apiKey)}`,
+    };
+  }
+
+  return { ok: true, synopsis: parsed.synopsis, premise: parsed.premise };
+}
+
+/** Membaca `synopsis` dan `premise` dari jawaban model. */
+function extractWorldText(
+  text: string,
+): { synopsis: string; premise: string; reason: string } | null {
+  const record = lastJsonObject(text, 'synopsis');
+  if (record === null) {
+    return null;
+  }
+
+  const synopsis = typeof record.synopsis === 'string' ? record.synopsis.trim() : '';
+  const premise = typeof record.premise === 'string' ? record.premise.trim() : '';
+  const reason = typeof record.reason === 'string' ? record.reason.trim() : '';
+
+  return {
+    synopsis: clamp(synopsis, MAX_WORLD_TEXT),
+    premise: clamp(premise, MAX_WORLD_TEXT),
+    reason: clamp(reason, MAX_VISION_REASON),
+  };
 }
 
 /**

@@ -3569,3 +3569,149 @@ describe('impor massal potret karakter', () => {
   });
 
 });
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Rute pembuatan teks dunia.
+ *
+ * Satu-satunya tugas AI yang tidak menyentuh media: tidak ada `mediaId` di
+ * badannya, dan tidak ada gambar yang dibaca dari basis data.
+ */
+describe('pembuatan teks dunia', () => {
+  const KUNCI_ENKRIPSI = Buffer.from('0123456789abcdef0123456789abcdef').toString('base64');
+
+  let semula: string | undefined;
+
+  beforeEach(() => {
+    semula = process.env[SECRETS_KEY_ENV];
+    process.env[SECRETS_KEY_ENV] = KUNCI_ENKRIPSI;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (semula === undefined) {
+      delete process.env[SECRETS_KEY_ENV];
+    } else {
+      process.env[SECRETS_KEY_ENV] = semula;
+    }
+  });
+
+  async function seedProviderBerkunci(cookie: string): Promise<string> {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/providers',
+      headers: { cookie, 'content-type': 'application/x-www-form-urlencoded' },
+      payload: form({
+        providerId: '',
+        name: 'Penyedia Teks',
+        prefix: 'teks',
+        apiType: 'chat-completions',
+        baseUrl: 'https://teks.example.test/v1',
+        apiKey: 'sk-uji',
+        isActive: 'true',
+      }),
+    });
+    expect(response.statusCode).toBe(302);
+
+    const [provider] = await new ProvidersRepository(ctx.db).list();
+    return provider!.providerId;
+  }
+
+  it('mengembalikan sinopsis dan premis dari judulnya', async () => {
+    const cookie = await login();
+    const providerId = await seedProviderBerkunci(cookie);
+
+    vi.stubGlobal('fetch', async () => ({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  synopsis: 'Kantor itu sudah tutup, tetapi kamu masih di dalamnya.',
+                  premise: 'Hujan turun sejak pagi dan lift berhenti di lantai tujuh.',
+                }),
+              },
+              finish_reason: 'stop',
+            },
+          ],
+        }),
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/worlds/generate-text',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ title: 'Rapat Tengah Malam', providerId, modelKey: 'model-teks' }),
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json()).toEqual({
+      ok: true,
+      synopsis: 'Kantor itu sudah tutup, tetapi kamu masih di dalamnya.',
+      premise: 'Hujan turun sejak pagi dan lift berhenti di lantai tujuh.',
+    });
+  });
+
+  it('tidak memerlukan gambar apa pun', async () => {
+    /*
+     * Badannya hanya judul, provider, dan model. Kalau kelak ada yang menambah
+     * `mediaId` ke sini karena menyalin dari impor gambar, uji ini yang
+     * menghentikannya — tugas teks tidak punya gambar untuk dibaca.
+     */
+    const cookie = await login();
+    const providerId = await seedProviderBerkunci(cookie);
+
+    vi.stubGlobal('fetch', async () => ({
+      status: 200,
+      ok: true,
+      text: async () =>
+        JSON.stringify({
+          choices: [
+            { message: { content: JSON.stringify({ synopsis: 'a', premise: 'b' }) }, finish_reason: 'stop' },
+          ],
+        }),
+    }));
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/worlds/generate-text',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ title: 'Judul', providerId, modelKey: 'model-teks' }),
+    });
+
+    expect(response.json().ok).toBe(true);
+    // Tidak ada satu pun media di basis data, dan permintaannya tetap berhasil.
+    const { rows } = await ctx.db.query<{ jumlah: number }>(
+      'SELECT count(*)::int AS jumlah FROM media_blobs',
+    );
+    expect(rows[0]?.jumlah).toBe(0);
+  });
+
+  it('menolak judul yang kosong', async () => {
+    const cookie = await login();
+
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/worlds/generate-text',
+      headers: { cookie, 'content-type': 'application/json' },
+      payload: JSON.stringify({ title: '   ', providerId: 'p_x', modelKey: 'm' }),
+    });
+
+    expect(response.statusCode).toBe(400);
+  });
+
+  it('menuntut sesi admin', async () => {
+    const response = await app.inject({
+      method: 'POST',
+      url: '/admin/worlds/generate-text',
+      headers: { 'content-type': 'application/json' },
+      payload: JSON.stringify({ title: 'Judul', providerId: 'p_x', modelKey: 'm' }),
+    });
+
+    expect(response.statusCode).toBe(302);
+  });
+});

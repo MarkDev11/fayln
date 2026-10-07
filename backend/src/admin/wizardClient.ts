@@ -681,6 +681,71 @@ export const WIZARD_JS = `
     ui.tanda.textContent = tanda || '\u00b7';
   }
 
+  /* ---------------- Pemilih model provider ---------------- */
+
+  /*
+   * Memuat daftar model sebuah provider ke dalam pemilihnya.
+   *
+   * Dipakai bersama oleh impor lokasi, impor potret, dan pengisi teks dunia.
+   * Digandakan tiga kali, yang ikut tergandakan bukan hanya barisnya: seluruh
+   * sebab kegagalan — provider tanpa kunci, kunci ditolak, provider tidak
+   * terjangkau, jawaban yang tidak dikenali — beserta pesan yang menjelaskannya.
+   *
+   * katakan dan pesanModel diserahkan pemanggilnya karena kedua pemanggil
+   * memakai baris status yang sama untuk pesan lain juga (ringkasan kemajuan).
+   *
+   * pesanSukses juga diserahkan karena tugasnya berbeda: impor gambar butuh model
+   * yang DAPAT MELIHAT, sedangkan pengisi teks tidak — menyebut "pilih yang dapat
+   * melihat gambar" di sana akan menyesatkan.
+   */
+  function pasangPemilihModel(bidangProvider, bidangModel, katakan, pesanModel, pesanSukses) {
+    var providerDimuat = null;
+
+    function muat() {
+      var id = bidangProvider ? bidangProvider.value : '';
+      if (!id || id === providerDimuat) { return; }
+      providerDimuat = id;
+
+      bidangModel.innerHTML = '';
+      var menunggu = document.createElement('option');
+      menunggu.value = '';
+      menunggu.textContent = '(memuat...)';
+      bidangModel.appendChild(menunggu);
+      katakan('Mengambil daftar model dari provider...', null);
+
+      fetch('/admin/providers/' + encodeURIComponent(id) + '/models', {
+        headers: { accept: 'application/json' },
+        credentials: 'same-origin'
+      })
+        .then(function (response) { return response.json(); })
+        .then(function (data) {
+          bidangModel.innerHTML = '';
+          var ids = data && data.ok === true && data.ids ? data.ids : [];
+          if (ids.length === 0) {
+            var kosong = document.createElement('option');
+            kosong.value = '';
+            kosong.textContent = '(tidak ada model)';
+            bidangModel.appendChild(kosong);
+            katakan(pesanModel[data && data.reason] || 'Daftar model tidak dapat diambil.', 'error');
+            return;
+          }
+          for (var i = 0; i < ids.length; i++) {
+            var opsi = document.createElement('option');
+            opsi.value = ids[i];
+            opsi.textContent = ids[i];
+            bidangModel.appendChild(opsi);
+          }
+          katakan(ids.length + ' ' + pesanSukses, 'ok');
+        })
+        .catch(function () {
+          katakan('Daftar model tidak dapat diambil.', 'error');
+        });
+    }
+
+    if (bidangProvider) { bidangProvider.addEventListener('change', muat); }
+    return muat;
+  }
+
   /* ---------------- Impor massal lokasi dengan AI ---------------- */
 
   /*
@@ -715,7 +780,6 @@ export const WIZARD_JS = `
     var tombolMulai = layer.querySelector('[data-bulk-action=start]');
     if (!bidangModel || !daftar || !tombolMulai) { return; }
 
-    var providerDimuat = null;
     var berjalan = false;
     var fokusTerakhir = null;
 
@@ -754,46 +818,7 @@ export const WIZARD_JS = `
 
     /* ---------------- Daftar model provider ---------------- */
 
-    function muatModel() {
-      var id = bidangProvider ? bidangProvider.value : '';
-      if (!id || id === providerDimuat) { return; }
-      providerDimuat = id;
-
-      bidangModel.innerHTML = '';
-      var menunggu = document.createElement('option');
-      menunggu.value = '';
-      menunggu.textContent = '(memuat...)';
-      bidangModel.appendChild(menunggu);
-      katakan('Mengambil daftar model dari provider...', null);
-
-      fetch('/admin/providers/' + encodeURIComponent(id) + '/models', {
-        headers: { accept: 'application/json' },
-        credentials: 'same-origin'
-      })
-        .then(function (response) { return response.json(); })
-        .then(function (data) {
-          bidangModel.innerHTML = '';
-          var ids = data && data.ok === true && data.ids ? data.ids : [];
-          if (ids.length === 0) {
-            var kosong = document.createElement('option');
-            kosong.value = '';
-            kosong.textContent = '(tidak ada model)';
-            bidangModel.appendChild(kosong);
-            katakan(pesanModel[data && data.reason] || 'Daftar model tidak dapat diambil.', 'error');
-            return;
-          }
-          for (var i = 0; i < ids.length; i++) {
-            var opsi = document.createElement('option');
-            opsi.value = ids[i];
-            opsi.textContent = ids[i];
-            bidangModel.appendChild(opsi);
-          }
-          katakan(ids.length + ' model tersedia. Pilih yang dapat melihat gambar.', 'ok');
-        })
-        .catch(function () {
-          katakan('Daftar model tidak dapat diambil.', 'error');
-        });
-    }
+    var muatModel = pasangPemilihModel(bidangProvider, bidangModel, katakan, pesanModel, 'model tersedia. Pilih yang dapat melihat gambar.');
 
     /* ---------------- Proses utama ---------------- */
 
@@ -931,7 +956,6 @@ export const WIZARD_JS = `
     /* ---------------- Pemasangan ---------------- */
 
     pembuka.addEventListener('click', buka);
-    if (bidangProvider) { bidangProvider.addEventListener('change', muatModel); }
     tombolMulai.addEventListener('click', mulai);
 
     Array.prototype.forEach.call(layer.querySelectorAll('[data-bulk-action]'), function (tombol) {
@@ -983,7 +1007,6 @@ export const WIZARD_JS = `
     var tombol = scope.querySelector('[data-portrait-bulk-run]');
     if (!bidangModel || !daftar || !tombol) { return; }
 
-    var providerDimuat = null;
     var berjalan = false;
 
     var pesanModel = {
@@ -1000,46 +1023,7 @@ export const WIZARD_JS = `
       else { statusModel.removeAttribute('data-state'); }
     }
 
-    function muatModel() {
-      var id = bidangProvider ? bidangProvider.value : '';
-      if (!id || id === providerDimuat) { return; }
-      providerDimuat = id;
-
-      bidangModel.innerHTML = '';
-      var menunggu = document.createElement('option');
-      menunggu.value = '';
-      menunggu.textContent = '(memuat...)';
-      bidangModel.appendChild(menunggu);
-      katakan('Mengambil daftar model dari provider...', null);
-
-      fetch('/admin/providers/' + encodeURIComponent(id) + '/models', {
-        headers: { accept: 'application/json' },
-        credentials: 'same-origin'
-      })
-        .then(function (response) { return response.json(); })
-        .then(function (data) {
-          bidangModel.innerHTML = '';
-          var ids = data && data.ok === true && data.ids ? data.ids : [];
-          if (ids.length === 0) {
-            var kosong = document.createElement('option');
-            kosong.value = '';
-            kosong.textContent = '(tidak ada model)';
-            bidangModel.appendChild(kosong);
-            katakan(pesanModel[data && data.reason] || 'Daftar model tidak dapat diambil.', 'error');
-            return;
-          }
-          for (var i = 0; i < ids.length; i++) {
-            var opsi = document.createElement('option');
-            opsi.value = ids[i];
-            opsi.textContent = ids[i];
-            bidangModel.appendChild(opsi);
-          }
-          katakan(ids.length + ' model tersedia. Pilih yang dapat melihat gambar.', 'ok');
-        })
-        .catch(function () {
-          katakan('Daftar model tidak dapat diambil.', 'error');
-        });
-    }
+    var muatModel = pasangPemilihModel(bidangProvider, bidangModel, katakan, pesanModel, 'model tersedia. Pilih yang dapat melihat gambar.');
 
     function mulai() {
       if (berjalan) { return; }
@@ -1138,7 +1122,88 @@ export const WIZARD_JS = `
         });
     }
 
-    if (bidangProvider) { bidangProvider.addEventListener('change', muatModel); }
+    tombol.addEventListener('click', mulai);
+    muatModel();
+  }
+
+  /* ---------------- Sinopsis dan premis dari judul ---------------- */
+
+  /*
+   * Tugas AI pertama yang TIDAK menyentuh gambar sama sekali: masukannya judul,
+   * keluarannya dua bidang teks. Karena itu tidak ada pengecil gambar, tidak ada
+   * unggahan, dan tidak ada fase — hanya satu permintaan.
+   *
+   * Tombolnya BERGANTI NAMA setelah berhasil. Menekannya lagi menimpa tulisan
+   * yang ada, dan labelnya harus mengatakan itu SEBELUM ditekan, bukan sesudah.
+   */
+  function bindWorldText() {
+    var akar = document.querySelector('[data-world-text]');
+    if (!akar) { return; }
+
+    var bidangProvider = akar.querySelector('[data-world-text-provider]');
+    var bidangModel = akar.querySelector('[data-world-text-model]');
+    var status = akar.querySelector('[data-world-text-status]');
+    var tombol = akar.querySelector('[data-world-text-run]');
+    if (!bidangModel || !tombol) { return; }
+
+    var judul = document.querySelector('input[name=title]');
+    var sinopsis = document.querySelector('textarea[name=synopsis]');
+    var premis = document.querySelector('textarea[name=premise]');
+
+    var berjalan = false;
+
+    function katakan(pesan, keadaan) {
+      if (!status) { return; }
+      status.textContent = pesan;
+      if (keadaan) { status.setAttribute('data-state', keadaan); }
+      else { status.removeAttribute('data-state'); }
+    }
+
+    var muatModel = pasangPemilihModel(bidangProvider, bidangModel, katakan, {
+      'no-key': 'Provider ini belum punya kunci API, jadi daftar model tidak dapat diambil.',
+      unauthorized: 'Provider menolak kuncinya. Periksa kuncinya di halaman Provider.',
+      unreachable: 'Provider tidak dapat dihubungi.',
+      'bad-response': 'Jawaban provider tidak dikenali sebagai daftar model.'
+    }, 'model tersedia.');
+
+    function selesai() {
+      berjalan = false;
+      tombol.disabled = false;
+    }
+
+    function mulai() {
+      if (berjalan) { return; }
+
+      var teksJudul = judul && judul.value ? judul.value.trim() : '';
+      if (teksJudul === '') { katakan('Tulis judulnya lebih dulu.', 'error'); return; }
+      if (!bidangModel.value) { katakan('Pilih model teks lebih dulu.', 'error'); return; }
+
+      berjalan = true;
+      tombol.disabled = true;
+      /*
+       * Sekitar seribu kata keluaran. Admin perlu tahu ini bukan operasi sekejap,
+       * kalau tidak ia akan menekan tombolnya berkali-kali dan membayar tiga kali.
+       */
+      katakan('Model sedang menulis. Sekitar seribu kata, jadi ini butuh waktu.', null);
+
+      kirimJson('/admin/worlds/generate-text', {
+        title: teksJudul,
+        providerId: bidangProvider ? bidangProvider.value : '',
+        modelKey: bidangModel.value
+      }).then(function (hasil) {
+        if (hasil && hasil.ok) {
+          if (sinopsis) { sinopsis.value = hasil.synopsis; }
+          if (premis) { premis.value = hasil.premise; }
+          katakan('Sinopsis dan premis terisi. Periksa dulu sebelum menyimpan.', 'ok');
+          tombol.textContent = 'Buat ulang dengan AI';
+        } else {
+          var sebab = hasil && hasil.detail ? hasil.detail : 'sebab tidak diketahui';
+          katakan('Gagal: ' + sebab, 'error');
+        }
+        selesai();
+      }, selesai);
+    }
+
     tombol.addEventListener('click', mulai);
     muatModel();
   }
@@ -1208,6 +1273,7 @@ export const WIZARD_JS = `
     bindUnsavedGuard();
     bindModelKeySync();
     bindBulkImport();
+    bindWorldText();
   }
 
   if (document.readyState === 'loading') {

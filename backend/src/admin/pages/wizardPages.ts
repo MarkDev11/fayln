@@ -16,7 +16,16 @@
 import type { SafeHtml } from '../html';
 import { CHEVRON, esc, escOr, formatTime, html, inputValue, statusPill } from '../html';
 import { RESPONSE_LOCALES, type ResponseLocale } from '../../contracts/types';
-import { BASE_EXPRESSION, MAX_BACKGROUNDS, type BackgroundRow, type DraftWorld, type NpcRow, type WizardStep } from '../worldDraftRepository';
+import {
+  BASE_EXPRESSION,
+  MAX_BACKGROUNDS,
+  MAX_WORLD_PREMISE,
+  MAX_WORLD_SYNOPSIS,
+  type BackgroundRow,
+  type DraftWorld,
+  type NpcRow,
+  type WizardStep,
+} from '../worldDraftRepository';
 import type { AdminPageContext } from './context';
 
 /* ------------------------------------------------------------------ */
@@ -106,6 +115,17 @@ export async function wizardStep1(
 ): Promise<SafeHtml> {
   const draft = worldId ? await ctx.drafts.findDraft(worldId) : null;
 
+  // Provider untuk pengisi otomatis sinopsis dan premis. Halaman ini tidak
+  // memakainya untuk apa pun selain itu — tidak ada gambar di langkah 1.
+  const providers = await ctx.providers.listOfferable();
+  const providerOptions =
+    providers.length > 0
+      ? providers.map(
+          (provider) =>
+            html`<option value="${inputValue(provider.providerId)}">${esc(provider.name)}</option>`,
+        )
+      : [html`<option value="">(belum ada provider)</option>`];
+
   const genres = new Set(draft?.genres ?? []);
   const locales = new Set(draft?.locales ?? []);
 
@@ -159,15 +179,44 @@ ${
            placeholder="mis. Rapat Tengah Malam">
   </label>
 
+  <!--
+    Pengisi otomatis berada DI ANTARA judul dan dua bidang yang diisinya.
+
+    Judul adalah masukannya, sinopsis dan premis adalah keluarannya — jadi
+    menaruhnya di tengah membuat urutan kerjanya terbaca dari tata letaknya:
+    tulis judul, pilih model, tekan tombolnya, periksa hasilnya di bawah.
+
+    Tidak ada bidang di sini yang punya atribut name, jadi tidak ada yang ikut
+    terkirim saat formulir disimpan.
+  -->
+  <div class="ai-fill" data-world-text>
+    <div class="two">
+      <label><span>Provider</span>
+        <select data-world-text-provider>${providerOptions}</select>
+      </label>
+      <label><span>Model teks — pilih yang dapat menulis panjang</span>
+        <select data-world-text-model><option value="">(pilih provider lebih dulu)</option></select>
+      </label>
+    </div>
+    <div class="field__status" data-world-text-status>
+      Tulis judulnya lebih dulu, lalu pilih provider dan model.
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="ghost" type="button" data-world-text-run>Isi dengan AI</button>
+    </div>
+  </div>
+
   <label><span>Sinopsis — latar cerita</span>
-    <textarea name="synopsis" required maxlength="240" placeholder="Satu sampai dua kalimat yang tampil di katalog.">${esc(
+    <textarea name="synopsis" required maxlength="${String(MAX_WORLD_SYNOPSIS)}"
+              style="min-height:220px"
+              placeholder="Latar cerita yang utuh, sekitar 500 kata. Tampil di halaman detail dunia.">${esc(
       draft?.synopsis ?? '',
     )}</textarea>
   </label>
 
   <label><span>Premis — cerita awal yang mengarahkan AI</span>
-    <textarea name="premise" required maxlength="2000" style="min-height:150px"
-              placeholder="Situasi pembuka: di mana, siapa saja, dan apa yang sedang terjadi.">${esc(
+    <textarea name="premise" required maxlength="${String(MAX_WORLD_PREMISE)}" style="min-height:220px"
+              placeholder="Situasi pembuka: di mana, siapa saja, dan apa yang sedang terjadi — sekitar 500 kata.">${esc(
       draft?.premise ?? '',
     )}</textarea>
   </label>

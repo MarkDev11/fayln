@@ -33,12 +33,17 @@ import { promotionForm, promotionsList } from './pages/promotionPages';
 import type { SafeHtml } from './html';
 import { ACCEPTED_IMAGE_TYPES, inspectImage } from '../media/imageFile';
 import { isMediaId, type MediaRepository } from '../repositories/mediaRepository';
-import { BASE_EXPRESSION, isRelationStatus } from './worldDraftRepository';
+import {
+  BASE_EXPRESSION,
+  isRelationStatus,
+  MAX_WORLD_PREMISE,
+  MAX_WORLD_SYNOPSIS,
+} from './worldDraftRepository';
 import type { CharacterFailure } from './charactersRepository';
 import type { CategoryFailure, LocationFailure } from './locationsRepository';
 import type { ModelFailure } from './modelsRepository';
 import { fetchProviderModels } from './providerModels';
-import { describeCharacterPortrait, describeLocationImage } from './visionClient';
+import { describeCharacterPortrait, describeLocationImage, generateWorldText } from './visionClient';
 import type { ProviderFailure } from './providersRepository';
 import { html, inputValue, layout } from './html';
 import { validatePassword, verifyPassword } from './password';
@@ -159,8 +164,8 @@ const MAX_UPLOAD_BYTES = 1024 * 1024;
 const wizardIdentityBody = z.object({
   worldId: z.string().optional().default(''),
   title: z.string().trim().max(120).optional().default(''),
-  synopsis: z.string().trim().max(240).optional().default(''),
-  premise: z.string().trim().max(2000).optional().default(''),
+  synopsis: z.string().trim().max(MAX_WORLD_SYNOPSIS).optional().default(''),
+  premise: z.string().trim().max(MAX_WORLD_PREMISE).optional().default(''),
   coverMediaId: z.string().optional().default(''),
   contentRating: z.enum(['all', '13_plus', '18_plus']).optional().default('all'),
   genres: z.union([z.string(), z.array(z.string())]).optional(),
@@ -194,8 +199,8 @@ const wizardNpcBody = z.object({
 const worldBody = z.object({
   worldId: z.string().optional().default(''),
   title: z.string().trim().min(1).max(120),
-  synopsis: z.string().trim().min(1).max(240),
-  premise: z.string().trim().min(1).max(2000),
+  synopsis: z.string().trim().min(1).max(MAX_WORLD_SYNOPSIS),
+  premise: z.string().trim().min(1).max(MAX_WORLD_PREMISE),
   coverAssetId: z.string().trim().min(1).max(120),
   status: z.enum(['draft', 'published', 'retired', 'revoked']),
   contentRating: z.enum(['all', '13_plus', '18_plus']),
@@ -2198,6 +2203,66 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
           detail: result.detail,
         },
         'Analisis potret karakter gagal.',
+      );
+    }
+
+    return reply.send(result);
+  });
+
+  /* ---------------------------------------------------------------- */
+  /* Sinopsis dan premis dari judul, lewat model teks                  */
+  /* ---------------------------------------------------------------- */
+
+  /*
+   * Satu-satunya tugas AI yang TIDAK menyentuh gambar sama sekali.
+   *
+   * Karena itu tidak ada media yang dibaca, tidak ada slot gambar, dan tidak ada
+   * fase unggah: masukannya judul, keluarannya dua bidang teks. Kalau kelak ada
+   * tugas teks lain, bentuknya kemungkinan besar akan sama.
+   */
+  app.post('/admin/worlds/generate-text', async (request, reply) => {
+    const body = z
+      .object({
+        title: z.string().trim().min(1).max(120),
+        providerId: z.string().trim().min(1),
+        modelKey: z.string().trim().min(1).max(120),
+      })
+      .safeParse(request.body);
+
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, reason: 'bad-request', detail: '' });
+    }
+
+    const provider = await ctx.providers.find(body.data.providerId);
+    if (!provider) {
+      return reply.code(404).send({ ok: false, reason: 'provider-not-found', detail: '' });
+    }
+
+    const apiKey = await ctx.providers.apiKeyFor(provider.providerId);
+    if (!apiKey) {
+      return reply.send({
+        ok: false,
+        reason: 'no-key',
+        detail: 'Provider ini belum punya kunci API, jadi modelnya tidak dapat dipanggil.',
+      });
+    }
+
+    const result = await generateWorldText(
+      { baseUrl: provider.baseUrl, apiType: provider.apiType, modelKey: body.data.modelKey },
+      apiKey,
+      body.data.title,
+    );
+
+    if (!result.ok) {
+      request.log.warn(
+        {
+          reason: result.reason,
+          model: body.data.modelKey,
+          provider: provider.providerId,
+          titleChars: body.data.title.length,
+          detail: result.detail,
+        },
+        'Pembuatan teks dunia gagal.',
       );
     }
 
