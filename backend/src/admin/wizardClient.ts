@@ -1181,10 +1181,11 @@ export const WIZARD_JS = `
       berjalan = true;
       tombol.disabled = true;
       /*
-       * Sekitar seribu kata keluaran. Admin perlu tahu ini bukan operasi sekejap,
-       * kalau tidak ia akan menekan tombolnya berkali-kali dan membayar tiga kali.
+       * Sekitar seribu kata keluaran, dan batas waktunya tiga menit. Admin perlu
+       * tahu ini bukan operasi sekejap, kalau tidak ia akan menekan tombolnya
+       * berkali-kali dan membayar tiga kali.
        */
-      katakan('Model sedang menulis. Sekitar seribu kata, jadi ini butuh waktu.', null);
+      katakan('Model sedang menulis sinopsis dan premisnya. Sekitar seribu kata, jadi ini bisa sampai beberapa menit.', null);
 
       kirimJson('/admin/worlds/generate-text', {
         title: teksJudul,

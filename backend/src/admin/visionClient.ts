@@ -246,7 +246,7 @@ async function sendToProvider(
   body: unknown,
   apiKey: string,
   fetchImpl: typeof fetch,
-  task: string,
+  tugas: { nama: string; timeoutMs: number; saranWaktuHabis: string },
 ): Promise<{ ok: true; text: string; raw: string } | { ok: false; reason: VisionFailure; detail: string }> {
   if (request.apiType === 'responses') {
     // Bentuk ini belum ditangani, dan mengirim permintaan dengan bentuk yang
@@ -255,7 +255,7 @@ async function sendToProvider(
     return {
       ok: false,
       reason: 'unsupported-api-type',
-      detail: `Jenis API "responses" belum didukung untuk ${task}. Pilih Chat Completions atau Messages.`,
+      detail: `Jenis API "responses" belum didukung untuk ${tugas.nama}. Pilih Chat Completions atau Messages.`,
     };
   }
 
@@ -271,13 +271,26 @@ async function sendToProvider(
         ...authHeaders(request.apiType, apiKey),
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(VISION_TIMEOUT_MS),
+      signal: AbortSignal.timeout(tugas.timeoutMs),
     });
   } catch (error) {
+    /*
+     * WAKTU HABIS DIJELASKAN, bukan diteruskan mentah.
+     *
+     * Pesan aslinya — "The operation was aborted due to timeout" — adalah teks
+     * Node dalam bahasa Inggris. Admin yang membacanya tidak tahu bahwa yang
+     * terjadi adalah modelnya belum selesai, berapa lama ia ditunggu, atau apa
+     * yang harus dilakukan. Yang ia lihat hanya kalimat yang tidak masuk akal di
+     * panel berbahasa Indonesia.
+     */
+    const habisWaktu = error instanceof Error && error.name === 'TimeoutError';
     return {
       ok: false,
       reason: 'unreachable',
-      detail: detailOf(error instanceof Error ? error.message : String(error), apiKey),
+      detail: habisWaktu
+        ? `Model belum selesai dalam ${String(Math.round(tugas.timeoutMs / 1000))} detik, ` +
+          `jadi permintaannya dihentikan. ${tugas.saranWaktuHabis}`
+        : detailOf(error instanceof Error ? error.message : String(error), apiKey),
     };
   }
 
@@ -329,7 +342,11 @@ async function callVision(
   fetchImpl: typeof fetch,
 ): Promise<{ ok: true; text: string; raw: string } | { ok: false; reason: VisionFailure; detail: string }> {
   const { path, body } = buildRequest(request, prompt);
-  return sendToProvider(request, path, body, apiKey, fetchImpl, 'tugas visi');
+  return sendToProvider(request, path, body, apiKey, fetchImpl, {
+    nama: 'tugas visi',
+    timeoutMs: VISION_TIMEOUT_MS,
+    saranWaktuHabis: 'Coba lagi, atau pilih model yang lebih cepat.',
+  });
 }
 
 /**
@@ -500,6 +517,20 @@ export async function describeCharacterPortrait(
  */
 const MAX_TEXT_TOKENS = 8_000;
 
+/**
+ * Batas waktu untuk tugas TEKS.
+ *
+ * Empat kali lipat batas tugas visi, dan itu bukan kelonggaran: yang diminta di
+ * sini sekitar SERIBU kata keluaran. Dengan 45 detik, tugas ini hampir pasti
+ * selalu habis waktu — dan memang itu yang terjadi pada percobaan pertama
+ * pemilik produk ("The operation was aborted due to timeout").
+ *
+ * Model menulis sekitar 30-80 token per detik; seribu kata berbahasa Indonesia
+ * kira-kira 1.500 token, jadi 20-50 detik untuk menulisnya saja — belum termasuk
+ * waktu berpikir model yang bernalar.
+ */
+export const TEXT_TIMEOUT_MS = 180_000;
+
 /** Batas panjang satu bidang teks dunia yang diterima dari model. */
 const MAX_WORLD_TEXT = 4_000;
 
@@ -587,7 +618,12 @@ export async function generateWorldText(
     `Judulnya: ${title}\n\nTulis sinopsis dan premisnya.`,
   );
 
-  const call = await sendToProvider(request, path, body, apiKey, fetchImpl, 'tugas teks');
+  const call = await sendToProvider(request, path, body, apiKey, fetchImpl, {
+    nama: 'tugas teks',
+    timeoutMs: TEXT_TIMEOUT_MS,
+    saranWaktuHabis:
+      'Menulis sekitar seribu kata memang lama. Coba lagi, atau pilih model yang lebih cepat.',
+  });
   if (!call.ok) {
     return call;
   }

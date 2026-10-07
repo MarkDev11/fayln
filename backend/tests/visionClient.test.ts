@@ -17,6 +17,8 @@ import { describe, expect, it } from 'vitest';
 import {
   describeCharacterPortrait,
   generateWorldText,
+  TEXT_TIMEOUT_MS,
+  VISION_TIMEOUT_MS,
   WORLD_TEXT_SYSTEM_PROMPT,
   describeLocationImage,
   MAX_VISION_NAME,
@@ -731,5 +733,71 @@ describe('teks dunia dari judul', () => {
     expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('500 words');
     // Jalan keluar jujur saat judulnya kabur, bukan bertanya balik.
     expect(WORLD_TEXT_SYSTEM_PROMPT).toContain('invent');
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Batas waktu, dan penjelasan saat waktu habis.
+ *
+ * Dua hal yang berbeda dan sama-sama pernah salah:
+ *
+ *   1. BATASNYA terlalu pendek untuk tugas teks. Dengan 45 detik — batas tugas
+ *      visi — menulis sekitar seribu kata hampir pasti selalu habis waktu.
+ *   2. PESANNYA diteruskan mentah. "The operation was aborted due to timeout"
+ *      adalah teks Node dalam bahasa Inggris; admin yang membacanya tidak tahu
+ *      bahwa modelnya belum selesai, berapa lama ia ditunggu, atau apa yang
+ *      harus dilakukan.
+ */
+describe('batas waktu tugas teks', () => {
+  const KUNCI = 'sk-RAHASIA-yang-tidak-boleh-bocor';
+  const TEKS = { baseUrl: 'https://api.contoh.test/v1', apiType: 'chat-completions' as const, modelKey: 'model-teks' };
+
+  it('jauh lebih longgar daripada tugas visi', async () => {
+    /*
+     * Model menulis sekitar 30-80 token per detik, dan seribu kata berbahasa
+     * Indonesia kira-kira 1.500 token — jadi 20-50 detik untuk menulisnya saja,
+     * belum termasuk waktu berpikir model yang bernalar.
+     */
+    expect(TEXT_TIMEOUT_MS, 'batas tugas teks terlalu pendek').toBeGreaterThanOrEqual(120_000);
+    expect(
+      TEXT_TIMEOUT_MS,
+      'batas tugas teks tidak lebih longgar daripada tugas visi',
+    ).toBeGreaterThan(VISION_TIMEOUT_MS);
+  });
+
+  it('menjelaskan waktu habis dalam bahasa Indonesia, bukan meneruskan pesan Node', async () => {
+    const habis = Object.assign(new Error('The operation was aborted due to timeout'), {
+      name: 'TimeoutError',
+    });
+    const impl = (async () => {
+      throw habis;
+    }) as unknown as typeof fetch;
+
+    const hasil = await generateWorldText(TEKS, KUNCI, 'Judul', impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('unreachable');
+      // Pesan mentahnya tidak boleh muncul apa adanya.
+      expect(hasil.detail, 'pesan Node diteruskan mentah').not.toContain('aborted due to timeout');
+      // Yang harus ada: berapa lama ditunggu, dan apa yang bisa dilakukan.
+      expect(hasil.detail).toContain('180 detik');
+      expect(hasil.detail).toContain('Coba lagi');
+    }
+  });
+
+  it('tetap meneruskan galat lain apa adanya, karena itu memang informatif', async () => {
+    const impl = (async () => {
+      throw new Error('getaddrinfo ENOTFOUND api.contoh.test');
+    }) as unknown as typeof fetch;
+
+    const hasil = await generateWorldText(TEKS, KUNCI, 'Judul', impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.detail).toContain('ENOTFOUND');
+    }
   });
 });
