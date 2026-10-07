@@ -2672,13 +2672,7 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
         'Setiap ekspresi harus punya gambar. Baris yang gambarnya belum diunggah ' +
         'tidak ikut tersimpan — tunggu sampai statusnya "Tersimpan", lalu simpan lagi.',
     },
-    'character-duplicate-expression': {
-      kind: 'error',
-      text:
-        'Ada nama ekspresi yang dipakai lebih dari sekali. Dalam satu karakter, ' +
-        'setiap ekspresi harus punya nama yang berbeda.',
-    },
-    'category-name-invalid': {
+        'category-name-invalid': {
       kind: 'error',
       text: 'Nama kategori tidak boleh kosong.',
     },
@@ -2848,8 +2842,6 @@ function characterNotice(reason: CharacterFailure): string {
       return 'character-name-invalid';
     case 'no-expressions':
       return 'character-no-expression';
-    case 'duplicate-expression':
-      return 'character-duplicate-expression';
     case 'not-found':
       return 'not-found';
   }

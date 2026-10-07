@@ -1067,24 +1067,44 @@ describe('master karakter', () => {
     expect(await characters.list()).toHaveLength(0);
   });
 
-  it('menolak dua ekspresi bernama sama, dan menyebut nama yang kembar', async () => {
+  it('MENERIMA dua ekspresi bernama sama, dan menyimpan keduanya', async () => {
+    /*
+     * Dulu ini ditolak. Alasan penolakannya masuk akal untuk nama pendek
+     * ("netral"), tetapi tidak lagi berlaku sejak keterangan potret berbentuk
+     * tiga bagian: "serius, pakaian kantor, normal". Dua potret yang ekspresi,
+     * pakaian, dan posenya sama MEMANG berlabel sama — dan menolaknya membuat
+     * satu penyimpanan gagal seluruhnya karena dua baris kebetulan identik.
+     *
+     * Yang membedakan keduanya adalah GAMBARNYA, dan itu tetap tersimpan.
+     */
     const cookie = await login();
     const first = await upload(cookie, png(512, 768, 'a'));
     const second = await upload(cookie, png(512, 768, 'b'));
 
-    // Bedanya HANYA huruf besar-kecil. Dua baris "netral" dan "Netral" tampak
-    // sama bagi pembaca, dan pemilih ekspresi menjadi ambigu — jadi
-    // perbandingannya sengaja tidak membedakan huruf besar-kecil.
+    /*
+     * Labelnya SAMA PERSIS, bukan sekadar beda huruf besar-kecil — persis
+     * seperti yang dilaporkan pemilik produk: dua potret berbeda diberi
+     * keterangan "serius, pakaian kantor, normal" oleh model, dan seluruh
+     * penyimpanan gagal karenanya.
+     */
+    const kembar = 'serius, pakaian kantor, normal';
     const location = await createCharacter(cookie, 'Kembar', [
-      { name: 'netral', mediaId: first },
-      { name: 'Netral', mediaId: second },
+      { name: kembar, mediaId: first },
+      { name: kembar, mediaId: second },
     ]);
-    expect(location).toContain('notice=character-duplicate-expression');
-    // Perinciannya menyebut nama yang kembar, bukan sekadar "ada yang kembar".
-    // Yang disebut adalah baris KEDUA — baris yang memperkenalkan kembarnya,
-    // dan itulah baris yang perlu diubah atau dihapus admin.
-    expect(location).toContain('detail=Netral');
-    expect(await characters.list()).toHaveLength(0);
+    // Yang diharapkan adalah notifikasi BERHASIL, bukan penolakan.
+    expect(location, 'karakter dengan nama ekspresi kembar seharusnya diterima').toContain(
+      'notice=created',
+    );
+
+    const daftar = await characters.list();
+    expect(daftar).toHaveLength(1);
+    // Keduanya tersimpan, dengan gambarnya masing-masing. GAMBARNYA yang
+    // membedakan keduanya, dan itu yang tidak boleh hilang.
+    expect(daftar[0]?.expressions.map((item) => item.mediaId).sort()).toEqual(
+      [first, second].sort(),
+    );
+    expect(daftar[0]?.expressions.map((item) => item.expression)).toEqual([kembar, kembar]);
   });
 
   it('menolak nama kosong', async () => {

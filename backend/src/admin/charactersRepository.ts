@@ -26,13 +26,16 @@
  *    tidak punya gambar sama sekali. Basis data menegakkannya lagi lewat
  *    `media_id NOT NULL` dan kunci asing ke `media_blobs`.
  *
- * 2. NAMA EKSPRESI KEMBAR DITOLAK, bukan dibuang diam-diam.
+ * 2. NAMA EKSPRESI KEMBAR DIBIARKAN (sejak 7 Oktober 2026).
  *
- *    Dua baris bernama "netral" membuat pemilih ekspresi menjadi ambigu.
- *    Membuang yang kedua tanpa suara akan lebih buruk daripada menolaknya:
- *    admin mengunggah dua gambar, menekan Simpan, dan satu gambar hilang tanpa
- *    penjelasan. Karena itu hasilnya `duplicate-expression`, dan halaman dapat
- *    menyebutkan nama mana yang kembar.
+ *    Dulu ditolak dengan alasan pemilih ekspresi menjadi ambigu. Alasan itu
+ *    benar untuk nama pendek, tetapi tidak lagi berlaku sejak keterangan potret
+ *    berbentuk tiga bagian ("serius, pakaian kantor, normal"): dua potret yang
+ *    ekspresi, pakaian, dan posenya sama memang berlabel sama.
+ *
+ *    Menolaknya juga lebih buruk daripada membiarkannya: sepuluh potret
+ *    diunggah, satu penyimpanan gagal seluruhnya karena dua di antaranya
+ *    kebetulan sama.
  *
  * 3. `character_id` DIBUAT SISTEM dan tidak pernah berubah.
  *
@@ -90,7 +93,6 @@ export type CharacterInput = {
 export type CharacterFailure =
   | 'invalid-name'
   | 'no-expressions'
-  | 'duplicate-expression'
   | 'not-found';
 
 export type CharacterResult =
@@ -254,14 +256,21 @@ export class CharactersRepository {
       return { reason: 'no-expressions' };
     }
 
-    const seen = new Set<string>();
-    for (const item of named) {
-      const key = clamp(item.expression, MAX_EXPRESSION_NAME).toLowerCase();
-      if (seen.has(key)) {
-        return { reason: 'duplicate-expression', detail: clamp(item.expression, MAX_EXPRESSION_NAME) };
-      }
-      seen.add(key);
-    }
+    /*
+     * NAMA EKSPRESI KEMBAR DIBIARKAN, dan itu perubahan yang disengaja.
+     *
+     * Dulu ia ditolak dengan alasan pemilih ekspresi menjadi ambigu. Alasan itu
+     * benar untuk nama pendek seperti "netral", tetapi tidak lagi berlaku sejak
+     * keterangan potret berbentuk TIGA BAGIAN: "serius, pakaian kantor, normal".
+     * Dua potret yang ekspresi, pakaian, dan posenya sama memang BERLABEL SAMA —
+     * itu bukan kekeliruan yang perlu ditolak, melainkan dua gambar yang
+     * keterangannya kebetulan identik.
+     *
+     * Ditolaknya juga lebih buruk daripada dibiarkan: pemilik produk mengunggah
+     * sepuluh potret, menekan Simpan, dan seluruh penyimpanan gagal karena dua
+     * di antaranya kebetulan sama. Yang jelas-jelas berbeda (gambarnya) tetap
+     * tersimpan, dan urutannya tetap menentukan potret bawaan.
+     */
 
     const known = await this.knownMediaIds(named.map((item) => item.mediaId.trim()));
     const withImage = named.filter((item) => known.has(item.mediaId.trim()));
