@@ -79,6 +79,7 @@ let app: FastifyInstance;
 let admins: AdminRepository;
 let drafts: WorldDraftRepository;
 let locations: LocationsRepository;
+let characters: CharactersRepository;
 
 const ADMIN_USERNAME = 'operator';
 const ADMIN_PASSWORD = 'kata-sandi-uji-123';
@@ -101,6 +102,7 @@ async function build(): Promise<FastifyInstance> {
   admins = new AdminRepository(ctx.db);
   drafts = new WorldDraftRepository(ctx.db);
   locations = new LocationsRepository(ctx.db);
+  characters = new CharactersRepository(ctx.db);
 
   const pages: AdminPageContext = {
     admins,
@@ -111,7 +113,7 @@ async function build(): Promise<FastifyInstance> {
     models: new ModelsRepository(ctx.db),
     drafts,
     genres: new GenresRepository(ctx.db),
-    characters: new CharactersRepository(ctx.db),
+    characters,
     locations: new LocationsRepository(ctx.db),
     providers: new ProvidersRepository(ctx.db),
 
@@ -463,6 +465,34 @@ async function masterLocation(mediaId: string): Promise<string> {
  * semuanya. Sejak langkah 2 memakai kategori, satu panggilan ini menyusun
  * SELURUH lokasi kategori uji, bukan hanya satu.
  */
+/**
+ * Karakter master siap pakai, lalu dipungut ke dalam dunia.
+ *
+ * Menggantikan penyusunan NPC di dalam uji: sejak langkah 3 memungut dari master,
+ * karakter TIDAK DAPAT dibuat langsung di wizard — dan itulah yang dijaga di sini.
+ */
+async function tambahKarakter(
+  cookie: string,
+  worldId: string,
+  name: string,
+  ekspresi: string[],
+): Promise<void> {
+  const daftar = [];
+  for (const [index, label] of ekspresi.entries()) {
+    const mediaId = await upload(cookie, png(512, 768, `${name}-${label}-${String(index)}`));
+    daftar.push({ expression: label, mediaId, usageNote: '' });
+  }
+  const created = await characters.create({ name, expressions: daftar });
+  if (!created.ok) {
+    throw new Error(`karakter master gagal dibuat: ${created.reason}`);
+  }
+  await post(cookie, '/admin/worlds-wizard/3/npc', {
+    worldId,
+    characterId: created.characterId,
+    role: '',
+  });
+}
+
 async function addBackground(cookie: string, worldId: string, mediaId: string) {
   await masterLocation(mediaId);
   return simpanKategori(cookie, worldId, await testCategory());
@@ -648,7 +678,8 @@ describe('langkah 2: latar dari kategori', () => {
 /* Langkah 3 — karakter                                                */
 /* ------------------------------------------------------------------ */
 
-describe('langkah 3: karakter dan ekspresi', () => {
+describe('langkah 3: karakter dari master', () => {
+  /** Dunia yang sudah melewati langkah 2 — langkah 3 menuntut latarnya ada. */
   async function step3(cookie: string): Promise<string> {
     const worldId = await createDraftToStep2(cookie);
     const bg = await upload(cookie, png(1280, 720, 'bg-npc'));
@@ -656,245 +687,118 @@ describe('langkah 3: karakter dan ekspresi', () => {
     return worldId;
   }
 
-  it('menyimpan NPC beserta sifat, relasi, dan ekspresinya', async () => {
+  /** Satu karakter master beserta ekspresinya, siap dipungut. */
+  async function masterCharacter(cookie: string, name: string, ekspresi: string[]): Promise<string> {
+    const daftar = [];
+    for (const [index, label] of ekspresi.entries()) {
+      const mediaId = await upload(cookie, png(512, 768, `${name}-${label}-${String(index)}`));
+      daftar.push({ expression: label, mediaId, usageNote: '' });
+    }
+    const created = await characters.create({ name, expressions: daftar });
+    if (!created.ok) {
+      throw new Error(`karakter master gagal dibuat: ${created.reason}`);
+    }
+    return created.characterId;
+  }
+
+  it('menyalin nama dan SELURUH ekspresi dari master', async () => {
+    /*
+     * Inilah alasan perubahan ini: master sudah punya potretnya, dan sebelumnya
+     * setiap dunia mengunggah ulang gambar yang sama.
+     */
     const cookie = await login();
     const worldId = await step3(cookie);
+    const characterId = await masterCharacter(cookie, 'Elysia', ['dasar', 'marah']);
 
-    const base = await upload(cookie, png(512, 768, 'npc-base'));
-    const netral = await upload(cookie, png(512, 768, 'npc-netral'));
-    const marah = await upload(cookie, png(512, 768, 'npc-marah'));
-
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Elysia',
-      role: 'Atasan',
-      traits: 'dingin, teliti ,  ambisius',
-      initialRelation: 'dekat',
-      publicBackstory: 'Atasan yang tidak pernah memuji.',
-      baseMediaId: base,
-      expression: ['netral', 'marah'],
-      expressionUsage: ['Dipakai saat berbicara biasa.', 'Dipakai saat ia marah.'],
-      expressionMedia: [netral, marah],
-    });
+    const response = await post(cookie, '/admin/worlds-wizard/3/npc', { worldId, characterId, role: 'bosmu' });
+    expect(String(response.headers.location ?? ''), JSON.stringify({ status: response.statusCode, body: response.body.slice(0, 200) })).toContain('notice=picked');
 
     const npcs = await drafts.listNpcs(worldId, 1);
     expect(npcs).toHaveLength(1);
 
     const npc = npcs[0]!;
-    expect(npc.name).toBe('Elysia');
-    expect(npc.role).toBe('Atasan');
-    // Spasi di sekitar koma dibuang; entri kosong dibuang.
-    expect(npc.traits).toEqual(['dingin', 'teliti', 'ambisius']);
-    expect(npc.initialRelation).toBe('dekat');
-    // Gambar dasar tersimpan sebagai ekspresi `dasar` di urutan PERTAMA, jadi
-    // dialah potret bawaan — dan karena ia ekspresi yang terdaftar, mesin cerita
-    // dapat memintanya. Aset tanpa nama ekspresi akan tersaring dari manifest
-    // dan menjadi data mati.
-    expect(npc.expressions.map((item) => item.expression)).toEqual(['dasar', 'netral', 'marah']);
-    expect(npc.baseMediaId).toBe(base);
-    expect(npc.expressions.map((item) => item.mediaId)).toEqual([base, netral, marah]);
-    expect(npc.expressions[1]?.usageNote).toBe('Dipakai saat berbicara biasa.');
+    expect(npc.name, 'nama tidak disalin dari master').toBe('Elysia');
+    expect(npc.role).toBe('bosmu');
+    expect(npc.masterCharacterId, 'asal karakter tidak dicatat').toBe(characterId);
+    expect(npc.expressions.map((item) => item.expression)).toEqual(['dasar', 'marah']);
+    // Potret bawaannya ekspresi pertama — aturan yang sama dengan `dasar`.
+    expect(npc.baseMediaId).toBe(npc.expressions[0]?.mediaId);
   });
 
-  it('menjadikan potret ekspresi PERTAMA sebagai potret bawaan', async () => {
+  it('mengizinkan nama diganti tanpa mengubah master', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+    const characterId = await masterCharacter(cookie, 'Elysia', ['dasar']);
+
+    await post(cookie, '/admin/worlds-wizard/3/npc', { worldId, characterId, role: 'bosmu' });
+    const [npc] = await drafts.listNpcs(worldId, 1);
+
+    await post(cookie, '/admin/worlds-wizard/3/npc/save', {
+      worldId,
+      npcId: npc!.npcId,
+      name: 'Bu Ratna',
+      role: 'bosmu',
+      background: 'Mantan pacar @user saat SMP dulu.',
+      soul: 'Pendiam karena terbiasa mengamati.',
+    });
+
+    const [sesudah] = await drafts.listNpcs(worldId, 1);
+    expect(sesudah?.name).toBe('Bu Ratna');
+    expect(sesudah?.publicBackstory).toContain('@user');
+    expect(sesudah?.soul).toContain('terbiasa mengamati');
+
+    // Master TIDAK ikut berubah — itu janji halaman ini.
+    const master = await characters.find(characterId);
+    expect(master?.name, 'master ikut berubah').toBe('Elysia');
+  });
+
+  it('menyimpan soul, yang menggantikan sifat', async () => {
+    const cookie = await login();
+    const worldId = await step3(cookie);
+    const characterId = await masterCharacter(cookie, 'Elysia', ['dasar']);
+
+    await post(cookie, '/admin/worlds-wizard/3/npc', { worldId, characterId, role: 'bosmu' });
+    const [npc] = await drafts.listNpcs(worldId, 1);
+
+    await post(cookie, '/admin/worlds-wizard/3/npc/save', {
+      worldId,
+      npcId: npc!.npcId,
+      name: 'Elysia',
+      role: 'bosmu',
+      background: 'Latar.',
+      soul: 'Ia menahan kesal dengan diam.',
+    });
+
+    const [sesudah] = await drafts.listNpcs(worldId, 1);
+    expect(sesudah?.soul).toBe('Ia menahan kesal dengan diam.');
+  });
+
+  it('menolak karakter master yang tidak ada', async () => {
     const cookie = await login();
     const worldId = await step3(cookie);
 
-    const pertama = await upload(cookie, png(512, 768, 'urut-1'));
-    const kedua = await upload(cookie, png(512, 768, 'urut-2'));
-
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
+    const response = await post(cookie, '/admin/worlds-wizard/3/npc', {
       worldId,
-      npcId: '',
-      name: 'Leo',
-      traits: '',
-      initialRelation: 'normal',
-      expression: ['tersenyum', 'kesal'],
-      expressionMedia: [pertama, kedua],
+      characterId: 'char_tidak_ada',
+      role: '',
     });
 
-    const { rows } = await ctx.db.query<{ npc_id: string; default_portrait_asset_id: string }>(
-      'SELECT npc_id, default_portrait_asset_id FROM world_characters WHERE world_id = $1',
-      [worldId],
-    );
-    const npcId = rows[0]!.npc_id;
-
-    // Potret bawaan harus menunjuk aset ekspresi pertama — bukan yang terakhir,
-    // dan bukan id yang dikarang di tempat lain.
-    expect(rows[0]?.default_portrait_asset_id).toBe(`p_${npcId}_tersenyum`);
-
-    const { rows: assets } = await ctx.db.query<{ asset_id: string }>(
-      `SELECT asset_id FROM world_assets WHERE world_id = $1 AND kind = 'portrait' ORDER BY position`,
-      [worldId],
-    );
-    expect(assets.map((row) => row.asset_id)).toEqual([
-      `p_${npcId}_tersenyum`,
-      `p_${npcId}_kesal`,
-    ]);
+    expect(location(response)).toContain('notice=not-found');
+    expect(await drafts.listNpcs(worldId, 1)).toHaveLength(0);
   });
 
-  it('menjadikan gambar dasar sebagai potret bawaan, tanpa membuang berkasnya', async () => {
+  it('menghapus karakter dunia tanpa menyentuh master', async () => {
     const cookie = await login();
     const worldId = await step3(cookie);
+    const characterId = await masterCharacter(cookie, 'Elysia', ['dasar']);
 
-    const dasar = await upload(cookie, png(512, 768, 'dasar-saja'));
+    await post(cookie, '/admin/worlds-wizard/3/npc', { worldId, characterId, role: 'bosmu' });
+    const [npc] = await drafts.listNpcs(worldId, 1);
 
-    // Tanpa satu pun ekspresi bernama. Sebelum perbaikan, berkas ini diterima
-    // lalu dibuang tanpa jejak: tidak ada kolom untuknya, dan
-    // `default_portrait_asset_id` hanya dapat menunjuk aset potret.
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Hanya Dasar',
-      initialRelation: 'normal',
-      baseMediaId: dasar,
-    });
-
-    const npcs = await drafts.listNpcs(worldId, 1);
-    expect(npcs[0]?.baseMediaId).toBe(dasar);
-    expect(npcs[0]?.expressions.map((item) => item.expression)).toEqual(['dasar']);
-
-    // Dan karakter ini terhitung PUNYA potret, jadi tidak menahan penerbitan.
-    expect(await drafts.countNpcsWithoutPortrait(worldId, 1)).toBe(0);
-  });
-
-  it('mengganti ekspresi bernama `dasar` dengan gambar dasar, bukan menduplikasinya', async () => {
-    const cookie = await login();
-    const worldId = await step3(cookie);
-
-    const dasar = await upload(cookie, png(512, 768, 'dasar-a'));
-    const lain = await upload(cookie, png(512, 768, 'dasar-b'));
-
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Bentrok Nama',
-      baseMediaId: dasar,
-      // Pengguna menamai sendiri salah satu ekspresinya `dasar`.
-      expression: ['dasar', 'netral'],
-      expressionMedia: [lain, lain],
-    });
-
-    const npc = (await drafts.listNpcs(worldId, 1))[0]!;
-    // Hanya satu entri `dasar`, dan yang menang adalah gambar dasar — dua aset
-    // berid sama tidak dapat hidup berdampingan.
-    expect(npc.expressions.map((item) => item.expression)).toEqual(['dasar', 'netral']);
-    expect(npc.expressions[0]?.mediaId).toBe(dasar);
-  });
-
-  it('membuang ekspresi yang gambarnya tidak ada, bukan menyimpan namanya saja', async () => {
-    const cookie = await login();
-    const worldId = await step3(cookie);
-
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Tanpa Gambar',
-      traits: '',
-      initialRelation: 'normal',
-      expression: ['netral', 'sedih'],
-      // Tidak satu pun pernah diunggah; yang pertama berbentuk hash yang sah
-      // tetapi tidak ada isinya, yang kedua bukan hash sama sekali.
-      expressionMedia: ['a'.repeat(64), 'bukan-hash'],
-    });
-
-    const npcs = await drafts.listNpcs(worldId, 1);
-    expect(npcs).toHaveLength(1);
-    expect(npcs[0]?.expressions).toEqual([]);
-
-    // Nama ekspresi pun tidak disimpan. Kalau ia disimpan, ia akan terlihat oleh
-    // kontrak katalog pemain sebagai ekspresi yang dapat dipilih AI — padahal
-    // tidak ada gambar untuk dirender. Dan karena panel menurunkan daftar
-    // ekspresi dari baris aset, nama itu juga tidak akan pernah tampil di sini
-    // lalu hilang senyap pada penyimpanan berikutnya.
-    const { rows: names } = await ctx.db.query<{ total: number }>(
-      'SELECT count(*)::int AS total FROM world_character_expressions WHERE world_id = $1',
-      [worldId],
-    );
-    expect(names[0]?.total).toBe(0);
-
-    const { rows: assets } = await ctx.db.query<{ total: number }>(
-      `SELECT count(*)::int AS total FROM world_assets WHERE world_id = $1 AND kind = 'portrait'`,
-      [worldId],
-    );
-    expect(assets[0]?.total).toBe(0);
-  });
-
-  it('menjatuhkan relasi yang tidak dikenal ke `normal`', async () => {
-    const cookie = await login();
-    const worldId = await step3(cookie);
-
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Relasi Aneh',
-      initialRelation: 'musuh-bebuyutan',
-    });
-
-    const npcs = await drafts.listNpcs(worldId, 1);
-    expect(npcs[0]?.initialRelation).toBe('normal');
-  });
-
-  it('menyunting NPC tidak menumpuk ekspresi lama', async () => {
-    const cookie = await login();
-    const worldId = await step3(cookie);
-
-    const satu = await upload(cookie, png(512, 768, 'edit-1'));
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Bisa Berubah',
-      expression: ['netral', 'marah'],
-      expressionMedia: [satu, satu],
-    });
-
-    const npcId = (await drafts.listNpcs(worldId, 1))[0]!.npcId;
-
-    // Daftar ekspresi diganti seluruhnya: yang hilang benar-benar hilang.
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId,
-      name: 'Bisa Berubah',
-      expression: ['tercengang'],
-      expressionMedia: [satu],
-    });
-
-    const npcs = await drafts.listNpcs(worldId, 1);
-    expect(npcs).toHaveLength(1);
-    expect(npcs[0]?.expressions.map((item) => item.expression)).toEqual(['tercengang']);
-
-    const { rows } = await ctx.db.query<{ total: number }>(
-      `SELECT count(*)::int AS total FROM world_assets WHERE world_id = $1 AND kind = 'portrait'`,
-      [worldId],
-    );
-    expect(rows[0]?.total).toBe(1);
-  });
-
-  it('menghapus NPC beserta potretnya', async () => {
-    const cookie = await login();
-    const worldId = await step3(cookie);
-
-    const gambar = await upload(cookie, png(512, 768, 'hapus-1'));
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Akan Hilang',
-      expression: ['netral'],
-      expressionMedia: [gambar],
-    });
-
-    const npcId = (await drafts.listNpcs(worldId, 1))[0]!.npcId;
-    await post(cookie, '/admin/worlds-wizard/3/npc/delete', { worldId, npcId });
+    await post(cookie, '/admin/worlds-wizard/3/npc/delete', { worldId, npcId: npc!.npcId });
 
     expect(await drafts.listNpcs(worldId, 1)).toHaveLength(0);
-
-    // Potret tidak terhapus lewat kunci asing — ia harus dibuang secara eksplisit.
-    const { rows } = await ctx.db.query<{ total: number }>(
-      `SELECT count(*)::int AS total FROM world_assets WHERE world_id = $1 AND kind = 'portrait'`,
-      [worldId],
-    );
-    expect(rows[0]?.total).toBe(0);
+    expect(await characters.find(characterId), 'master ikut terhapus').not.toBeNull();
   });
 });
 
@@ -925,47 +829,28 @@ describe('penerbitan', () => {
     expect(rows[0]?.status).toBe('draft');
   });
 
-  it('menolak terbit bila ada karakter yang belum punya gambar ekspresi', async () => {
+  it('karakter tanpa potret TIDAK MUNGKIN ada, jadi tidak ada yang menahan terbit', async () => {
+    /*
+     * Penjaga "tolak terbit bila ada karakter tanpa potret" tidak dapat diuji
+     * lagi, dan uji ini menjelaskan MENGAPA: sejak langkah 3 memungut karakter
+     * dari master, dan master menuntut setiap karakter punya minimal satu
+     * ekspresi bergambar, karakter tanpa wajah tidak dapat masuk ke sebuah dunia.
+     *
+     * Penjaganya sendiri tetap ada di `publishDraft` — ia murah, dan ia menahan
+     * baris LAMA yang dibuat sebelum aturan ini berlaku. Yang berubah hanya
+     * kenyataan bahwa jalur itu tidak lagi dapat dicapai lewat wizard.
+     */
     const cookie = await login();
     const worldId = await createDraftToStep2(cookie);
 
     const bg = await upload(cookie, png(1280, 720, 'faceless-bg'));
     await addBackground(cookie, worldId, bg);
-
-    // Karakter tanpa satu pun gambar ekspresi tetap boleh disimpan sebagai draf
-    // — wizard ini memang mendukung pekerjaan setengah jadi. Yang ditahan adalah
-    // penerbitannya: pemain tidak boleh melihat karakter tanpa wajah.
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Belum Ada Wajah',
-      expression: [],
-    });
-    expect(await drafts.countNpcsWithoutPortrait(worldId, 1)).toBe(1);
-
-    const response = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
-    expect(location(response)).toContain('/wizard/3?notice=incomplete');
-
-    const { rows } = await ctx.db.query<{ status: string }>(
-      'SELECT status FROM world_versions WHERE world_id = $1',
-      [worldId],
-    );
-    expect(rows[0]?.status).toBe('draft');
-
-    // Setelah gambar ekspresinya diunggah, penerbitan berhasil.
-    const wajah = await upload(cookie, png(512, 768, 'faceless-npc'));
-    const npcId = (await drafts.listNpcs(worldId, 1))[0]!.npcId;
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId,
-      name: 'Belum Ada Wajah',
-      expression: ['netral'],
-      expressionMedia: [wajah],
-    });
+    await tambahKarakter(cookie, worldId, 'Belum Ada Wajah', ['netral']);
 
     expect(await drafts.countNpcsWithoutPortrait(worldId, 1)).toBe(0);
-    const published = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
-    expect(location(published)).toContain('notice=published');
+
+    const response = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
+    expect(location(response)).toContain('/admin/worlds?notice=published');
   });
 
   it('menerbitkan draf dan mencatat tanggal terbitnya', async () => {
@@ -975,14 +860,7 @@ describe('penerbitan', () => {
     const bg = await upload(cookie, png(1280, 720, 'pub-bg-2'));
     await addBackground(cookie, worldId, bg);
 
-    const npc = await upload(cookie, png(512, 768, 'pub-npc'));
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Elysia',
-      expression: ['netral'],
-      expressionMedia: [npc],
-    });
+    await tambahKarakter(cookie, worldId, 'Elysia', ['netral']);
 
     const response = await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
     expect(location(response)).toContain('/admin/worlds?notice=published');
@@ -1011,14 +889,7 @@ describe('penerbitan', () => {
 
     const bg = await upload(cookie, png(1280, 720, 'pub-bg-3'));
     await addBackground(cookie, worldId, bg);
-    const npc = await upload(cookie, png(512, 768, 'pub-npc-3'));
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Elysia',
-      expression: ['netral'],
-      expressionMedia: [npc],
-    });
+    await tambahKarakter(cookie, worldId, 'Elysia', ['netral']);
     await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
 
     const judulSebelum = (await ctx.db.query<{ title: string }>(
@@ -1054,20 +925,13 @@ describe('penerbitan', () => {
 
     const bg = await upload(cookie, png(1280, 720, 'audit-bg'));
     await addBackground(cookie, worldId, bg);
-    const npc = await upload(cookie, png(512, 768, 'audit-npc'));
-    await post(cookie, '/admin/worlds-wizard/3/npc', {
-      worldId,
-      npcId: '',
-      name: 'Elysia',
-      expression: ['netral'],
-      expressionMedia: [npc],
-    });
+    await tambahKarakter(cookie, worldId, 'Elysia', ['netral']);
     await post(cookie, '/admin/worlds-wizard/3', { worldId, intent: 'next' });
 
     for (const action of [
       'world.draft.save',
       'world.location_category.save',
-      'world.npc.create',
+      'world.npc.pick',
       'world.publish',
     ]) {
       const entries = await admins.listAudit(50, { action });

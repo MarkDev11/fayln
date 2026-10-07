@@ -503,6 +503,185 @@ export async function describeCharacterPortrait(
 }
 
 /* ------------------------------------------------------------------ */
+/* Teks karakter: background dan soul                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Aturan yang dipakai BERSAMA oleh background dan soul karakter.
+ *
+ * Yang terpenting ada di urutan pertama: @user adalah NAMA PEMAIN. Ia ditulis
+ * APA ADANYA di dalam hasilnya, dan sistem yang menggantinya dengan nama pemain
+ * saat cerita berjalan. Karena itu model tidak boleh menebak-nebak nama, dan
+ * tidak boleh pula menggantinya dengan "kamu" — dua dunia yang dimainkan orang
+ * berbeda harus tetap bisa memakai teks yang sama.
+ */
+const ATURAN_KARAKTER = [
+  '1. @user is the NAME OF THE PLAYER. Write it EXACTLY as "@user", never replace',
+  '   it with a name, never with "kamu", never with "you". The system substitutes',
+  '   the real player name when the story runs.',
+  '2. Write in Indonesian, second person, addressing the player as @user.',
+  '3. NEVER name other characters. Refer to them by their ROLE or relationship to',
+  '   @user: "bosmu", "sahabatmu", "mantan pacarmu". A role may be described',
+  '   further ("sahabatmu yang tahu masa lalumu"), never turned into a name.',
+  '4. Do not mention that this is a game, a novel, or that you are an AI.',
+  '   Write as if the situation were real.',
+  '5. No closing line like "pilihan ada di tanganmu".',
+].join('\n');
+
+/**
+ * System prompt untuk background dan soul karakter.
+ *
+ * Dua tugas yang berbeda, digabung di satu fungsi karena aturannya sama persis —
+ * memisahkannya berarti menggandakan aturan @user, dan satu perbaikan nanti harus
+ * dilakukan dua kali.
+ *
+ * `background` adalah LATAR BELAKANG: apa yang sudah terjadi antara tokoh ini dan
+ * pemain. `soul` adalah KEPRIBADIAN: apa yang mendorongnya, apa yang ditakutinya,
+ * bagaimana ia bicara.
+ */
+export function characterSystemPrompt(kind: 'background' | 'soul'): string {
+  const tugas =
+    kind === 'background'
+      ? [
+          'You are given one short hint about a character in a visual novel.',
+          'EXPAND that hint into a full background: what happened between this',
+          'character and @user, when, and why it still matters now.',
+          '',
+          'About 150 to 250 words. Concrete and specific — shared history, small',
+          'details, unresolved tension. Do not invent a new relationship that',
+          'contradicts the hint; build on it.',
+        ].join('\n')
+      : [
+          'You are given a character and a short hint about them.',
+          'Write their SOUL: what drives them, what they fear, how they speak,',
+          'what they hide, and where they contradict themselves.',
+          '',
+          'About 150 to 250 words. Written as DESCRIPTION, not as dialogue and not',
+          'as a list of adjectives — a paragraph that lets someone portray this',
+          'person consistently.',
+          '',
+          'Do NOT restate the background. The soul is WHO they are; the background',
+          'is WHAT happened. Keep them separate.',
+        ].join('\n');
+
+  return [
+    tugas,
+    '',
+    'RULES — these matter more than style:',
+    '',
+    ATURAN_KARAKTER,
+    '',
+    'Reply with ONLY the text itself. No JSON, no markdown heading, no preamble,',
+    'and no commentary before or after it.',
+    '',
+    'You may think first if you need to, but the LAST thing you write must be the',
+    'text itself, with nothing after it.',
+  ].join('\n');
+}
+
+export type CharacterTextResult =
+  | { ok: true; text: string }
+  | { ok: false; reason: VisionFailure; detail: string };
+
+/** Masukan untuk pembuatan teks karakter. */
+export type CharacterTextInput = {
+  kind: 'background' | 'soul';
+  /** Nama tokoh pada dunia ini — boleh berbeda dari master. */
+  name: string;
+  /** Peran (fungsi) tokoh dalam cerita ini, mis. "bosmu". */
+  role: string;
+  /**
+   * Yang diketik admin. Ia WAJIB ada: model memperinci apa yang ditulis admin,
+   * bukan mengarang dari nol. Tanpa ini hasilnya akan melenceng dari niatnya.
+   */
+  seed: string;
+  /** Judul dunia, supaya hasilnya tidak bertolak belakang dengan ceritanya. */
+  worldTitle: string;
+};
+
+/**
+ * Memperinci background atau soul karakter dari yang diketik admin.
+ *
+ * Berbeda dari tugas sinopsis/premis dalam satu hal yang menentukan: hasilnya
+ * TEKS BEBAS, bukan JSON. Karena itu tidak ada penguraian objek — yang diambil
+ * adalah seluruh jawaban apa adanya, setelah dibersihkan dari sampah yang sering
+ * menyertainya (pagar kode, judul, tanda kutip pembungkus).
+ */
+export async function generateCharacterText(
+  request: { baseUrl: string; apiType: ApiType; modelKey: string },
+  apiKey: string,
+  input: CharacterTextInput,
+  fetchImpl: typeof fetch = fetch,
+): Promise<CharacterTextResult> {
+  const { path, body } = buildTextRequest(
+    request,
+    characterSystemPrompt(input.kind),
+    [
+      `Karakter: ${input.name}`,
+      input.role.trim().length > 0 ? `Perannya dalam cerita: ${input.role}` : '',
+      input.worldTitle.trim().length > 0 ? `Dunia: ${input.worldTitle}` : '',
+      '',
+      `Yang diketik admin — perinci ini: ${input.seed}`,
+    ]
+      .filter((baris) => baris.length > 0)
+      .join('\n'),
+  );
+
+  const call = await sendToProvider(request, path, body, apiKey, fetchImpl, {
+    nama: 'tugas teks karakter',
+    timeoutMs: TEXT_TIMEOUT_MS,
+    saranWaktuHabis:
+      'Menulis 150 sampai 250 kata memang lama. Coba lagi, atau pilih model yang lebih cepat.',
+  });
+
+  if (!call.ok) {
+    return call;
+  }
+
+  const bersih = bersihkanTeksBebas(call.text);
+  if (bersih.length === 0) {
+    return {
+      ok: false,
+      reason: 'declined',
+      detail: `Model tidak menulis apa pun. Jawabannya: ${detailOf(call.text, apiKey)}`,
+    };
+  }
+
+  return { ok: true, text: clamp(bersih, MAX_WORLD_TEXT) };
+}
+
+/**
+ * Membersihkan jawaban teks bebas dari sampah yang sering menyertainya.
+ *
+ * Tidak seperti tugas JSON, di sini seluruh jawabannya adalah isinya — jadi tidak
+ * ada yang boleh dibuang selain pembungkus yang jelas-jelas bukan isi: pagar kode,
+ * judul markdown, dan tanda kutip di ujung-ujungnya.
+ */
+function bersihkanTeksBebas(teks: string): string {
+  let hasil = teks.trim();
+
+  // Pagar kode, dengan atau tanpa nama bahasanya.
+  const pagar = /^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```$/s.exec(hasil);
+  if (pagar?.[1] !== undefined) {
+    hasil = pagar[1].trim();
+  }
+
+  // Tanda kutip pembungkus.
+  if (hasil.length >= 2) {
+    const pertama = hasil[0];
+    const terakhir = hasil[hasil.length - 1];
+    if (pertama === terakhir && (pertama === '"' || pertama === "'")) {
+      hasil = hasil.slice(1, -1).trim();
+    }
+  }
+
+  // Judul markdown di awal.
+  hasil = hasil.replace(/^#{1,6}\s+.*\n+/, '').trim();
+
+  return hasil;
+}
+
+/* ------------------------------------------------------------------ */
 /* Teks dunia: sinopsis dan premis dari judul                          */
 /* ------------------------------------------------------------------ */
 

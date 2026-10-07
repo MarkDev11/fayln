@@ -817,20 +817,13 @@ describe('sheet konfirmasi', () => {
  * ekspresi kedua, sehingga karakter berekspresi banyak mustahil dibuat.
  */
 describe('templat baris ekspresi berada di dalam formulirnya', () => {
-  it('pada wizard langkah 3', async () => {
-    const cookie = await login();
-    const { worldId } = await pages.drafts.createDraft();
-    const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/3`);
-
-    const form = formWith(body, 'data-npc-scope');
-    expect(form, 'daftar ekspresi berada di luar formulir').toContain('data-expression-list');
-    expect(form, 'tombol tambah ekspresi berada di luar formulir').toContain('data-expression-add');
-    expect(
-      form,
-      'templat ekspresi berada di luar formulir — tombol "+ Tambah ekspresi" tidak akan bekerja',
-    ).toContain('data-expression-template');
-  });
-
+  /*
+   * Kasus "wizard langkah 3" DIHAPUS pada 7 Oktober 2026: langkah itu tidak lagi
+   * punya baris ekspresi. Karakter dipungut dari master, dan seluruh potret serta
+   * ekspresinya ikut otomatis — jadi tidak ada lagi yang diunggah atau ditambah
+   * di wizard. Pelajaran di bawah ini tetap berlaku, tetapi hanya pada halaman
+   * master karakter, tempat baris ekspresi masih ada.
+   */
   it('pada halaman master karakter', async () => {
     const cookie = await login();
     const body = await sweep(cookie, '/admin/characters-form');

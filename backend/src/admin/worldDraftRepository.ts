@@ -52,6 +52,57 @@ export const MAX_BACKGROUNDS = 50;
 export const DEFAULT_BLUR_STRENGTH = 30;
 
 /**
+ * Satu karakter master beserta seluruh ekspresinya.
+ *
+ * Dibaca langsung lewat kueri karena karakter master bukan milik repositori ini:
+ * ia milik charactersRepository, dan meminjamnya dari sana akan membuat dua
+ * repositori saling bergantung hanya untuk satu pembacaan.
+ */
+async function findMasterCharacter(
+  db: Pick<Database, 'query'>,
+  characterId: string,
+): Promise<{ name: string; expressions: { expression: string; mediaId: string; usageNote: string }[] } | null> {
+  /*
+   * Dua kueri, bukan satu JOIN.
+   *
+   * Urutan ekspresi bermakna — yang pertama menjadi potret bawaan — dan
+   * mengurutkannya lewat `ORDER BY` pada kolom tabel yang di-JOIN adalah hal
+   * yang tidak dapat diandalkan di pg-mem. Mengurutkannya di JavaScript
+   * hasilnya sama dan tidak bergantung pada dukungan pengurai.
+   */
+  const { rows } = await db.query<{ name: string }>(
+    `SELECT character_id, name FROM characters WHERE character_id = $1`,
+    [characterId],
+  );
+  const kepala = rows[0];
+  if (!kepala) {
+    return null;
+  }
+
+  const { rows: ekspresi } = await db.query<{
+    expression: string;
+    media_id: string;
+    usage_note: string;
+    position: number;
+  }>(
+    `SELECT expression, media_id, usage_note, position
+     FROM character_expressions WHERE character_id = $1`,
+    [characterId],
+  );
+
+  const urut = [...ekspresi].sort((a, b) => a.position - b.position);
+
+  return {
+    name: kepala.name,
+    expressions: urut.map((row) => ({
+      expression: row.expression,
+      mediaId: row.media_id,
+      usageNote: row.usage_note,
+    })),
+  };
+}
+
+/**
  * Batas panjang sinopsis dan premis dunia.
  *
  * Dinaikkan dari 240 dan 2000 huruf pada 7 Oktober 2026: pemilik produk menilai
@@ -171,6 +222,18 @@ export type NpcRow = {
   role: string;
   traits: string[];
   publicBackstory: string;
+  /**
+   * Jiwa: kepribadian mendalam karakter pada DUNIA INI. Menggantikan sifat
+   * (daftar kata): satu paragraf dapat menyatakan "pendiam" sekaligus MENGAPA ia
+   * pendiam, sedangkan daftar kata tidak dapat.
+   */
+  soul: string;
+  /**
+   * Karakter master asal karakter ini, atau null bila dibuat sebelum ada master.
+   * Dicatat supaya "karakter dunia ini dari mana" dapat dijawab, dan supaya
+   * karakter master yang masih dipakai tidak dapat dihapus diam-diam.
+   */
+  masterCharacterId: string | null;
   initialRelation: RelationStatus;
   position: number;
   baseMediaId: string | null;
@@ -199,6 +262,20 @@ export type NpcInput = {
 const MAX_NAME = 120;
 const MAX_DESCRIPTION = 200;
 const MAX_USAGE = 500;
+
+/** Jumlah karakter terbanyak dalam satu dunia. */
+const MAX_NPCS = 50;
+
+/** Panjang latar belakang karakter pada dunia ini. */
+const MAX_BACKSTORY = 4000;
+
+/**
+ * Panjang soul (jiwa) karakter.
+ *
+ * Soul MENGGANTIKAN sifat (daftar kata), jadi ruangnya harus cukup untuk satu
+ * sampai dua paragraf — bukan sepuluh kata sifat.
+ */
+const MAX_SOUL = 4000;
 
 const LIKELIHOODS = ['none', 'low', 'medium', 'high'] as const;
 
@@ -732,10 +809,13 @@ export class WorldDraftRepository {
       name: string;
       role: string;
       public_backstory: string;
+      soul: string;
+      master_character_id: string | null;
       initial_relation: string;
       position: number;
     }>(
-      `SELECT npc_id, name, role, public_backstory, initial_relation, position
+      `SELECT npc_id, name, role, public_backstory, soul, master_character_id,
+              initial_relation, position
        FROM world_characters
        WHERE world_id = $1 AND world_version = $2
        ORDER BY position ASC, npc_id ASC`,
@@ -749,6 +829,8 @@ export class WorldDraftRepository {
       npcId: row.npc_id,
       name: row.name,
       role: row.role,
+      soul: row.soul ?? '',
+      masterCharacterId: row.master_character_id ?? null,
       traits: traits.get(row.npc_id) ?? [],
       publicBackstory: row.public_backstory,
       initialRelation: row.initial_relation as RelationStatus,
@@ -881,6 +963,171 @@ export class WorldDraftRepository {
 
       return { npcId };
     });
+  }
+
+  /**
+   * Memungut satu karakter dari MASTER ke dalam dunia ini.
+   *
+   * ---------------------------------------------------------------------------
+   * MENGAPA DIPUNGUT, BUKAN DIBUAT
+   * ---------------------------------------------------------------------------
+   * Master karakter sudah berisi potret beserta seluruh ekspresinya. Membuat
+   * karakter dari nol di wizard berarti setiap dunia mengunggah ulang gambar yang
+   * sama. Sekarang yang dipilih adalah KARAKTERNYA, dan potretnya ikut.
+   *
+   * Yang ditulis di dunia ini hanya yang memang milik dunia:
+   *
+   *   - nama        : disalin dari master, boleh diganti tanpa mengubah master;
+   *   - peran       : fungsi tokoh dalam CERITA INI — "bosmu", "sahabatmu".
+   *                   Master tidak punya peran, karena karakter yang sama bisa
+   *                   menjadi bosmu di satu dunia dan tetanggamu di dunia lain;
+   *   - background  : latar belakangnya di dunia ini;
+   *   - soul        : kepribadian mendalamnya. Menggantikan SIFAT (daftar kata):
+   *                   satu paragraf dapat menyatakan "pendiam" sekaligus MENGAPA
+   *                   ia pendiam, sedangkan daftar kata tidak dapat.
+   *
+   * `master_character_id` dicatat supaya "karakter dunia ini dari mana" dapat
+   * dijawab, dan supaya karakter master yang masih dipakai tidak dapat dihapus.
+   */
+  async pickMasterCharacter(
+    worldId: string,
+    worldVersion: number,
+    characterId: string,
+    input: { name: string; role: string; background: string; soul: string },
+  ): Promise<
+    { ok: true; npcId: string; portraits: number } | { ok: false; reason: 'not-found' | 'limit' }
+  > {
+    const karakter = await findMasterCharacter(this.db, characterId);
+    if (!karakter) {
+      return { ok: false, reason: 'not-found' as const };
+    }
+
+    return this.db.transaction(async (client) => {
+      const { rows: counted } = await client.query<{ total: number }>(
+        `SELECT count(*)::int AS total FROM world_characters
+         WHERE world_id = $1 AND world_version = $2`,
+        [worldId, worldVersion],
+      );
+      if ((counted[0]?.total ?? 0) >= MAX_NPCS) {
+        return { ok: false, reason: 'limit' as const };
+      }
+
+      const npcId = `npc_${slug(randomUUID()).slice(0, 10)}`;
+
+      const { rows: positionRows } = await client.query<{ next_position: number }>(
+        `SELECT coalesce(max(position), 0)::int + 1 AS next_position
+         FROM world_characters WHERE world_id = $1 AND world_version = $2`,
+        [worldId, worldVersion],
+      );
+
+      // Ekspresi pertama menjadi potret bawaan, sama seperti aturan `dasar`.
+      const ekspresiPertama = karakter.expressions[0];
+      const defaultAssetId = ekspresiPertama
+        ? portraitAssetId(npcId, ekspresiPertama.expression)
+        : '';
+
+      await client.query(
+        `INSERT INTO world_characters (
+           world_id, world_version, npc_id, name, role, public_backstory,
+           soul, initial_relation, default_portrait_asset_id, position,
+           master_character_id
+         ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        [
+          worldId,
+          worldVersion,
+          npcId,
+          clamp(input.name, MAX_NAME),
+          clamp(input.role, MAX_NAME),
+          clamp(input.background, MAX_BACKSTORY),
+          clamp(input.soul, MAX_SOUL),
+          'normal',
+          defaultAssetId,
+          positionRows[0]?.next_position ?? 1,
+          characterId,
+        ],
+      );
+
+      // Daftar NAMA ekspresi tetap diisi: kontrak katalog pemain membacanya.
+      for (const [position, item] of karakter.expressions.entries()) {
+        await client.query(
+          `INSERT INTO world_character_expressions (world_id, world_version, npc_id, position, expression)
+           VALUES ($1,$2,$3,$4,$5)`,
+          [worldId, worldVersion, npcId, position, clamp(item.expression, MAX_NAME)],
+        );
+      }
+
+      let potret = 0;
+      let portraitPosition = 0;
+      for (const item of karakter.expressions) {
+        if (!item.mediaId) {
+          continue;
+        }
+        await client.query(
+          `INSERT INTO world_assets (
+             world_id, world_version, asset_id, kind, label, uri, media_id,
+             npc_id, expression, usage_note, position
+           ) VALUES ($1,$2,$3,'portrait',$4,$5,$6,$7,$8,$9,$10)`,
+          [
+            worldId,
+            worldVersion,
+            portraitAssetId(npcId, item.expression),
+            `${input.name} — ${item.expression}`,
+            mediaUri(item.mediaId),
+            item.mediaId,
+            npcId,
+            clamp(item.expression, MAX_NAME),
+            clamp(item.usageNote, MAX_USAGE),
+            portraitPosition,
+          ],
+        );
+        portraitPosition += 1;
+        potret += 1;
+      }
+
+      return { ok: true, npcId, portraits: potret };
+    });
+  }
+
+  /** Satu karakter dunia, atau null bila tidak ada pada versi ini. */
+  async findNpc(worldId: string, worldVersion: number, npcId: string): Promise<NpcRow | null> {
+    const semua = await this.listNpcs(worldId, worldVersion);
+    return semua.find((npc) => npc.npcId === npcId) ?? null;
+  }
+
+  /**
+   * Menyimpan nama, peran, background, dan soul satu karakter dunia.
+   *
+   * HANYA empat kolom ini yang disentuh — dan itu disengaja. Potret, ekspresi,
+   * dan relasi awal tidak ada di sini karena potret dan ekspresinya berasal dari
+   * master, sedangkan mengubahnya di dunia akan membuat keduanya berbeda tanpa
+   * cara menyelaraskan lagi.
+   *
+   * `default_portrait_asset_id` juga tidak disentuh: ia menunjuk ekspresi
+   * pertama, dan mengubahnya berarti memutus rujukan ke gambar yang tidak
+   * diubah di sini.
+   */
+  async updateNpcText(
+    worldId: string,
+    worldVersion: number,
+    npcId: string,
+    input: { name: string; role: string; background: string; soul: string },
+  ): Promise<boolean> {
+    const { rowCount } = await this.db.query(
+      `UPDATE world_characters
+       SET name = $4, role = $5, public_backstory = $6, soul = $7
+       WHERE world_id = $1 AND world_version = $2 AND npc_id = $3`,
+      [
+        worldId,
+        worldVersion,
+        npcId,
+        clamp(input.name, MAX_NAME),
+        clamp(input.role, MAX_NAME),
+        clamp(input.background, MAX_BACKSTORY),
+        clamp(input.soul, MAX_SOUL),
+      ],
+    );
+
+    return (rowCount ?? 0) > 0;
   }
 
   async deleteNpc(worldId: string, worldVersion: number, npcId: string): Promise<boolean> {

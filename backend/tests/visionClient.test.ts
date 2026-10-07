@@ -16,6 +16,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   describeCharacterPortrait,
+  characterSystemPrompt,
+  generateCharacterText,
   generateWorldText,
   TEXT_TIMEOUT_MS,
   VISION_TIMEOUT_MS,
@@ -798,6 +800,141 @@ describe('batas waktu tugas teks', () => {
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
       expect(hasil.detail).toContain('ENOTFOUND');
+    }
+  });
+});
+
+/* ------------------------------------------------------------------ */
+
+/**
+ * Teks karakter: background dan soul.
+ *
+ * Yang diuji di sini bukan bahwa model menjawab, melainkan tiga janji:
+ *
+ *   - aturan @user benar-benar tertulis, dan jelas bahwa ia NAMA PEMAIN;
+ *   - hasilnya TEKS BEBAS, bukan JSON, dan sampah pembungkusnya dibuang;
+ *   - seed yang diketik admin dikirim ke model — tanpa itu model mengarang.
+ */
+describe('teks karakter', () => {
+  const KUNCI = 'sk-RAHASIA-yang-tidak-boleh-bocor';
+  const TEKS = { baseUrl: 'https://api.contoh.test/v1', apiType: 'chat-completions' as const, modelKey: 'model-teks' };
+
+  type Panggilan = { init: RequestInit };
+
+  function fakeFetch(status: number, body: string): { calls: Panggilan[]; impl: typeof fetch } {
+    const calls: Panggilan[] = [];
+    const impl = (async (_url: string, init: RequestInit) => {
+      calls.push({ init });
+      return { status, ok: status >= 200 && status < 300, text: async () => body };
+    }) as unknown as typeof fetch;
+    return { calls, impl };
+  }
+
+  function jawaban(isi: string): string {
+    return JSON.stringify({
+      choices: [{ message: { content: isi }, finish_reason: 'stop' }],
+    });
+  }
+
+  const MASUKAN = {
+    kind: 'background' as const,
+    name: 'Elysia',
+    role: 'bosmu',
+    seed: 'mantan pacar @user saat SMP dulu',
+    worldTitle: 'Rapat Tengah Malam',
+  };
+
+  it('mengembalikan teks bebas, bukan JSON', async () => {
+    const { impl } = fakeFetch(200, jawaban('Dulu mereka satu sekolah. Sekarang ia yang menandatangani cutimu.'));
+
+    const hasil = await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      expect(hasil.text).toBe('Dulu mereka satu sekolah. Sekarang ia yang menandatangani cutimu.');
+    }
+  });
+
+  it('membuang pagar kode, judul, dan tanda kutip pembungkus', async () => {
+    /*
+     * Model yang diminta teks bebas sering tetap membungkusnya — pagar kode,
+     * judul, atau tanda kutip. Kalau tidak dibuang, yang tersimpan di dunia
+     * adalah ``` dan # alih-alih ceritanya.
+     */
+    const kotak = '```\nIsi yang sebenarnya.\n```';
+    const { impl } = fakeFetch(200, jawaban(kotak));
+
+    const hasil = await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      expect(hasil.text).toBe('Isi yang sebenarnya.');
+      expect(hasil.text).not.toContain('```');
+    }
+  });
+
+  it('mengirim seed yang diketik admin, beserta nama, peran, dan dunia', async () => {
+    /*
+     * Model MEMPERINCI apa yang diketik admin, bukan mengarang dari nol. Kalau
+     * seed-nya tidak sampai, hasilnya akan melenceng dari niatnya tanpa admin
+     * mengerti mengapa.
+     */
+    const { calls, impl } = fakeFetch(200, jawaban('Isi.'));
+
+    await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as {
+      messages: { role: string; content: string }[];
+    };
+    const isiPesan = body.messages.map((pesan) => pesan.content).join('\n');
+
+    expect(isiPesan).toContain('mantan pacar @user saat SMP dulu');
+    expect(isiPesan).toContain('Elysia');
+    expect(isiPesan).toContain('bosmu');
+    expect(isiPesan).toContain('Rapat Tengah Malam');
+  });
+
+  it('menjelaskan bahwa @user adalah NAMA PEMAIN, untuk kedua jenis', () => {
+    /*
+     * ATURAN YANG MENENTUKAN. @user ditulis APA ADANYA dan diganti sistem dengan
+     * nama pemain saat cerita berjalan. Kalau model menggantinya jadi "kamu" atau
+     * menebak nama, dua dunia yang dimainkan orang berbeda tidak bisa lagi
+     * memakai teks yang sama — dan itu tujuan seluruh mekanismenya.
+     */
+    for (const kind of ['background', 'soul'] as const) {
+      const prompt = characterSystemPrompt(kind);
+
+      expect(prompt, `${kind}: tidak menyebut @user`).toContain('@user');
+      expect(prompt, `${kind}: tidak menjelaskan bahwa itu nama pemain`).toContain('NAME OF THE PLAYER');
+      expect(prompt, `${kind}: tidak melarang penggantian dengan kamu`).toContain('never with "kamu"');
+      expect(prompt, `${kind}: tidak menyebut peran untuk tokoh lain`).toContain('ROLE');
+      expect(prompt, `${kind}: tidak melarang penyebutan nama`).toContain('NEVER name');
+    }
+  });
+
+  it('membedakan soul dari background: siapa dia, bukan apa yang terjadi', () => {
+    /*
+     * Soul menggantikan SIFAT (daftar kata) dengan paragraf tentang siapa orang
+     * ini. Kalau keduanya sama, yang satu hanya mengulang yang lain — dan admin
+     * akan mengisi keduanya dengan teks yang serupa.
+     */
+    const soul = characterSystemPrompt('soul');
+    const background = characterSystemPrompt('background');
+
+    expect(soul).not.toBe(background);
+    expect(soul).toContain('drives them');
+    expect(soul, 'soul mengulang background').toContain('Do NOT restate the background');
+    expect(background).toContain('EXPAND');
+  });
+
+  it('menolak jawaban kosong', async () => {
+    const { impl } = fakeFetch(200, jawaban('   '));
+
+    const hasil = await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('declined');
     }
   });
 });

@@ -14,10 +14,9 @@
  */
 
 import type { SafeHtml } from '../html';
-import { CHEVRON, esc, escOr, formatTime, html, inputValue, statusPill } from '../html';
+import { CHEVRON, esc, formatTime, html, inputValue, statusPill } from '../html';
 import { RESPONSE_LOCALES, type ResponseLocale } from '../../contracts/types';
 import {
-  BASE_EXPRESSION,
   DEFAULT_BLUR_STRENGTH,
   MAX_BACKGROUNDS,
   MAX_WORLD_PREMISE,
@@ -394,117 +393,108 @@ export async function wizardStep3(ctx: AdminPageContext, worldId: string): Promi
   }
 
   const npcs = await ctx.drafts.listNpcs(draft.worldId, draft.worldVersion);
+  const [masterCharacters, providers] = await Promise.all([
+    ctx.characters.list(),
+    ctx.providers.listOfferable(),
+  ]);
+
+  /*
+   * Karakter master yang sudah dipakai dunia ini tidak ditawarkan dua kali.
+   *
+   * Tanpa penyaringan ini, admin dapat memasukkan karakter yang sama berulang
+   * kali — dan keduanya akan tampil sebagai dua orang berbeda yang kebetulan
+   * bernama sama dan berpotret sama.
+   */
+  const dipakai = new Set<string>();
+  for (const npc of npcs) {
+    if (npc.masterCharacterId) {
+      dipakai.add(npc.masterCharacterId);
+    }
+  }
+  const tersedia = masterCharacters.filter((item) => !dipakai.has(item.characterId));
+
+  const pilihanKarakter =
+    tersedia.length > 0
+      ? tersedia.map(
+          (item) =>
+            html`<option value="${inputValue(item.characterId)}">${esc(item.name)} — ${String(
+              item.expressions.length,
+            )} ekspresi</option>`,
+        )
+      : [html`<option value="">(semua karakter master sudah dipakai, atau master masih kosong)</option>`];
+
+  const pilihanProvider =
+    providers.length > 0
+      ? providers.map(
+          (provider) =>
+            html`<option value="${inputValue(provider.providerId)}">${esc(provider.name)}</option>`,
+        )
+      : [html`<option value="">(belum ada provider)</option>`];
 
   return html`<h1>Karakter — Langkah 3 dari 3</h1>
 ${wizardSteps(3, worldId, 3)}
 <p class="sub">
-  Setiap karakter punya satu gambar dasar dan beberapa gambar ekspresi. Unggahan
-  ekspresi memakai PNG agar latarnya tetap tembus pandang — potret tidak dipotong
-  persegi di dalam adegan.
+  Karakter <strong>dipungut dari master</strong>, lengkap dengan seluruh potret
+  dan ekspresinya. Yang diisi di sini hanya yang memang milik dunia ini:
+  <strong>peran</strong> (fungsi tokoh dalam cerita ini), <strong>background</strong>
+  (apa yang sudah terjadi antara ia dan @user), dan <strong>soul</strong>
+  (kepribadian mendalamnya). Tulis sedikit di kolomnya, lalu biarkan AI
+  memperincinya.
 </p>
 
 ${
-  npcs.length === 0
-    ? html`<div class="empty">Belum ada karakter. Tambahkan minimal satu sebelum menerbitkan.</div>`
-    : html`<div>${npcs.map((npc) => npcCard(npc, draft))}</div>`
-}
-
-<h2>Tambah karakter</h2>
-<form method="post" action="/admin/worlds-wizard/3/npc" class="card" data-npc-scope>
+  tersedia.length > 0
+    ? html`<form method="post" action="/admin/worlds-wizard/3/npc" class="card">
   <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
-  <input type="hidden" name="npcId" value="">
-
   <div class="two">
-    <label><span>Nama</span>
-      <input name="name" required maxlength="120" placeholder="mis. Elysia">
+    <label><span>Pungut karakter dari master</span>
+      <select name="characterId" required>${pilihanKarakter}</select>
     </label>
-    <label><span>Peran</span>
-      <input name="role" maxlength="120" placeholder="mis. Sekretaris yang selalu tahu segalanya">
+    <label><span>Peran dalam cerita ini</span>
+      <input name="role" maxlength="120" placeholder="mis. bosmu, sahabatmu, mantan pacarmu">
     </label>
   </div>
-
-  <label><span>Sifat (pisahkan dengan koma)</span>
-    <input name="traits" placeholder="mis. teliti, pendiam, mudah tersinggung">
-  </label>
-
-  <label><span>Relasi awal dengan pemain</span>
-    <select name="initialRelation">
-      ${[
-        ['normal', 'Normal'],
-        ['hangat', 'Hangat'],
-        ['waspada', 'Waspada'],
-        ['tegang', 'Tegang'],
-        ['renggang', 'Renggang'],
-        ['dekat', 'Dekat'],
-        ['sayang', 'Sayang'],
-        ['cinta', 'Cinta'],
-      ].map(
-        ([value, label]) =>
-          `<option value="${esc(value)}"${value === 'normal' ? ' selected' : ''}>${esc(label)}</option>`,
-      )}
-    </select>
-  </label>
-
-  <label><span>Latar yang boleh diketahui pemain</span>
-    <textarea name="publicBackstory" maxlength="2000">${esc('')}</textarea>
-  </label>
-
-  <label><span>Gambar dasar karakter (PNG/JPEG/WebP)</span>
-    <input type="file" accept="image/png,image/jpeg,image/webp" data-upload="portrait">
-  </label>
-  <input type="hidden" name="baseMediaId" data-portrait-media value="">
-  <div class="upload-status" data-portrait-status>Belum ada gambar dasar.</div>
-
-  <h2 style="margin-top:22px">Ekspresi</h2>
   <p class="sub" style="margin-top:0">
-    Gambar dasar di atas disimpan sebagai ekspresi bernama <strong>${esc(BASE_EXPRESSION)}</strong>
-    dan menjadi <strong>potret bawaan</strong> karakter ini. Tambahkan ekspresi lain
-    sebanyak yang diperlukan; yang belum diunggah gambarnya tidak akan tersimpan.
-    Bila gambar dasar dikosongkan, ekspresi pertama yang menjadi potret bawaan.
+    Potret dan seluruh ekspresinya ikut otomatis dari master. Namanya boleh diganti
+    setelah dipungut — <strong>master tidak ikut berubah</strong>.
   </p>
-
-  <div data-expression-list></div>
-
-  <div class="wizard-actions">
-    <button class="ghost" type="button" data-expression-add>+ Tambah ekspresi</button>
-  </div>
-
   <div class="wizard-actions">
     <span class="spacer"></span>
-    <button type="submit">Tambah karakter</button>
+    <button type="submit">Pungut karakter</button>
+  </div>
+</form>`
+    : html`<div class="card" style="border-color:var(--warn)">
+  <p class="sub" style="margin-top:0">
+    <strong>Tidak ada karakter yang dapat dipungut.</strong> Semua karakter master
+    sudah dipakai dunia ini, atau master masih kosong. Isi
+    <a href="/admin/characters">master karakter</a> lebih dulu: tambahkan nama,
+    lalu unggah potretnya.
+  </p>
+</div>`
+}
+
+${
+  npcs.length > 0
+    ? html`<div data-ai-scope>
+  <div class="card" style="margin-bottom:16px">
+    <div class="two">
+      <label><span>Provider untuk AI</span>
+        <select data-ai-provider>${pilihanProvider}</select>
+      </label>
+      <label><span>Model teks</span>
+        <select data-ai-model><option value="">(pilih provider lebih dulu)</option></select>
+      </label>
+    </div>
+    <div class="field__status" data-ai-status>
+      Pilih provider dan model, lalu tekan tombol di bawah kolom mana pun.
+    </div>
   </div>
 
-  <!--
-    Templat ini HARUS berada di dalam formulir, bukan sesudahnya.
-    Skrip klien mencarinya dengan scope.querySelector, dan scope-nya adalah
-    elemen ber-atribut data-npc-scope di atas. Templat yang menjadi SAUDARA
-    formulir tidak akan ditemukan; fungsinya keluar lebih awal tanpa satu pun
-    galat, dan tombol "+ Tambah ekspresi" hanya diam ketika ditekan — sehingga
-    karakter dengan lebih dari satu ekspresi mustahil dibuat lewat wizard.
-    admin-render.test.ts menjaga letak ini.
-  -->
-  <template data-expression-template>
-  <div class="expression-row" data-expression-row data-portrait-scope>
-    <div class="expression-row__fields">
-      <div class="two">
-        <label><span>Nama ekspresi</span>
-          <input name="expression" maxlength="120" placeholder="mis. neutral, senyum, marah">
-        </label>
-        <label><span>Gambar ekspresi (PNG)</span>
-          <input type="file" accept="image/png,image/jpeg,image/webp" data-upload="portrait">
-        </label>
-      </div>
-      <label><span>Pemakaian — membimbing AI (mis. "dipakai saat ia menahan kesal")</span>
-        <input name="expressionUsage" maxlength="500">
-      </label>
-      <div class="upload-status" data-portrait-status>Belum ada gambar.</div>
-      <input type="hidden" name="expressionMedia" data-portrait-media value="">
-      <img data-portrait-preview class="upload-thumb" style="width:64px;height:96px" hidden alt="">
-    </div>
-    <button class="danger" type="button" data-expression-remove>Hapus baris</button>
-  </div>
-  </template>
-</form>
+  ${npcs.map((npc) => npcCard(npc, draft))}
+</div>`
+    : html`<div class="empty">Belum ada karakter. Pungut minimal satu sebelum menerbitkan.</div>`
+}
+
 
 <form method="post" action="/admin/worlds-wizard/3" class="card">
   <input type="hidden" name="worldId" value="${inputValue(worldId)}">
@@ -517,32 +507,25 @@ ${
 </form>`;
 }
 
+/**
+ * Satu karakter pada dunia ini.
+ *
+ * Yang dapat diubah di sini hanya yang memang milik DUNIA — nama (boleh diganti),
+ * peran, background, dan soul. Potret serta seluruh ekspresinya berasal dari
+ * master dan karena itu tidak disunting: mengubahnya di sini akan membuat dunia
+ * ini berbeda dari master tanpa cara untuk menyelaraskan keduanya lagi.
+ */
 function npcCard(npc: NpcRow, draft: DraftWorld): SafeHtml {
-  const expressionRows = npc.expressions.map(
-    (expression) =>
-      html`<div class="bg-item">
-  <img class="bg-item__thumb" style="width:64px;height:96px" alt=""
-       src="${expression.mediaId ? esc(`/v1/media/${expression.mediaId}`) : ''}">
-  <div class="bg-item__body">
-    <strong>${esc(expression.expression)}</strong>
-    ${expression.assetId === portraitDefaultId(npc) ? html` ${statusPill('ok', 'bawaan')}` : ''}
-    <div class="bg-item__meta">${escOr(expression.usageNote, 'belum ada catatan pemakaian')}</div>
-  </div>
-</div>`,
-  );
-
-  const missing = npc.expressions.length === 0;
-
   return html`<div class="npc-card">
   <div class="npc-card__head">
     <img class="upload-thumb" style="width:72px;height:108px" alt=""
          src="${npc.baseUri ? esc(npc.baseUri) : ''}">
     <div style="flex:1;min-width:0">
       <strong>${esc(npc.name)}</strong>
-      ${missing ? html` ${statusPill('draft', 'belum punya ekspresi')}` : ''}
-      <div class="muted" style="font-size:12px">${escOr(npc.role, 'tanpa peran')}</div>
       <div class="muted" style="font-size:12px">
-        relasi awal: ${esc(npc.initialRelation)} · sifat: ${escOr(npc.traits.join(', '), '—')}
+        ${String(npc.expressions.length)} ekspresi${
+          npc.masterCharacterId ? ' · dipungut dari master' : ' · tanpa master'
+        }
       </div>
     </div>
     <form method="post" action="/admin/worlds-wizard/3/npc/delete"
@@ -554,13 +537,41 @@ function npcCard(npc: NpcRow, draft: DraftWorld): SafeHtml {
       <button class="danger" type="submit">Hapus</button>
     </form>
   </div>
-  ${npc.expressions.length > 0 ? html`<div style="margin-top:10px">${expressionRows}</div>` : ''}
-</div>`;
-}
 
-/** Aset potret yang ditunjuk sebagai bawaan; diturunkan dari daftar ekspresi. */
-function portraitDefaultId(npc: NpcRow): string {
-  return npc.expressions[0]?.assetId ?? '';
+  <form method="post" action="/admin/worlds-wizard/3/npc/save" style="margin-top:12px">
+    <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
+    <input type="hidden" name="npcId" value="${inputValue(npc.npcId)}">
+
+    <div class="two">
+      <label><span>Nama (boleh diganti untuk dunia ini)</span>
+        <input name="name" maxlength="120" value="${inputValue(npc.name)}">
+      </label>
+      <label><span>Peran dalam cerita ini</span>
+        <input name="role" maxlength="120" value="${inputValue(npc.role)}"
+               placeholder="mis. bosmu, sahabatmu">
+      </label>
+    </div>
+
+    <label><span>Background — tulis sedikit, lalu perinci dengan AI</span>
+      <textarea name="background" maxlength="4000" data-ai-field="background" style="min-height:110px"
+                placeholder="mis. mantan pacar @user saat SMP dulu">${esc(npc.publicBackstory)}</textarea>
+    </label>
+    <button class="ghost" type="button" data-ai-run="background">Perinci dengan AI</button>
+
+    <label><span>Soul — kepribadian mendalamnya</span>
+      <textarea name="soul" maxlength="4000" data-ai-field="soul" style="min-height:110px"
+                placeholder="mis. pendiam karena terbiasa mengamati, bukan karena tidak peduli">${esc(
+                  npc.soul,
+                )}</textarea>
+    </label>
+    <button class="ghost" type="button" data-ai-run="soul">Tulis soul dengan AI</button>
+
+    <div class="wizard-actions">
+      <span class="spacer"></span>
+      <button type="submit">Simpan karakter ini</button>
+    </div>
+  </form>
+</div>`;
 }
 
 /* ------------------------------------------------------------------ */

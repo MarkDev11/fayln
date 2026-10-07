@@ -1209,6 +1209,109 @@ export const WIZARD_JS = `
     muatModel();
   }
 
+  /* ---------------- Teks karakter dari AI ---------------- */
+
+  /*
+   * Satu pemilihan provider dan model untuk SELURUH kartu karakter.
+   *
+   * Memilihnya per kartu berarti mengulanginya untuk setiap tokoh, padahal
+   * jawabannya hampir selalu sama — dan admin yang mengisi lima karakter akan
+   * memilih model lima kali.
+   *
+   * Yang dikirim ke server hanya SEED, yaitu yang diketik admin. Nama, peran, dan
+   * judul dunia diambil server dari basis data: mengirimnya dari sini berarti
+   * membiarkan dua sumber kebenaran yang dapat melenceng.
+   */
+  function bindCharacterText() {
+    var akar = document.querySelector('[data-ai-scope]');
+    if (!akar) { return; }
+
+    var bidangProvider = akar.querySelector('[data-ai-provider]');
+    var bidangModel = akar.querySelector('[data-ai-model]');
+    var status = akar.querySelector('[data-ai-status]');
+    var tombolnya = akar.querySelectorAll('[data-ai-run]');
+    if (!bidangModel || tombolnya.length === 0) { return; }
+
+    var berjalan = false;
+
+    function katakan(pesan, keadaan) {
+      if (!status) { return; }
+      status.textContent = pesan;
+      if (keadaan) { status.setAttribute('data-state', keadaan); }
+      else { status.removeAttribute('data-state'); }
+    }
+
+    var muatModel = pasangPemilihModel(bidangProvider, bidangModel, katakan, {
+      'no-key': 'Provider ini belum punya kunci API, jadi daftar model tidak dapat diambil.',
+      unauthorized: 'Provider menolak kuncinya. Periksa kuncinya di halaman Provider.',
+      unreachable: 'Provider tidak dapat dihubungi.',
+      'bad-response': 'Jawaban provider tidak dikenali sebagai daftar model.'
+    }, 'model tersedia.');
+
+    function jalankan(tombol) {
+      if (berjalan) { return; }
+
+      var jenis = tombol.getAttribute('data-ai-run');
+      var kartu = tombol.closest('.npc-card');
+      if (!kartu) { return; }
+
+      var kolom = kartu.querySelector('[data-ai-field="' + jenis + '"]');
+      var npcId = kartu.querySelector('input[name=npcId]');
+      var worldId = kartu.querySelector('input[name=worldId]');
+      var nama = kartu.querySelector('input[name=name]');
+      if (!kolom || !npcId || !worldId) { return; }
+
+      var seed = kolom.value.trim();
+      if (seed === '') {
+        /*
+         * Seed WAJIB. Model memperinci apa yang ditulis admin, bukan mengarang
+         * dari nol — tanpa petunjuk, hasilnya akan melenceng dari niatnya dan
+         * admin tidak akan tahu mengapa.
+         */
+        katakan('Tulis dulu sedikit di kolomnya — AI akan memperincinya, bukan mengarang dari nol.', 'error');
+        if (kolom.focus) { kolom.focus(); }
+        return;
+      }
+      if (!bidangModel.value) { katakan('Pilih model lebih dulu.', 'error'); return; }
+
+      berjalan = true;
+      tombol.disabled = true;
+      katakan(jenis === 'soul'
+        ? 'Model sedang menulis soul-nya. Ini bisa sampai beberapa menit.'
+        : 'Model sedang memperinci background-nya. Ini bisa sampai beberapa menit.', null);
+
+      kirimJson('/admin/worlds-wizard/3/ai', {
+        worldId: worldId.value,
+        npcId: npcId.value,
+        kind: jenis,
+        seed: seed,
+        providerId: bidangProvider ? bidangProvider.value : '',
+        modelKey: bidangModel.value
+      }).then(function (hasil) {
+        if (hasil && hasil.ok) {
+          kolom.value = hasil.text;
+          katakan('Selesai. Periksa dulu, lalu simpan karakter ini.', 'ok');
+        } else {
+          var sebab = hasil && hasil.detail ? hasil.detail : 'sebab tidak diketahui';
+          katakan('Gagal: ' + sebab, 'error');
+        }
+        berjalan = false;
+        tombol.disabled = false;
+      }, function () {
+        berjalan = false;
+        tombol.disabled = false;
+      });
+    }
+
+    for (var i = 0; i < tombolnya.length; i++) {
+      (function (tombol) {
+        tombol.addEventListener('click', function () { jalankan(tombol); });
+      })(tombolnya[i]);
+    }
+
+    muatModel();
+  }
+
   /* ---------------- Peringatan meninggalkan halaman ---------------- */
 
   function bindUnsavedGuard() {
@@ -1275,6 +1378,7 @@ export const WIZARD_JS = `
     bindModelKeySync();
     bindBulkImport();
     bindWorldText();
+    bindCharacterText();
   }
 
   if (document.readyState === 'loading') {

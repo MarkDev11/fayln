@@ -33,17 +33,17 @@ import { promotionForm, promotionsList } from './pages/promotionPages';
 import type { SafeHtml } from './html';
 import { ACCEPTED_IMAGE_TYPES, inspectImage } from '../media/imageFile';
 import { isMediaId, type MediaRepository } from '../repositories/mediaRepository';
-import {
-  BASE_EXPRESSION,
-  isRelationStatus,
-  MAX_WORLD_PREMISE,
-  MAX_WORLD_SYNOPSIS,
-} from './worldDraftRepository';
+import { MAX_WORLD_PREMISE, MAX_WORLD_SYNOPSIS } from './worldDraftRepository';
 import type { CharacterFailure } from './charactersRepository';
 import type { CategoryFailure, LocationFailure } from './locationsRepository';
 import type { ModelFailure } from './modelsRepository';
 import { fetchProviderModels } from './providerModels';
-import { describeCharacterPortrait, describeLocationImage, generateWorldText } from './visionClient';
+import {
+  describeCharacterPortrait,
+  describeLocationImage,
+  generateCharacterText,
+  generateWorldText,
+} from './visionClient';
 import type { ProviderFailure } from './providersRepository';
 import { html, inputValue, layout } from './html';
 import { validatePassword, verifyPassword } from './password';
@@ -173,20 +173,6 @@ const wizardIdentityBody = z.object({
   intent: z.enum(['next', 'draft']),
 });
 
-/** Isian satu NPC beserta ekspresinya. Nama berulang menjadi larik. */
-const wizardNpcBody = z.object({
-  worldId: z.string().trim().min(1),
-  npcId: z.string().optional().default(''),
-  name: z.string().trim().min(1).max(120),
-  role: z.string().trim().max(120).optional().default(''),
-  traits: z.string().optional().default(''),
-  initialRelation: z.string().optional().default('normal'),
-  publicBackstory: z.string().max(2000).optional().default(''),
-  baseMediaId: z.string().optional().default(''),
-  expression: z.union([z.string(), z.array(z.string())]).optional(),
-  expressionUsage: z.union([z.string(), z.array(z.string())]).optional(),
-  expressionMedia: z.union([z.string(), z.array(z.string())]).optional(),
-});
 
 /**
  * Empat status dunia diterima di sini karena skema mengizinkan keempatnya.
@@ -1389,100 +1375,190 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     return reply.redirect('/admin/worlds?notice=published', 302);
   });
 
+  /*
+   * Memungut satu karakter dari MASTER ke dalam draf dunia.
+   *
+   * Yang dikirim hanya KARAKTER mana dan PERANNYA di cerita ini. Nama diambil
+   * dari master dan seluruh potret beserta ekspresinya ikut otomatis — karena
+   * itu formulir langkah 3 tidak lagi menerima unggahan apa pun.
+   */
   app.post('/admin/worlds-wizard/3/npc', async (request, reply) => {
     const session = request.adminSession;
-    const parsed = wizardNpcBody.safeParse(request.body);
-    if (!parsed.success) {
+    const body = z
+      .object({
+        worldId: z.string().trim().min(1),
+        characterId: z.string().trim().min(1),
+        role: z.string().trim().max(120).optional().default(''),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
       return reply.redirect('/admin/worlds?notice=invalid-input', 302);
     }
-    const data = parsed.data;
 
-    const draft = await ctx.drafts.findDraft(data.worldId);
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
     if (!draft) {
       return reply.redirect('/admin/worlds?notice=not-draft', 302);
     }
 
-    const names = toArray(data.expression);
-    const usages = toArray(data.expressionUsage);
-    const mediaIds = toArray(data.expressionMedia);
+    const base = `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3`;
 
-    // Ekspresi tanpa gambar DIBUANG, bukan disimpan namanya saja.
-    //
-    // Tiga alasan, dan ketiganya saling menguatkan:
-    //   1. Halaman sudah menjanjikannya kepada pengguna: "yang belum diunggah
-    //      gambarnya tidak akan tersimpan".
-    //   2. `listNpcs` menurunkan daftar ekspresi dari BARIS ASET potret. Nama
-    //      tanpa gambar karena itu tidak akan pernah tampil di panel — lalu
-    //      hilang senyap pada penyimpanan berikutnya, karena formulir hanya
-    //      mengirim apa yang terlihat.
-    //   3. Kontrak katalog pemain menjanjikan setiap ekspresi punya gambar.
-    //      Nama tanpa gambar berarti AI boleh memilih ekspresi yang tidak dapat
-    //      dirender klien.
-    const expressions: { expression: string; usageNote: string; mediaId: string | null }[] = [];
-    for (const [index, name] of names.entries()) {
-      if (name.trim().length === 0) {
-        continue;
-      }
-      const candidate = mediaIds[index] ?? '';
-      const mediaId =
-        isMediaId(candidate) && (await ctx.media.findById(candidate)) !== null ? candidate : null;
-      if (mediaId === null) {
-        continue;
-      }
-      expressions.push({ expression: name, usageNote: usages[index] ?? '', mediaId });
+    const karakter = await ctx.characters.find(body.data.characterId);
+    if (!karakter) {
+      return reply.redirect(`${base}?notice=not-found`, 302);
     }
 
-    const baseMediaId =
-      isMediaId(data.baseMediaId) && (await ctx.media.findById(data.baseMediaId)) !== null
-        ? data.baseMediaId
-        : null;
+    const hasil = await ctx.drafts.pickMasterCharacter(
+      draft.worldId,
+      draft.worldVersion,
+      body.data.characterId,
+      {
+        // Nama dari master jadi nilai awal; admin dapat menggantinya nanti tanpa
+        // menyentuh master.
+        name: karakter.name,
+        role: body.data.role,
+        background: '',
+        soul: '',
+      },
+    );
 
-    // Gambar dasar diletakkan PALING DEPAN sebagai ekspresi `dasar`, sehingga ia
-    // menjadi potret bawaan. Tanpa langkah ini, berkas yang diunggah pengguna
-    // diterima lalu dibuang tanpa jejak — kolom `default_portrait_asset_id`
-    // hanya menunjuk aset potret, dan tidak ada tempat lain untuk menyimpannya.
-    //
-    // Bila pengguna kebetulan menamai salah satu ekspresinya `dasar`, entri itu
-    // digantikan: dua aset dengan id yang sama tidak dapat hidup berdampingan.
-    const ordered =
-      baseMediaId === null
-        ? expressions
-        : [
-            { expression: BASE_EXPRESSION, usageNote: '', mediaId: baseMediaId },
-            ...expressions.filter(
-              (item) => item.expression.trim().toLowerCase() !== BASE_EXPRESSION,
-            ),
-          ];
+    if (!hasil.ok) {
+      return reply.redirect(`${base}?notice=${hasil.reason === 'limit' ? 'limit' : 'not-found'}`, 302);
+    }
 
-    const saved = await ctx.drafts.saveNpc(draft.worldId, draft.worldVersion, {
-      npcId: data.npcId.length > 0 ? data.npcId : null,
-      name: data.name,
-      role: data.role,
-      traits: data.traits
-        .split(',')
-        .map((trait) => trait.trim())
-        .filter((trait) => trait.length > 0),
-      publicBackstory: data.publicBackstory,
-      initialRelation: isRelationStatus(data.initialRelation) ? data.initialRelation : 'normal',
-      expressions: ordered,
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'world.npc.pick',
+      targetKind: 'character',
+      targetId: `${draft.worldId}/${hasil.npcId}`,
+      detail: { masterCharacterId: body.data.characterId, portraits: hasil.portraits },
+      ipAddress: request.ip,
     });
 
-    if (saved) {
-      await admins.recordAudit({
-        adminId: session?.adminId ?? null,
-        username: session?.username ?? '',
-        action: data.npcId.length > 0 ? 'world.npc.update' : 'world.npc.create',
-        targetKind: 'character',
-        targetId: `${draft.worldId}/${saved.npcId}`,
-        detail: { expressions: ordered.length },
-        ipAddress: request.ip,
+    return reply.redirect(`${base}?notice=picked`, 302);
+  });
+
+  /*
+   * Menyimpan nama, peran, background, dan soul satu karakter.
+   *
+   * Hanya empat hal ini yang boleh diubah, karena hanya inilah yang milik DUNIA.
+   * Potret dan ekspresinya berasal dari master: mengubahnya di sini akan membuat
+   * dunia ini berbeda dari master tanpa cara menyelaraskan keduanya lagi.
+   */
+  app.post('/admin/worlds-wizard/3/npc/save', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z
+      .object({
+        worldId: z.string().trim().min(1),
+        npcId: z.string().trim().min(1),
+        name: z.string().trim().min(1).max(120),
+        role: z.string().trim().max(120).optional().default(''),
+        background: z.string().trim().max(4000).optional().default(''),
+        soul: z.string().trim().max(4000).optional().default(''),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.redirect('/admin/worlds?notice=not-draft', 302);
+    }
+
+    const disimpan = await ctx.drafts.updateNpcText(draft.worldId, draft.worldVersion, body.data.npcId, {
+      name: body.data.name,
+      role: body.data.role,
+      background: body.data.background,
+      soul: body.data.soul,
+    });
+
+    if (!disimpan) {
+      return reply.redirect('/admin/worlds?notice=not-found', 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'world.npc.update',
+      targetKind: 'character',
+      targetId: `${draft.worldId}/${body.data.npcId}`,
+      detail: { soulChars: body.data.soul.length },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect(
+      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3?notice=saved`,
+      302,
+    );
+  });
+
+  /*
+   * Memperinci background atau soul karakter lewat AI.
+   *
+   * Yang dikirim klien hanya SEED — yang diketik admin. Nama, peran, dan judul
+   * dunia diambil dari basis data supaya tidak bisa melenceng dari keadaan yang
+   * tersimpan, dan supaya klien tidak perlu mengirim teks dunia bolak-balik.
+   */
+  app.post('/admin/worlds-wizard/3/ai', async (request, reply) => {
+    const body = z
+      .object({
+        worldId: z.string().trim().min(1),
+        npcId: z.string().trim().min(1),
+        kind: z.enum(['background', 'soul']),
+        seed: z.string().trim().min(1).max(4000),
+        providerId: z.string().trim().min(1),
+        modelKey: z.string().trim().min(1).max(120),
+      })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.code(400).send({ ok: false, reason: 'bad-request', detail: '' });
+    }
+
+    const draft = await ctx.drafts.findDraft(body.data.worldId);
+    if (!draft) {
+      return reply.code(404).send({ ok: false, reason: 'not-draft', detail: '' });
+    }
+
+    const npc = await ctx.drafts.findNpc(draft.worldId, draft.worldVersion, body.data.npcId);
+    if (!npc) {
+      return reply.code(404).send({ ok: false, reason: 'not-found', detail: '' });
+    }
+
+    const provider = await ctx.providers.find(body.data.providerId);
+    if (!provider) {
+      return reply.code(404).send({ ok: false, reason: 'provider-not-found', detail: '' });
+    }
+
+    const apiKey = await ctx.providers.apiKeyFor(provider.providerId);
+    if (!apiKey) {
+      return reply.send({
+        ok: false,
+        reason: 'no-key',
+        detail: 'Provider ini belum punya kunci API, jadi modelnya tidak dapat dipanggil.',
       });
     }
 
-    return reply.redirect(
-      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3?notice=created`,
-      302,
+    const hasil = await generateCharacterText(
+      { baseUrl: provider.baseUrl, apiType: provider.apiType, modelKey: body.data.modelKey },
+      apiKey,
+      {
+        kind: body.data.kind,
+        name: npc.name,
+        role: npc.role,
+        seed: body.data.seed,
+        worldTitle: draft.title,
+      },
     );
+
+    if (!hasil.ok) {
+      request.log.warn(
+        { reason: hasil.reason, kind: body.data.kind, model: body.data.modelKey },
+        'Pembuatan teks karakter gagal.',
+      );
+    }
+
+    return reply.send(hasil);
   });
 
   app.post('/admin/worlds-wizard/3/npc/delete', async (request, reply) => {
@@ -2547,17 +2623,17 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
         'satu dunia. Kurangi isi kategorinya, atau pakai kategori lain.',
     },
     'category-not-found': { kind: 'error', text: 'Kategori lokasi yang dipilih tidak ada.' },
+    picked: {
+      kind: 'ok',
+      text:
+        'Karakter dipungut dari master beserta seluruh potretnya. Isi peran, background, ' +
+        'dan soul-nya — atau tulis sedikit di kolomnya lalu minta AI memperincinya.',
+    },
     'category-empty': {
       kind: 'error',
       text:
         'Kategori itu belum punya lokasi bergambar, jadi belum ada yang dapat dijadikan latar. ' +
         'Unggah gambar lokasinya di halaman master lokasi lebih dulu.',
-    },
-    picked: {
-      kind: 'ok',
-      text:
-        'Latar ditambahkan dari master lokasi. Keterangan, blur, titik fokus, dan ' +
-        'peluang kemunculannya boleh disesuaikan untuk dunia ini tanpa mengubah master.',
     },
     'genre-invalid': {
       kind: 'error',
