@@ -283,26 +283,74 @@ export const WIZARD_JS = `
      *
      * Konsekuensinya: templat HARUS berada di dalam elemen ber-atribut scope.
      * Templat yang diletakkan sebagai saudara formulir tidak akan ditemukan,
-     * dan fungsi ini keluar lebih awal TANPA galat — tombol "+ Tambah ekspresi"
-     * hanya diam. Itu pernah terjadi pada langkah 3 wizard; admin-render.test.ts
-     * kini menjaganya.
+     * dan fungsi ini keluar lebih awal TANPA galat — tombolnya hanya diam. Itu
+     * pernah terjadi pada langkah 3 wizard; admin-render.test.ts kini menjaganya.
      *
      * Jangan menulis backtick di dalam berkas ini: seluruh isinya adalah satu
      * string JavaScript, dan satu backtick memutusnya di tengah kalimat.
      */
     var template = scope.querySelector('[data-expression-template]');
-    var addButton = scope.querySelector('[data-expression-add]');
-    if (!list || !template || !addButton) { return; }
+    /*
+     * TOMBOL TAMBAH TIDAK LAGI WAJIB, dan itu perbaikan atas cacat yang nyata.
+     *
+     * Dulu ia wajib. Menjadikannya wajib berarti MENGHAPUS tombol itu mematikan
+     * seluruh baris ekspresi: fungsi ini keluar lebih awal tanpa satu pun galat,
+     * sehingga kotak berkas dan tombol hapus di tiap baris tidak pernah
+     * terpasang. Sejak formulir karakter mengisi barisnya lewat model visi,
+     * tombol itu memang tidak ada lagi.
+     */
+    if (!list || !template) { return null; }
 
-    addButton.addEventListener('click', function (event) {
-      event.preventDefault();
+    function tambah(nilai) {
       var fragment = template.content.cloneNode(true);
       var row = fragment.querySelector('[data-expression-row]');
-      if (row) { prepareRow(row); }
+      if (!row) { return null; }
+      prepareRow(row);
       list.appendChild(fragment);
-    });
+      isiBaris(row, nilai);
+      return row;
+    }
+
+    var addButton = scope.querySelector('[data-expression-add]');
+    if (addButton) {
+      addButton.addEventListener('click', function (event) {
+        event.preventDefault();
+        tambah(null);
+      });
+    }
 
     Array.prototype.forEach.call(list.querySelectorAll('[data-expression-row]'), prepareRow);
+    return tambah;
+  }
+
+  /**
+   * Mengisi satu baris ekspresi dari hasil model.
+   *
+   * Menulis ke bidang yang SAMA dengan yang diisi tangan: nama ekspresi, catatan
+   * pemakaian, gambar tersembunyi, dan pratinjaunya. Jadi baris hasil AI dapat
+   * disunting persis seperti baris yang diketik sendiri — dan yang tersimpan
+   * nanti adalah apa yang terlihat di layar, bukan apa yang dikatakan model.
+   */
+  function isiBaris(row, nilai) {
+    if (!nilai) { return; }
+
+    var nama = row.querySelector('input[name=expression]');
+    if (nama) { nama.value = nilai.label; }
+
+    var catatan = row.querySelector('input[name=expressionUsage]');
+    if (catatan) { catatan.value = nilai.label; }
+
+    var media = row.querySelector('[data-portrait-media]');
+    if (media) { media.value = nilai.mediaId; }
+
+    var preview = row.querySelector('[data-portrait-preview]');
+    if (preview) {
+      preview.src = '/v1/media/' + nilai.mediaId;
+      preview.hidden = false;
+    }
+
+    var status = row.querySelector('[data-portrait-status]');
+    if (status) { setStatus(status, 'ok', 'Tersimpan.'); }
   }
 
   function prepareRow(row) {
@@ -904,35 +952,39 @@ export const WIZARD_JS = `
     muatModel();
   }
 
-  /* ---------------- Impor massal potret karakter dengan AI ---------------- */
+  /* ---------------- Impor potret karakter dengan AI ---------------- */
 
   /*
-   * Sama seperti impor lokasi, dengan SATU perbedaan yang menentukan: fase
-   * SIMPAN berjalan SATU PER SATU, bukan berkelompok.
+   * Mengisi baris ekspresi dari potret yang diunggah sekaligus.
    *
-   * Sebabnya di server: CharactersRepository.update() MENGGANTI seluruh daftar
-   * ekspresi, bukan menambah satu baris. Dua permintaan yang berbarengan
-   * sama-sama membaca daftar sebelum yang lain menulis, dan salah satu ekspresi
-   * hilang tanpa galat apa pun. Fase analisis tetap berkelompok karena ia hanya
-   * membaca dan memanggil model — bagian yang lambat.
+   * Berada DI DALAM formulir, bukan di dalam modal, dan itu memperbaiki dua hal
+   * sekaligus:
+   *
+   *   1. Repositori MENOLAK karakter tanpa ekspresi bergambar, jadi alur "simpan
+   *      namanya dulu, baru unggah" adalah alur yang TIDAK MUNGKIN — menyimpan
+   *      nama saja akan gagal. Menaruhnya di formulir membuat keduanya satu
+   *      langkah.
+   *   2. Hasilnya masuk ke baris yang SAMA dengan yang diisi tangan, sehingga
+   *      dapat disunting sebelum disimpan. Yang tersimpan adalah apa yang
+   *      terlihat di layar, bukan apa yang dikatakan model.
+   *
+   * Tiap potret: dikodekan, diunggah, dianalisis, lalu barisnya ditambahkan.
+   * Unggah dan analisis berjalan berkelompok; penambahan barisnya berurutan
+   * karena ia hanya menyentuh DOM.
    */
-  function bindBulkPortrait() {
-    var layer = document.querySelector('[data-portrait-bulk-root]');
-    var pembuka = document.querySelector('[data-portrait-bulk-open]');
-    if (!layer || !pembuka) { return; }
+  function bindBulkPortrait(scope, tambah) {
+    if (!scope || typeof tambah !== 'function') { return; }
 
-    var karakterId = layer.getAttribute('data-character') || '';
-    var bidangProvider = layer.querySelector('[data-portrait-bulk-provider]');
-    var bidangModel = layer.querySelector('[data-portrait-bulk-model]');
-    var statusModel = layer.querySelector('[data-portrait-bulk-model-status]');
-    var bidangBerkas = layer.querySelector('[data-portrait-bulk-files]');
-    var daftar = layer.querySelector('[data-portrait-bulk-list]');
-    var tombolMulai = layer.querySelector('[data-portrait-bulk-action=start]');
-    if (!bidangModel || !daftar || !tombolMulai) { return; }
+    var bidangProvider = scope.querySelector('[data-portrait-bulk-provider]');
+    var bidangModel = scope.querySelector('[data-portrait-bulk-model]');
+    var statusModel = scope.querySelector('[data-portrait-bulk-model-status]');
+    var bidangBerkas = scope.querySelector('[data-portrait-bulk-files]');
+    var daftar = scope.querySelector('[data-portrait-bulk-list]');
+    var tombol = scope.querySelector('[data-portrait-bulk-run]');
+    if (!bidangModel || !daftar || !tombol) { return; }
 
     var providerDimuat = null;
     var berjalan = false;
-    var fokusTerakhir = null;
 
     var pesanModel = {
       'no-key': 'Provider ini belum punya kunci API, jadi daftar model tidak dapat diambil.',
@@ -946,18 +998,6 @@ export const WIZARD_JS = `
       statusModel.textContent = pesan;
       if (keadaan) { statusModel.setAttribute('data-state', keadaan); }
       else { statusModel.removeAttribute('data-state'); }
-    }
-
-    function buka() {
-      fokusTerakhir = document.activeElement;
-      layer.hidden = false;
-      if (bidangBerkas && bidangBerkas.focus) { bidangBerkas.focus(); }
-    }
-
-    function tutup() {
-      if (berjalan) { katakan('Tunggu sampai prosesnya selesai.', 'error'); return; }
-      layer.hidden = true;
-      if (fokusTerakhir && fokusTerakhir.focus) { fokusTerakhir.focus(); }
     }
 
     function muatModel() {
@@ -1006,12 +1046,8 @@ export const WIZARD_JS = `
 
       var berkas = bidangBerkas && bidangBerkas.files ? bidangBerkas.files : [];
       if (berkas.length === 0) { katakan('Pilih potret lebih dulu.', 'error'); return; }
-      if (!bidangModel || bidangModel.value === '') {
+      if (bidangModel.value === '') {
         katakan('Pilih model visi lebih dulu.', 'error');
-        return;
-      }
-      if (karakterId === '') {
-        katakan('Karakter ini belum tersimpan, jadi ekspresinya belum punya tempat.', 'error');
         return;
       }
 
@@ -1019,7 +1055,7 @@ export const WIZARD_JS = `
       var modelKey = bidangModel.value;
 
       berjalan = true;
-      tombolMulai.disabled = true;
+      tombol.disabled = true;
       daftar.innerHTML = '';
 
       var tugas = [];
@@ -1038,8 +1074,9 @@ export const WIZARD_JS = `
         }
         var berhasil = tugas.length - gagal;
 
-        var pesan = sebab + ' ' + berhasil + ' dari ' + tugas.length + ' potret menjadi ekspresi' +
-          (gagal > 0 ? ', ' + gagal + ' gagal.' : '.');
+        var pesan = sebab + ' ' + berhasil + ' dari ' + tugas.length + ' potret terisi' +
+          (gagal > 0 ? ', ' + gagal + ' gagal.' : '.') +
+          (berhasil > 0 ? ' Periksa barisnya, lalu tekan Simpan.' : '');
 
         if (gagal > 0 && ditolak === gagal) {
           pesan += ' Semuanya ditolak model. Periksa jawaban modelnya di tiap baris:'
@@ -1049,10 +1086,10 @@ export const WIZARD_JS = `
 
         katakan(pesan, gagal > 0 ? 'error' : 'ok');
         berjalan = false;
-        tombolMulai.disabled = false;
+        tombol.disabled = false;
       }
 
-      /* Fase 1 - unggah. Memakai slot potret yang sudah dipakai wizard. */
+      /* Fase 1 - unggah. Memakai pengecil dan slot potret yang sudah dipakai wizard. */
       berbarengan(tugas, SERENTAK, function (t) {
         setBaris(t.ui, '', 'Memperkecil dan mengunggah...', '\u2191');
         return ulangi(function () {
@@ -1073,7 +1110,7 @@ export const WIZARD_JS = `
           var siap = tugas.filter(function (t) { return t.mediaId !== ''; });
           if (siap.length === 0) { ringkas('Tidak ada potret yang berhasil diunggah.'); return null; }
 
-          /* Fase 2 - analisis. Model dipanggil sekali per potret. */
+          /* Fase 2 - analisis, lalu barisnya ditambahkan ke formulir. */
           return berbarengan(siap, SERENTAK, function (t) {
             setBaris(t.ui, '', 'Model sedang melihat potretnya...', '\u25cb');
             return ulangi(function () {
@@ -1083,39 +1120,12 @@ export const WIZARD_JS = `
             }, PERCOBAAN).then(function (hasil) {
               if (hasil && hasil.ok) {
                 t.label = hasil.label;
+                tambah({ label: hasil.label, mediaId: t.mediaId });
                 setBaris(t.ui, 'ok', 'Keterangan: ' + hasil.label, '\u2713');
               } else {
                 t.sebab = hasil && hasil.reason ? hasil.reason : '';
                 var sebab = hasil && hasil.detail ? hasil.detail : 'sebab tidak diketahui';
                 setBaris(t.ui, 'error', 'Gagal dianalisis: ' + sebab, '\u00d7');
-              }
-            });
-          });
-        })
-        .then(function (lanjut) {
-          if (lanjut === null) { return null; }
-
-          var siap = tugas.filter(function (t) { return t.label !== ''; });
-          if (siap.length === 0) { ringkas('Tidak ada potret yang berhasil diberi keterangan.'); return null; }
-
-          /*
-           * Fase 3 - simpan, SATU PER SATU.
-           *
-           * Batasnya 1, bukan SERENTAK: setiap penyimpanan menulis ulang SELURUH
-           * daftar ekspresi karakter ini, jadi dua yang berbarengan akan saling
-           * menimpa. Menyimpan cepat, jadi menunggunya tidak terasa.
-           */
-          return berbarengan(siap, 1, function (t) {
-            setBaris(t.ui, '', 'Menyimpan sebagai ekspresi...', '\u2193');
-            return ulangi(function () {
-              return kirimJson('/admin/characters-bulk/create', {
-                characterId: karakterId, mediaId: t.mediaId, label: t.label
-              });
-            }, PERCOBAAN).then(function (hasil) {
-              if (hasil && hasil.ok) { setBaris(t.ui, 'ok', 'Tersimpan sebagai ekspresi.', '\u2713'); }
-              else {
-                var sebab = hasil && hasil.reason ? hasil.reason : 'sebab tidak diketahui';
-                setBaris(t.ui, 'error', 'Gagal disimpan: ' + sebab, '\u00d7');
               }
             });
           });
@@ -1128,25 +1138,8 @@ export const WIZARD_JS = `
         });
     }
 
-    pembuka.addEventListener('click', buka);
     if (bidangProvider) { bidangProvider.addEventListener('change', muatModel); }
-    tombolMulai.addEventListener('click', mulai);
-
-    Array.prototype.forEach.call(layer.querySelectorAll('[data-portrait-bulk-action]'), function (tombol) {
-      var aksi = tombol.getAttribute('data-portrait-bulk-action');
-      if (aksi === 'close') { tombol.addEventListener('click', tutup); }
-      if (aksi === 'min') {
-        tombol.addEventListener('click', function () {
-          layer.querySelector('.sheet').classList.toggle('sheet--min');
-        });
-      }
-      if (aksi === 'zoom') {
-        tombol.addEventListener('click', function () {
-          layer.querySelector('.sheet').classList.toggle('sheet--zoom');
-        });
-      }
-    });
-
+    tombol.addEventListener('click', mulai);
     muatModel();
   }
 
@@ -1198,14 +1191,23 @@ export const WIZARD_JS = `
      * diperiksa TypeScript, jadi satu tempat yang terlewat berarti tombol yang
      * diam tanpa galat. Menerima keduanya tidak berbiaya apa pun.
      */
+    /*
+     * Baris ekspresi dipasang lebih dulu, dan fungsi penambahnya diteruskan ke
+     * pengisi otomatis: hasil model masuk ke baris yang SAMA dengan yang diisi
+     * tangan, bukan ke tempat tersendiri.
+     */
     Array.prototype.forEach.call(
       document.querySelectorAll('[data-npc-scope], [data-expression-scope]'),
-      bindExpressionRows
+      function (scope) {
+        var tambah = bindExpressionRows(scope);
+        if (scope.hasAttribute('data-portrait-bulk')) {
+          bindBulkPortrait(scope, tambah);
+        }
+      }
     );
     bindUnsavedGuard();
     bindModelKeySync();
     bindBulkImport();
-    bindBulkPortrait();
   }
 
   if (document.readyState === 'loading') {

@@ -2122,15 +2122,22 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   /*
    * Sama seperti impor lokasi: satu gambar per permintaan, dua fase terpisah.
    *
-   * TETAPI ADA SATU PERBEDAAN YANG MENENTUKAN, dan ia harus diingat oleh
-   * pemanggilnya: `CharactersRepository.update()` MENGGANTI SELURUH daftar
-   * ekspresi, bukan menambah satu baris. Jadi rute `/create` di bawah ini
-   * membaca daftar yang ada, menambahkan satu, lalu menulis ulang.
+   * HANYA ANALISIS YANG PUNYA RUTE DI SINI, dan itu disengaja.
    *
-   * Akibatnya dua permintaan `/create` yang BERBARENGAN untuk karakter yang sama
-   * akan saling menimpa: yang satu membaca daftar sebelum yang lain menulis, dan
-   * hasilnya salah satu ekspresi hilang tanpa galat apa pun. Karena itu peramban
-   * mengirim fase ini SATU PER SATU (lihat `bindBulkImport` pada karakter).
+   * Versi pertama punya rute `/create` juga: ia membaca daftar ekspresi yang ada,
+   * menambahkan satu, lalu menulis ulang. Itu bekerja, tetapi memaksa alur yang
+   * tidak mungkin — repositori MENOLAK karakter tanpa ekspresi bergambar, jadi
+   * karakternya harus disimpan lebih dulu, dan menyimpan nama saja akan gagal.
+   * Halaman pun menampilkan petunjuk "simpan nama dulu" yang membingungkan.
+   *
+   * Sekarang hasil model masuk ke BARIS FORMULIR, sama seperti yang diisi tangan,
+   * dan formulirnya menyimpan semuanya sekaligus lewat `POST /admin/characters`.
+   * Akibatnya:
+   *
+   *   - tidak ada karakter setengah jadi, karena tidak ada penyimpanan antara;
+   *   - barisnya dapat disunting sebelum disimpan;
+   *   - dan kekhawatiran "dua permintaan berbarengan saling menimpa" hilang
+   *     seluruhnya, karena hanya ada SATU penulisan.
    *
    * Fase analisis tetap boleh berkelompok: ia hanya membaca dan memanggil model.
    */
@@ -2195,63 +2202,6 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     }
 
     return reply.send(result);
-  });
-
-  app.post('/admin/characters-bulk/create', async (request, reply) => {
-    const session = request.adminSession;
-    const body = z
-      .object({
-        characterId: z.string().trim().min(1),
-        mediaId: z.string().trim().min(1),
-        label: z.string().trim().min(1).max(160),
-      })
-      .safeParse(request.body);
-
-    if (!body.success) {
-      return reply.code(400).send({ ok: false, reason: 'bad-request', detail: '' });
-    }
-
-    const character = await ctx.characters.find(body.data.characterId);
-    if (!character) {
-      return reply.code(404).send({ ok: false, reason: 'character-not-found', detail: '' });
-    }
-
-    /*
-     * Keterangannya menjadi NAMA ekspresi, bukan hanya catatannya.
-     *
-     * Format yang diminta pemilik produk adalah "ekspresi, pakaian, pose", dan
-     * bagian pakaian serta pose itulah yang membedakan dua potret yang
-     * ekspresinya sama. Kalau hanya bagian pertama yang dipakai sebagai nama,
-     * "senyum, pakaian kantor, normal" dan "senyum, pakaian santai, normal" akan
-     * sama-sama bernama "senyum" — dan yang kedua DITOLAK karena nama ekspresi
-     * harus unik. Teks utuhnya dipakai di kedua bidang.
-     */
-    const existing = character.expressions.map((item) => ({
-      expression: item.expression,
-      mediaId: item.mediaId,
-      usageNote: item.usageNote,
-    }));
-
-    const result = await ctx.characters.update(body.data.characterId, {
-      name: character.name,
-      expressions: [...existing, { expression: body.data.label, mediaId: body.data.mediaId, usageNote: body.data.label }],
-    });
-
-    if (!result.ok) {
-      return reply.send({ ok: false, reason: result.reason, detail: result.detail ?? '' });
-    }
-
-    await admins.recordAudit({
-      adminId: session?.adminId ?? null,
-      username: session?.username ?? '',
-      action: 'character.expression.add',
-      targetKind: 'character',
-      targetId: body.data.characterId,
-      detail: { via: 'bulk-ai', label: body.data.label },
-      ipAddress: request.ip,
-    });
-
-    return reply.send({ ok: true, characterId: body.data.characterId });
   });
 
   app.post('/admin/providers/move', async (request, reply) => {

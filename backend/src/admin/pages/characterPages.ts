@@ -21,7 +21,6 @@ import type { SafeHtml } from '../html';
 import { CHEVRON, esc, escOr, formatTime, html, inputValue } from '../html';
 import type { AdminPageContext } from './context';
 import type { CharacterExpressionRow, CharacterRow } from '../charactersRepository';
-import type { ProviderRow } from '../providersRepository';
 
 /** Jalur gambar yang disajikan server untuk sebuah berkas unggahan. */
 function mediaUrl(mediaId: string): string {
@@ -94,26 +93,23 @@ export async function charactersForm(
 
   const rows = (character?.expressions ?? []).map(expressionRow);
 
-  return html`<div class="between">
-  <h1>${character ? 'Ubah karakter' : 'Karakter baru'}</h1>
-  ${character ? html`<button type="button" data-portrait-bulk-open>Bulk gambar with AI</button>` : ''}
-</div>
+  const providerOptions =
+    providers.length > 0
+      ? providers.map(
+          (provider) =>
+            html`<option value="${inputValue(provider.providerId)}">${esc(provider.name)}</option>`,
+        )
+      : [html`<option value="">(belum ada provider)</option>`];
+
+  return html`<h1>${character ? 'Ubah karakter' : 'Karakter baru'}</h1>
 <p class="sub">
-  Isi nama karakter, lalu unggah satu gambar untuk tiap ekspresinya.
-  <strong>Baris pertama menjadi potret bawaan</strong> — gambar yang tampil bila
-  cerita tidak menyebut ekspresi tertentu.
+  Isi nama karakter, lalu unggah potretnya <strong>sekaligus</strong>. Model visi mengisi
+  keterangan tiap potret dengan format <span class="mono">ekspresi, pakaian, pose</span> —
+  mis. <span class="mono">senyum, pakaian kantor, normal</span>. Keterangan itu menjadi
+  nama ekspresinya, dan masih dapat disunting sebelum disimpan.
+  <strong>Baris pertama menjadi potret bawaan</strong>.
 </p>
-${
-  character
-    ? ''
-    : html`<div class="notice">
-  <strong>Simpan nama karakter lebih dulu.</strong> Setelah tersimpan, tombol
-  <strong>Bulk gambar with AI</strong> muncul di kanan atas: unggah banyak potret
-  sekaligus, dan model visi mengisi keterangannya dengan format
-  <span class="mono">ekspresi, pakaian, pose</span>.
-</div>`
-}
-<form method="post" action="/admin/characters" class="card" data-expression-scope>
+<form method="post" action="/admin/characters" class="card" data-expression-scope data-portrait-bulk>
   <input type="hidden" name="characterId" value="${inputValue(character?.characterId ?? '')}">
 
   <label><span>Nama karakter</span>
@@ -121,19 +117,42 @@ ${
            value="${inputValue(character?.name ?? '')}">
   </label>
 
-  <h2 style="margin-top:22px">Ekspresi</h2>
-  <p class="sub" style="margin-top:0">
-    Setiap baris memerlukan <strong>nama</strong> dan <strong>gambar</strong>.
-    Baris yang gambarnya belum diunggah tidak akan tersimpan — jadi unggah dulu
-    gambarnya sebelum menekan Simpan. PNG, JPEG, atau WebP; PNG dipakai bila
-    latarnya perlu tembus pandang.
-  </p>
+  <!--
+    Impor potret berada DI DALAM formulir, tepat di bawah nama, dan itu bukan
+    sekadar tata letak.
+
+    Repositori MENOLAK karakter tanpa ekspresi bergambar (no-expressions), jadi
+    "simpan namanya dulu, baru unggah" adalah alur yang tidak mungkin: menyimpan
+    nama saja akan gagal. Menaruhnya di sini membuat keduanya satu langkah —
+    unggah, biarkan model mengisi barisnya, lalu Simpan sekali.
+
+    Tidak ada bidang di bagian ini yang punya atribut name, jadi tidak ada yang
+    ikut terkirim saat formulir disubmit. Yang terkirim hanya baris ekspresinya,
+    lewat data-expression-list di bawah.
+  -->
+  <div class="bulk-inline">
+    <div class="two">
+      <label><span>Provider</span>
+        <select data-portrait-bulk-provider>${providerOptions}</select>
+      </label>
+      <label><span>Model visi — pilih yang dapat melihat gambar</span>
+        <select data-portrait-bulk-model><option value="">(pilih provider lebih dulu)</option></select>
+      </label>
+    </div>
+    <div class="field__status" data-portrait-bulk-model-status>Daftar model diambil dari provider yang dipilih.</div>
+
+    <label><span>Potret — boleh banyak sekaligus</span>
+      <input type="file" accept="image/png,image/jpeg,image/webp" multiple data-portrait-bulk-files>
+    </label>
+
+    <div class="row" style="margin-top:14px">
+      <button class="ghost" type="button" data-portrait-bulk-run>Isi keterangan dengan AI</button>
+    </div>
+
+    <div class="bulk-list" data-portrait-bulk-list></div>
+  </div>
 
   <div data-expression-list>${rows}</div>
-
-  <div class="wizard-actions">
-    <button class="ghost" type="button" data-expression-add>+ Tambah ekspresi</button>
-  </div>
 
   <div class="row" style="margin-top:18px">
     <button type="submit">Simpan</button>
@@ -171,72 +190,9 @@ ${
     </div>
   </template>
 </form>
-${character ? bulkPortraitSheet(character.characterId, providers) : ''}
 ${character ? deleteCard(character) : ''}`;
 }
 
-/**
- * Sheet "Bulk gambar with AI" pada formulir karakter.
- *
- * Hanya dirender ketika karakternya SUDAH tersimpan, dan itu bukan pembatasan
- * teknis yang disengaja: ekspresi menempel pada sebuah karakter, jadi tidak ada
- * tempat menaruhnya sebelum karakternya ada. Formulir baru karena itu menunjukkan
- * petunjuk, bukan tombol yang akan gagal.
- *
- * Markupnya dirender server-side walaupun tersembunyi, sama seperti sheet impor
- * lokasi, supaya ikut tersapu uji render.
- */
-function bulkPortraitSheet(characterId: string, providers: ProviderRow[]): SafeHtml {
-  const providerOptions =
-    providers.length > 0
-      ? providers.map(
-          (provider) =>
-            html`<option value="${inputValue(provider.providerId)}">${esc(provider.name)}</option>`,
-        )
-      : [html`<option value="">(belum ada provider)</option>`];
-
-  return html`<div class="sheet-layer" data-portrait-bulk-root data-character="${inputValue(characterId)}" hidden>
-  <div class="sheet sheet--bulk" role="dialog" aria-modal="true" aria-labelledby="portrait-bulk-title">
-    <header class="sheet__bar">
-      <span class="traffic traffic--live">
-        <button type="button" class="traffic__dot traffic__dot--close" data-portrait-bulk-action="close" aria-label="Tutup" title="Tutup"></button>
-        <button type="button" class="traffic__dot traffic__dot--min" data-portrait-bulk-action="min" aria-label="Kecilkan" title="Kecilkan"></button>
-        <button type="button" class="traffic__dot traffic__dot--zoom" data-portrait-bulk-action="zoom" aria-label="Perlebar" title="Perlebar"></button>
-      </span>
-      <h2 class="sheet__title" id="portrait-bulk-title">Bulk gambar with AI</h2>
-    </header>
-
-    <div class="sheet__body">
-      <p class="sheet__text">
-        Unggah beberapa potret sekaligus. Model visi yang Anda pilih akan mengisi keterangan
-        tiap potret dengan format <span class="mono">ekspresi, pakaian, pose</span> — mis.
-        <span class="mono">senyum, pakaian kantor, normal</span>. Keterangan itu menjadi
-        nama ekspresinya, dan masih dapat disunting setelah selesai.
-      </p>
-
-      <label><span>Provider</span>
-        <select data-portrait-bulk-provider>${providerOptions}</select>
-      </label>
-
-      <label><span>Model visi — pilih yang dapat melihat gambar</span>
-        <select data-portrait-bulk-model><option value="">(pilih provider lebih dulu)</option></select>
-      </label>
-      <div class="field__status" data-portrait-bulk-model-status>Daftar model diambil dari provider yang dipilih.</div>
-
-      <label><span>Potret — boleh banyak sekaligus</span>
-        <input type="file" accept="image/png,image/jpeg,image/webp" multiple data-portrait-bulk-files>
-      </label>
-
-      <div class="bulk-list" data-portrait-bulk-list></div>
-    </div>
-
-    <footer class="sheet__foot">
-      <button type="button" class="ghost" data-portrait-bulk-action="close">Batal</button>
-      <button type="button" data-portrait-bulk-action="start">Mulai</button>
-    </footer>
-  </div>
-</div>`;
-}
 
 /**
  * Satu baris ekspresi yang sudah tersimpan.

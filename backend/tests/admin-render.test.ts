@@ -824,11 +824,24 @@ describe('templat baris ekspresi berada di dalam formulirnya', () => {
     // harus diuji sendiri — skrip unggahan menerima keduanya.
     const form = formWith(body, 'data-expression-scope');
     expect(form, 'daftar ekspresi berada di luar formulir').toContain('data-expression-list');
-    expect(form, 'tombol tambah ekspresi berada di luar formulir').toContain('data-expression-add');
     expect(
       form,
-      'templat ekspresi berada di luar formulir — tombol "+ Tambah ekspresi" tidak akan bekerja',
+      'templat ekspresi berada di luar formulir — hasil model tidak akan dapat menambah baris',
     ).toContain('data-expression-template');
+
+    /*
+     * Halaman ini SENGAJA tidak punya tombol tambah.
+     *
+     * Barisnya diisi oleh model visi dari potret yang diunggah sekaligus, jadi
+     * tombol "+ Tambah ekspresi" tidak lagi punya pekerjaan. Templatnya TETAP
+     * wajib ada — skrip memakainya untuk menambah baris.
+     *
+     * Skripnya juga harus tetap tahan terhadap ketiadaan tombol itu: dulu
+     * `bindExpressionRows` keluar lebih awal bila tombolnya tidak ada, sehingga
+     * menghapusnya akan MEMATIKAN seluruh baris tanpa satu pun galat.
+     */
+    expect(form, 'tombol tambah seharusnya sudah tidak ada').not.toContain('data-expression-add');
+    expect(form, 'pengisi otomatis tidak dirender').toContain('data-portrait-bulk-run');
   });
 
   it('memuat skrip unggahan di halaman master', async () => {
@@ -889,9 +902,17 @@ describe('templat baris ekspresi berada di dalam formulirnya', () => {
     expect(body, 'bidang tersembunyi id media latar tidak dirender').toContain(
       'data-background-media',
     );
-    // Slot latar memakai awalan sendiri: memakai slot potret akan memperkecil
-    // gambar latar ke ukuran potret, tanpa galat apa pun.
-    expect(body, 'slot latar memakai awalan potret').not.toContain('data-portrait-media');
+    /*
+     * Slot latar memakai awalan sendiri: memakai slot potret akan memperkecil
+     * gambar latar ke ukuran potret, tanpa galat apa pun.
+     *
+     * Yang diperiksa MARKUP-nya, bukan seluruh halaman. Skrip panel menyebut
+     * `[data-portrait-media]` di dalam pengisi baris potret karakter — dan skrip
+     * itu ikut dimuat di halaman ini. Memeriksa seluruh halaman akan selalu
+     * menemukannya, termasuk saat formulirnya benar.
+     */
+    const form = formWith(body, 'data-background-scope');
+    expect(form, 'slot latar memakai awalan potret').not.toContain('data-portrait-media');
   });
 
   it('menghidupkan pesan "tidak ditemukan" saat id lokasi tidak ada', async () => {
@@ -1106,46 +1127,104 @@ describe('impor massal lokasi', () => {
  * Formulir baru karena itu harus menjelaskannya, bukan menampilkan tombol yang
  * akan gagal.
  */
-describe('impor massal potret karakter', () => {
-  it('menjelaskan bahwa nama harus disimpan lebih dulu pada formulir baru', async () => {
+/**
+ * Pengisi keterangan potret pada formulir karakter.
+ *
+ * Berada DI DALAM formulir, bukan di dalam modal, dan itu memperbaiki dua hal:
+ * repositori menolak karakter tanpa ekspresi bergambar (jadi "simpan namanya
+ * dulu" adalah alur yang tidak mungkin), dan hasil model masuk ke baris yang
+ * sama dengan yang diisi tangan sehingga dapat disunting sebelum disimpan.
+ */
+describe('pengisi keterangan potret karakter', () => {
+  it('berada DI DALAM formulir, beserta seluruh bidangnya', async () => {
     const cookie = await login();
-
     const body = await sweep(cookie, '/admin/characters-form');
 
-    expect(body, 'petunjuk urutan kerja tidak ada').toContain('Simpan nama karakter lebih dulu');
+    // Bagian ini harus berada di dalam formulir: repositori MENOLAK karakter
+    // tanpa ekspresi bergambar, jadi memisahkannya berarti memaksa alur
+    // "simpan namanya dulu" — yang akan gagal.
+    const form = formWith(body, 'data-expression-scope');
 
+    expect(form, 'pemilih provider tidak ada').toContain('data-portrait-bulk-provider');
+    expect(form, 'pemilih model tidak ada').toContain('data-portrait-bulk-model');
+    expect(form, 'daftar kemajuan tidak ada').toContain('data-portrait-bulk-list');
+    expect(form, 'tombol pengisi tidak ada').toContain('data-portrait-bulk-run');
+    expect(form, 'input berkas tidak menerima banyak berkas').toMatch(
+      /<input[^>]*multiple[^>]*data-portrait-bulk-files/,
+    );
+    // Skripnya dimuat di akhir halaman, di luar formulir; bentuk keterangannya
+    // dijelaskan pada paragraf pengantar di atas formulir.
+    expect(body, 'skrip pengisi tidak dipanggil').toContain('bindBulkPortrait');
+    expect(body, 'format keterangan tidak dijelaskan').toContain('ekspresi, pakaian, pose');
+  });
+
+  it('tidak menyumbang bidang apa pun saat formulir disimpan', async () => {
     /*
-     * Yang diperiksa hanya MARKUP-nya. Skrip panel menyebut
-     * `[data-portrait-bulk-open]` di dalam pemilihnya, jadi memeriksa seluruh
-     * halaman akan selalu menemukannya — termasuk saat tombolnya memang tidak
-     * dirender. Pelajaran yang sama seperti penjaga kata "biaya".
+     * Seluruh bagian ini berada DI DALAM formulir, jadi setiap bidang ber-`name`
+     * di dalamnya akan ikut terkirim saat Simpan ditekan — dan server akan
+     * menolaknya sebagai bidang tak dikenal, atau lebih buruk lagi, menerimanya
+     * sebagai ekspresi kosong yang menggantikan baris yang sah.
+     *
+     * Yang terkirim hanya nama karakter dan baris ekspresinya.
      */
-    const markup = body
-      .replace(/<script[\s\S]*?<\/script>/gi, '')
-      .replace(/<style[\s\S]*?<\/style>/gi, '');
-    expect(markup, 'tombol impor muncul padahal karakter belum ada').not.toContain(
-      'data-portrait-bulk-open',
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/characters-form');
+    const form = formWith(body, 'data-expression-scope');
+
+    // Dipotong dari bagian pengisinya saja: nama karakter memang harus terkirim.
+    // Penandanya dicari sebagai ELEMEN, bukan sebagai teks — komentar di dalam
+    // formulir juga menyebut nama atributnya, dan itu membuat potongannya salah.
+    const mulai = form.indexOf('class="bulk-inline"');
+    const akhir = form.indexOf('<div data-expression-list>');
+    expect(mulai, 'penanda bagian pengisi tidak ditemukan').toBeGreaterThan(-1);
+    expect(akhir, 'daftar ekspresi tidak ditemukan').toBeGreaterThan(mulai);
+
+    const bagian = form.slice(mulai, akhir);
+    expect(
+      bagian.match(/\sname="/g) ?? [],
+      'bidang bantu akan ikut terkirim saat Simpan ditekan',
+    ).toEqual([]);
+  });
+
+  it('skrip baris ekspresi tidak menuntut tombol tambah', async () => {
+    /*
+     * Ini penjaga atas cacat yang SENYAP, dan itu sebabnya ia ada di sini.
+     *
+     * `bindExpressionRows` dulu keluar lebih awal bila tombol "+ Tambah ekspresi"
+     * tidak ada. Menghapus tombolnya karena itu MEMATIKAN seluruh baris: kotak
+     * berkas dan tombol hapus di tiap baris tidak pernah terpasang, tanpa satu
+     * pun galat, dan halaman tetap tampak benar. Yang terjadi hanyalah memilih
+     * berkas tidak mengunggah apa pun.
+     *
+     * Batas kejujurannya: ini memeriksa TEKS skrip, bukan perilakunya — tidak ada
+     * DOM di dalam uji ini. Ia menangkap kembalinya syarat lama, bukan setiap
+     * cara lain untuk membuat kesalahan yang sama. Perilakunya diperiksa
+     * terpisah dengan menjalankan halamannya di peramban.
+     */
+    const cookie = await login();
+    const body = await sweep(cookie, '/admin/characters-form');
+
+    expect(body, 'skrip menuntut tombol tambah lagi; baris ekspresi akan mati tanpa galat').not.toContain(
+      '|| !addButton',
     );
   });
 
-  it('menyediakan tombol, sheet, dan seluruh bidangnya saat karakter sudah ada', async () => {
+  it('tetap ada saat karakter sudah tersimpan, tanpa duplikasi', async () => {
+    /*
+     * Formulir ubah memakai scope yang sama, jadi bagian ini tidak boleh
+     * dirender dua kali — dua pemanggil akan memasang dua pendengar pada satu
+     * tombol, dan setiap potret terunggah dua kali.
+     *
+     * Dihitung di dalam MARKUP-nya saja: skripnya juga menyebut nama atribut itu.
+     */
     const cookie = await login();
     const characterId = await seedCharacter();
 
     const body = await sweep(cookie, `/admin/characters-form?character=${characterId}`);
+    const form = formWith(body, 'data-expression-scope');
 
-    expect(body, 'tombol pemicu tidak ada').toContain('data-portrait-bulk-open');
-    expect(body, 'sheet tidak dirender').toContain('data-portrait-bulk-root');
-    expect(body, 'id karakter tidak dibawa sheet').toContain(`data-character="${characterId}"`);
-    expect(body, 'pemilih provider tidak ada').toContain('data-portrait-bulk-provider');
-    expect(body, 'pemilih model tidak ada').toContain('data-portrait-bulk-model');
-    expect(body, 'daftar kemajuan tidak ada').toContain('data-portrait-bulk-list');
-    expect(body, 'input berkas tidak menerima banyak berkas').toMatch(
-      /<input[^>]*multiple[^>]*data-portrait-bulk-files/,
-    );
-    // Bentuk keterangan yang diminta harus tertulis di sheet, bukan hanya di prompt.
-    expect(body, 'format keterangan tidak dijelaskan').toContain('ekspresi, pakaian, pose');
-    expect(body, 'skrip sheet tidak dipanggil').toContain('bindBulkPortrait();');
+    const jumlah = form.split('data-portrait-bulk-run').length - 1;
+    expect(jumlah, 'tombol pengisi tidak dirender tepat sekali').toBe(1);
   });
 });
 
