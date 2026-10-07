@@ -18,10 +18,10 @@ import { CHEVRON, esc, escOr, formatTime, html, inputValue, statusPill } from '.
 import { RESPONSE_LOCALES, type ResponseLocale } from '../../contracts/types';
 import {
   BASE_EXPRESSION,
+  DEFAULT_BLUR_STRENGTH,
   MAX_BACKGROUNDS,
   MAX_WORLD_PREMISE,
   MAX_WORLD_SYNOPSIS,
-  type BackgroundRow,
   type DraftWorld,
   type NpcRow,
   type WizardStep,
@@ -262,215 +262,125 @@ export async function wizardStep2(ctx: AdminPageContext, worldId: string): Promi
   }
 
   const backgrounds = await ctx.drafts.listBackgrounds(draft.worldId, draft.worldVersion);
-  const full = backgrounds.length >= MAX_BACKGROUNDS;
 
   /*
-   * Pilihan latar dibangun dari MASTER, bukan dari unggahan.
+   * Kategori (era) yang dipilih dunia, beserta berapa lokasi yang benar-benar
+   * akan menjadi latar.
    *
-   * Yang ditawarkan adalah LOKASI, dikelompokkan menurut kategorinya (era).
-   * Mengelompokkan dengan `<optgroup>` memakai elemen bawaan HTML, jadi daftar
-   * era-nya terbaca tanpa satu baris pun JavaScript — dan karena setiap lokasi
-   * pasti punya gambar (dijamin master), tidak ada pilihan yang bisa gagal.
+   * Yang dihitung adalah lokasi BER-GAMBAR: lokasi yang gambarnya belum
+   * diunggah tidak dapat dirender klien, jadi ia tidak akan masuk. Menampilkan
+   * jumlah mentah akan menjanjikan latar yang tidak pernah muncul.
    */
   const [masterLocations, masterCategories] = await Promise.all([
     ctx.locations.list(),
     ctx.locations.listCategories(),
   ]);
-  const groups = masterCategories
-    .map((category) => ({
-      name: category.name,
-      locations: masterLocations.filter((location) => location.categoryId === category.categoryId),
-    }))
-    .filter((group) => group.locations.length > 0);
 
-  const items = backgrounds.map((background, index) => backgroundItem(background, draft, index, backgrounds.length));
+  const ringkas = new Map<string, { total: number; bergambar: number; nama: string[] }>();
+  for (const location of masterLocations) {
+    const catatan = ringkas.get(location.categoryId) ?? { total: 0, bergambar: 0, nama: [] };
+    catatan.total += 1;
+    if (location.mediaId) {
+      catatan.bergambar += 1;
+      catatan.nama.push(location.name);
+    }
+    ringkas.set(location.categoryId, catatan);
+  }
+
+  const pilihan = masterCategories.map((category) => ({
+    categoryId: category.categoryId,
+    name: category.name,
+    ...(ringkas.get(category.categoryId) ?? { total: 0, bergambar: 0, nama: [] }),
+  }));
+  const terpilih = draft.locationCategoryId;
+  const kategoriTerpilih = pilihan.find((item) => item.categoryId === terpilih) ?? null;
+  const adaIsi = pilihan.filter((item) => item.bergambar > 0);
+
+  const categoryOptions = pilihan.map(
+    (item) =>
+      html`<option value="${inputValue(item.categoryId)}"${
+        item.categoryId === terpilih ? ' selected' : ''
+      }>${esc(item.name)} — ${String(item.bergambar)} lokasi${
+        item.bergambar === 0 ? ' (belum ada gambar)' : ''
+      }</option>`,
+  );
+
+  /*
+   * Satu panel pratinjau per kategori, semuanya dirender dan hanya yang terpilih
+   * yang tampak. Menggambar ulang lewat permintaan ke server akan membuat
+   * pratinjaunya tertinggal satu langkah dari pilihannya — dan admin yang melihat
+   * daftar lama akan mengira pilihannya tidak berpengaruh.
+   */
+  const panels = pilihan.map((item) => {
+    const isi = masterLocations.filter(
+      (location) => location.categoryId === item.categoryId && location.mediaId,
+    );
+    return html`<div data-kategori-panel="${inputValue(item.categoryId)}"${
+      item.categoryId === terpilih ? '' : ' hidden'
+    }>
+  ${
+    isi.length === 0
+      ? html`<p class="sub" style="margin:0">Kategori ini belum punya lokasi bergambar.</p>`
+      : html`<div class="grid">
+    ${isi.map(
+      (location) =>
+        html`<figure class="bg-preview">
+      <img src="/v1/media/${esc(location.mediaId)}" alt="${esc(location.name)}" loading="lazy">
+      <figcaption>
+        <strong>${esc(location.name)}</strong>
+        ${location.description.trim().length > 0 ? html`<span class="muted">${esc(location.description)}</span>` : ''}
+      </figcaption>
+    </figure>`,
+    )}
+  </div>`
+  }
+</div>`;
+  });
 
   return html`<h1>Latar belakang — Langkah 2 dari 3</h1>
 ${wizardSteps(2, worldId, stepOfDraft(draft))}
 <p class="sub">
-  Tempat cerita berlangsung. Latar <strong>dipungut dari master lokasi</strong> — pilih
-  tempat beserta kategorinya (era), dan gambarnya masuk ke dunia ini. Setiap latar punya
-  <strong>keterangan</strong> yang dibaca manusia dan <strong>pemakaian</strong> yang
-  membimbing AI. Angka <em>peluang bertemu</em> sengaja terpisah dari catatan bebas: ia
-  dipakai mesin cerita untuk memutuskan, dan apa pun yang dipakai untuk memutuskan harus
-  berupa nilai, bukan kalimat.
+  Dunia memakai <strong>satu kategori lokasi</strong> (era), dan <strong>seluruh</strong> lokasi
+  di kategori itu menjadi latar dunia ini. Keterangannya disalin dari master dan blur-nya
+  <strong>${String(DEFAULT_BLUR_STRENGTH)}%</strong> — tidak ada yang perlu diatur satu per satu.
+  Menyimpan membangun ulang daftarnya, jadi lokasi yang ditambahkan ke kategori itu nanti ikut
+  masuk saat disimpan lagi.
 </p>
 
 <div class="grid" style="margin-bottom:18px">
-  <div class="stat"><b>${String(backgrounds.length)}</b><span>Latar belakang</span></div>
+  <div class="stat"><b>${String(backgrounds.length)}</b><span>Latar dunia ini</span></div>
   <div class="stat"><b>${String(MAX_BACKGROUNDS)}</b><span>Batas maksimum</span></div>
-  <div class="stat"><b>${String(backgrounds.filter((item) => item.description.trim().length === 0).length)}</b><span>Belum diberi keterangan</span></div>
+  <div class="stat"><b>${esc(kategoriTerpilih?.name ?? '—')}</b><span>Kategori terpilih</span></div>
 </div>
 
-${
-  full
-    ? html`<div class="notice err">
-  Batas ${String(MAX_BACKGROUNDS)} latar belakang sudah tercapai. Hapus salah satu
-  untuk menambah yang baru.
-</div>`
-    : groups.length === 0
-      ? html`<div class="card" style="border-color:var(--warn)">
-  <p class="sub" style="margin-top:0">
-    <strong>Master lokasi masih kosong.</strong> Latar dipungut dari sana, jadi isi
-    <a href="/admin/locations">master lokasi</a> lebih dulu: tambahkan tempat, pilih
-    kategorinya, lalu unggah gambarnya.
-  </p>
-  <p style="margin-bottom:0">
-    Kategori (era) — mis. <em>fantasy</em>, <em>masa kini</em>, <em>era dinasti</em> —
-    dikelola di <a href="/admin/location-categories">halaman kategori lokasi</a>.
-  </p>
-</div>`
-      : html`<form method="post" action="/admin/worlds-wizard/2/backgrounds/pick" class="card">
+<form method="post" action="/admin/worlds-wizard/2" class="card" data-kategori-scope>
   <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
-  <label><span>Pilih latar dari master lokasi</span>
-    <select name="pick" required>
-      ${groups.map(
-        (group) => html`<optgroup label="${esc(group.name)}">
-        ${group.locations.map(
-          (location) =>
-            html`<option value="${inputValue(location.locationId)}">${esc(location.name)}</option>`,
-        )}
-      </optgroup>`,
-      )}
-    </select>
+
+  ${
+    adaIsi.length === 0
+      ? html`<div class="notice err" style="margin-bottom:14px">
+  <strong>Belum ada kategori lokasi yang berisi.</strong> Latar diambil dari master, jadi isi
+  <a href="/admin/locations">master lokasi</a> lebih dulu: tambahkan tempat, pilih kategorinya,
+  lalu unggah gambarnya. Kategori (era) dikelola di
+  <a href="/admin/location-categories">halaman kategori lokasi</a>.
+</div>`
+      : ''
+  }
+
+  <label><span>Kategori lokasi dunia ini</span>
+    <select name="categoryId" required data-kategori-pilih>${categoryOptions}</select>
   </label>
+
   <p class="sub" style="margin-top:0">
-    Daftarnya dikelompokkan menurut <strong>kategori (era)</strong>, dan setiap lokasi
-    pasti sudah punya gambar di master. Setelah ditambahkan, keterangan, blur, titik
-    fokus, dan peluang kemunculannya boleh disesuaikan untuk dunia ini —
-    <strong>master tidak ikut berubah</strong>.
-    Tersisa ${String(MAX_BACKGROUNDS - backgrounds.length)} tempat.
+    Seluruh lokasi di kategori ini menjadi latar, berurut seperti di master. Lokasi yang
+    belum punya gambar dilewati — angka di daftar di atas hanya menghitung yang bergambar.
   </p>
-  <div class="wizard-actions">
-    <span class="spacer"></span>
-    <button type="submit">Tambahkan ke daftar</button>
-  </div>
-</form>`
-}
 
-<h2>Daftar latar belakang</h2>
-${
-  backgrounds.length === 0
-    ? html`<div class="empty">Belum ada latar belakang. Pungut minimal satu dari master untuk melanjutkan.</div>`
-    : html`<div class="card">${items}</div>`
-}
+  <div class="bg-preview-wrap">${panels}</div>
 
-<form method="post" action="/admin/worlds-wizard/2" class="card">
-  <input type="hidden" name="worldId" value="${inputValue(worldId)}">
   ${actions(html`Lanjut ke karakter &rarr;`, `/admin/worlds/${esc(worldId)}/wizard/1`)}
-</form>`;
-}
-
-function backgroundItem(
-  background: BackgroundRow,
-  draft: DraftWorld,
-  index: number,
-  total: number,
-): SafeHtml {
-  const likelihoodOptions = [
-    { value: '', label: '— belum ditentukan —' },
-    { value: 'none', label: 'Tidak ada' },
-    { value: 'low', label: 'Rendah' },
-    { value: 'medium', label: 'Sedang' },
-    { value: 'high', label: 'Tinggi' },
-  ].map(
-    (option) =>
-      `<option value="${esc(option.value)}"${
-        (background.encounterLikelihood ?? '') === option.value ? ' selected' : ''
-      }>${esc(option.label)}</option>`,
-  );
-
-  const missing = background.description.trim().length === 0;
-
-  return html`<div class="bg-item">
-  <img class="bg-item__thumb" alt=""
-       src="${background.mediaId ? esc(`/v1/media/${background.mediaId}`) : ''}">
-  <div class="bg-item__body">
-    <div>
-      <strong>${missing ? html`<span class="muted">belum diberi keterangan</span>` : esc(background.description)}</strong>
-      ${missing ? statusPill('draft', 'perlu dilengkapi') : ''}
-    </div>
-    <div class="bg-item__meta">
-      ${String(background.width ?? 0)}&times;${String(background.height ?? 0)} ·
-      blur ${String(background.blurStrength)} ·
-      fokus ${String(Math.round(background.focalX * 100))}%/${String(Math.round(background.focalY * 100))} ·
-      ${background.encounterLikelihood ? esc(background.encounterLikelihood) : 'peluang belum diisi'}
-    </div>
-    <details style="margin-top:8px">
-      <summary class="muted" style="cursor:pointer;font-size:13px">Ubah keterangan, blur, dan titik fokus</summary>
-      <form method="post" action="/admin/worlds-wizard/2/background" style="margin-top:12px"
-            data-preview-scope>
-        <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
-        <input type="hidden" name="assetId" value="${inputValue(background.assetId)}">
-
-        <div class="two">
-          <label><span>Keterangan (mis. "Aula kantor")</span>
-            <input name="description" maxlength="200" value="${inputValue(background.description)}">
-          </label>
-          <label><span>Peluang bertemu NPC</span>
-            <select name="encounterLikelihood">${likelihoodOptions}</select>
-          </label>
-        </div>
-
-        <label><span>Pemakaian — membimbing AI (mis. "banyak orang lalu lalang, sering jadi tempat bertemu")</span>
-          <textarea name="usageNote" maxlength="500" style="min-height:70px">${esc(background.usageNote)}</textarea>
-        </label>
-
-        <div class="two">
-          <div>
-            <span class="muted" style="font-size:12px">Titik fokus — klik gambar untuk memindahkan</span>
-            <div class="focal-stage" data-focal-stage>
-              <img data-focal-image data-blur-image
-                   src="${background.mediaId ? esc(`/v1/media/${background.mediaId}`) : ''}" alt="">
-              <span class="focal-marker" data-focal-marker></span>
-            </div>
-            <div class="muted" style="font-size:12px;margin-top:6px">
-              Fokus: <span data-focal-readout>50% / 50%</span>
-              <button class="link" type="button" data-focal-reset>atur ulang</button>
-            </div>
-            <input type="hidden" name="focalX" data-focal-x value="${String(background.focalX)}">
-            <input type="hidden" name="focalY" data-focal-y value="${String(background.focalY)}">
-          </div>
-
-          <div>
-            <label><span>Kekuatan blur: <span data-blur-readout>0</span> dari 100</span>
-              <input type="range" min="0" max="100" step="1" name="blurStrength"
-                     data-blur value="${String(background.blurStrength)}">
-            </label>
-            <button class="link" type="button" data-blur-reset>atur ulang blur</button>
-          </div>
-        </div>
-
-        <div class="wizard-actions">
-          <button type="submit">Simpan perubahan</button>
-        </div>
-      </form>
-    </details>
-  </div>
-
-  <div class="bg-item__order">
-    <form method="post" action="/admin/worlds-wizard/2/background/move">
-      <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
-      <input type="hidden" name="assetId" value="${inputValue(background.assetId)}">
-      <input type="hidden" name="direction" value="up">
-      <button class="ghost" type="submit"${index === 0 ? ' disabled' : ''} title="Naikkan">&uarr;</button>
-    </form>
-    <form method="post" action="/admin/worlds-wizard/2/background/move">
-      <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
-      <input type="hidden" name="assetId" value="${inputValue(background.assetId)}">
-      <input type="hidden" name="direction" value="down">
-      <button class="ghost" type="submit"${index === total - 1 ? ' disabled' : ''} title="Turunkan">&darr;</button>
-    </form>
-    <form method="post" action="/admin/worlds-wizard/2/background/delete"
-          data-confirm="Hapus latar “${escOr(background.label, background.assetId)}”? Berkasnya tetap tersimpan sebagai aset."
-          data-confirm-title="Hapus latar"
-          data-confirm-ok="Hapus">
-      <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
-      <input type="hidden" name="assetId" value="${inputValue(background.assetId)}">
-      <button class="danger" type="submit" title="Hapus">Hapus</button>
-    </form>
-  </div>
-</div>`;
+</form>
+`;
 }
 
 /* ------------------------------------------------------------------ */

@@ -450,245 +450,197 @@ async function masterLocation(mediaId: string): Promise<string> {
 }
 
 /** Menyiapkan satu lokasi di master, lalu memungutnya ke dalam dunia. */
-async function addBackground(cookie: string, worldId: string, mediaId: string) {
-  const locationId = await masterLocation(mediaId);
-
-  return post(cookie, '/admin/worlds-wizard/2/backgrounds/pick', {
-    worldId,
-    pick: locationId,
-  });
-}
 
 /* ------------------------------------------------------------------ */
 /* Langkah 2 — latar belakang                                          */
 /* ------------------------------------------------------------------ */
 
-describe('langkah 2: latar belakang', () => {
-  it('menambah beberapa latar belakang sekaligus dan membacanya kembali', async () => {
+/**
+ * Menyiapkan satu lokasi di master, lalu menjadikannya latar dunia.
+ *
+ * Namanya dipertahankan supaya uji-uji yang sudah ada — yang memakainya untuk
+ * menyiapkan PRASYARAT, bukan untuk menguji pemungutan — tidak perlu diubah
+ * semuanya. Sejak langkah 2 memakai kategori, satu panggilan ini menyusun
+ * SELURUH lokasi kategori uji, bukan hanya satu.
+ */
+async function addBackground(cookie: string, worldId: string, mediaId: string) {
+  await masterLocation(mediaId);
+  return simpanKategori(cookie, worldId, await testCategory());
+}
+
+/* ------------------------------------------------------------------ */
+/* Langkah 2 — latar dari kategori                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Menyimpan kategori lokasi dunia.
+ *
+ * Menggantikan `addBackground`, yang memungut satu lokasi per permintaan. Sekarang
+ * satu permintaan menentukan KATEGORI, dan seluruh lokasi di dalamnya menjadi
+ * latar dunia.
+ */
+async function simpanKategori(
+  cookie: string,
+  worldId: string,
+  categoryId: string,
+  intent: 'next' | 'draft' = 'draft',
+) {
+  return post(cookie, '/admin/worlds-wizard/2', { worldId, categoryId, intent });
+}
+
+describe('langkah 2: latar dari kategori', () => {
+  it('menyusun latar dari SELURUH lokasi kategori, berurut seperti master', async () => {
     const cookie = await login();
     const worldId = await createDraftToStep2(cookie);
 
-    const a = await upload(cookie, png(1280, 720, 'bg-1'));
-    const b = await upload(cookie, png(1280, 720, 'bg-2'));
+    const a = await upload(cookie, png(1280, 720, 'kat-1'));
+    const b = await upload(cookie, png(1280, 720, 'kat-2'));
+    await masterLocation(a);
+    await masterLocation(b);
 
-    await addBackground(cookie, worldId, a);
-    const response = await addBackground(cookie, worldId, b);
-    expect(location(response)).toContain('/wizard/2?notice=picked');
-
-    const draft = await drafts.findDraft(worldId);
-    expect(draft?.backgroundCount).toBe(2);
+    const response = await simpanKategori(cookie, worldId, await testCategory());
+    expect(location(response)).toContain('notice=draft');
 
     const rows = await drafts.listBackgrounds(worldId, 1);
-    expect(rows.map((row) => row.mediaId)).toEqual([a, b]);
+    expect(rows, 'seluruh lokasi kategori seharusnya menjadi latar').toHaveLength(2);
     // Urutan ditentukan `position`, bukan urutan penyisipan yang kebetulan.
     expect(rows.map((row) => row.position)).toEqual([1, 2]);
     expect(rows.every((row) => row.uri === `/v1/media/${row.mediaId}`)).toBe(true);
   });
 
-  it('membaca dimensi dari basis data, bukan dari kiriman klien', async () => {
+  it('memberi blur 30 dan titik fokus netral, tanpa disunting satu per satu', async () => {
+    /*
+     * Nilai bawaannya ditentukan di sini, bukan oleh admin per baris. Blur 0
+     * membuat latar bersaing dengan teks di atasnya; 30 melembutkannya tanpa
+     * membuat tempatnya tidak dikenali.
+     */
     const cookie = await login();
     const worldId = await createDraftToStep2(cookie);
-    const mediaId = await upload(cookie, png(1280, 720, 'bg-dimensi'));
+    const mediaId = await upload(cookie, png(1280, 720, 'blur-30'));
+    await masterLocation(mediaId);
 
-    await addBackground(cookie, worldId, mediaId);
+    await simpanKategori(cookie, worldId, await testCategory());
 
     const [row] = await drafts.listBackgrounds(worldId, 1);
-    // Angka-angka ini tidak pernah dikirim oleh permintaan di atas: server
-    // mengambilnya dari `media_blobs`. Kalau klien boleh mengarangnya, titik
-    // fokus akan dihitung dari kanvas yang salah.
+    expect(row?.blurStrength, 'blur bawaan bukan 30').toBe(30);
+    expect(row?.focalX).toBe(0.5);
+    expect(row?.focalY).toBe(0.5);
+    // Dimensi dibaca dari basis data media, bukan dari kiriman klien.
     expect(row?.width).toBe(1280);
     expect(row?.height).toBe(720);
   });
 
-  it('menolak id media yang tidak ada di master, bukan menyimpannya', async () => {
+  it('MENGGANTI latar saat kategorinya diganti, bukan menambah', async () => {
+    /*
+     * Ini yang membedakannya dari memungut satu per satu: daftarnya TURUNAN, jadi
+     * mengganti kategori berarti mengganti seluruh isinya. Menambahkan akan
+     * menumpuk latar dari dua era sekaligus, dan tidak ada yang menyadarinya
+     * sampai ada adegan yang muncul di tempat yang salah.
+     */
     const cookie = await login();
     const worldId = await createDraftToStep2(cookie);
-    const real = await upload(cookie, png(1280, 720, 'bg-real'));
 
-    /*
-     * Id media yang tidak ada TIDAK dapat masuk ke master, jadi tidak mungkin
-     * ditawarkan ke dunia. Dua lapis yang menahannya: bentuk id disaring lebih
-     * dulu (`isMediaId`), dan kunci asing ke `media_blobs` menolak sisanya.
-     * Sebelum ini penyaringan itu hidup di route unggahan langkah 2, artinya ia
-     * hanya berlaku pada satu jalur simpan.
-     */
-    const refused = await locations.create({
-      name: 'Tempat tanpa gambar',
-      categoryId: await testCategory(),
+    const lama = await upload(cookie, png(1280, 720, 'era-lama'));
+    await masterLocation(lama);
+    await simpanKategori(cookie, worldId, await testCategory());
+    expect(await drafts.listBackgrounds(worldId, 1)).toHaveLength(1);
+
+    const kategoriBaru = await locations.createCategory('era kedua');
+    expect(kategoriBaru.ok).toBe(true);
+    if (!kategoriBaru.ok) {
+      return;
+    }
+    const baru = await upload(cookie, png(1280, 720, 'era-baru'));
+    await locations.create({
+      name: 'Tempat era kedua',
+      categoryId: kategoriBaru.categoryId,
       description: '',
-      mediaId: 'a'.repeat(64),
+      mediaId: baru,
     });
-    expect(refused.ok, 'lokasi dengan media yang tidak ada seharusnya ditolak').toBe(false);
-    if (!refused.ok) {
-      expect(refused.reason).toBe('no-image');
-    }
 
-    // Yang berkasnya benar-benar ada tetap dapat dipungut.
-    await addBackground(cookie, worldId, real);
+    await simpanKategori(cookie, worldId, kategoriBaru.categoryId);
+
     const rows = await drafts.listBackgrounds(worldId, 1);
-    expect(rows).toHaveLength(1);
-    expect(rows[0]?.mediaId).toBe(real);
+    expect(rows, 'latar era lama seharusnya sudah tidak ada').toHaveLength(1);
+    expect(rows[0]?.mediaId).toBe(baru);
   });
 
-  it('menyimpan keterangan, usage, dan taksiran peluang bertemu', async () => {
-    const cookie = await login();
-    const worldId = await createDraftToStep2(cookie);
-    const mediaId = await upload(cookie, png(1280, 720, 'bg-edit'));
-    await addBackground(cookie, worldId, mediaId);
-    const assetId = (await drafts.listBackgrounds(worldId, 1))[0]!.assetId;
-
-    await post(cookie, '/admin/worlds-wizard/2/background', {
-      worldId,
-      assetId,
-      description: 'Aula kantor',
-      usageNote: 'Banyak orang lalu lalang, peluang bertemu NPC lain tinggi.',
-      encounterLikelihood: 'high',
-      blurStrength: '12',
-      focalX: '0.25',
-      focalY: '0.75',
-    });
-
-    const [row] = await drafts.listBackgrounds(worldId, 1);
-    expect(row?.description).toBe('Aula kantor');
-    expect(row?.usageNote).toContain('Banyak orang lalu lalang');
-    expect(row?.encounterLikelihood).toBe('high');
-    expect(row?.blurStrength).toBe(12);
-    expect(row?.focalX).toBeCloseTo(0.25);
-    expect(row?.focalY).toBeCloseTo(0.75);
-  });
-
-  it('menjepit blur ke 0..100 dan titik fokus ke 0..1', async () => {
-    const cookie = await login();
-    const worldId = await createDraftToStep2(cookie);
-    const mediaId = await upload(cookie, png(1280, 720, 'bg-clamp'));
-    await addBackground(cookie, worldId, mediaId);
-    const assetId = (await drafts.listBackgrounds(worldId, 1))[0]!.assetId;
-
-    await post(cookie, '/admin/worlds-wizard/2/background', {
-      worldId,
-      assetId,
-      blurStrength: '999',
-      focalX: '-3',
-      focalY: '7',
-    });
-
-    const [row] = await drafts.listBackgrounds(worldId, 1);
-    // Nilai di luar rentang disimpan sebagai batasnya, bukan sebagai angka liar
-    // yang kemudian dipakai CSS dan RN dengan tafsiran berbeda.
-    expect(row?.blurStrength).toBe(100);
-    expect(row?.focalX).toBe(0);
-    expect(row?.focalY).toBe(1);
-  });
-
-  it('menyimpan taksiran peluang yang tidak dikenal sebagai kosong', async () => {
-    const cookie = await login();
-    const worldId = await createDraftToStep2(cookie);
-    const mediaId = await upload(cookie, png(1280, 720, 'bg-lik'));
-    await addBackground(cookie, worldId, mediaId);
-    const assetId = (await drafts.listBackgrounds(worldId, 1))[0]!.assetId;
-
-    await post(cookie, '/admin/worlds-wizard/2/background', {
-      worldId,
-      assetId,
-      encounterLikelihood: 'sangat-tinggi',
-    });
-
-    const [row] = await drafts.listBackgrounds(worldId, 1);
-    expect(row?.encounterLikelihood).toBeNull();
-  });
-
-  it('menggeser urutan latar belakang dan menghapusnya', async () => {
-    const cookie = await login();
-    const worldId = await createDraftToStep2(cookie);
-    const a = await upload(cookie, png(1280, 720, 'bg-ord-1'));
-    const b = await upload(cookie, png(1280, 720, 'bg-ord-2'));
-    await addBackground(cookie, worldId, a);
-    await addBackground(cookie, worldId, b);
-
-    const before = await drafts.listBackgrounds(worldId, 1);
-    const second = before[1]!.assetId;
-
-    await post(cookie, '/admin/worlds-wizard/2/background/move', {
-      worldId,
-      assetId: second,
-      direction: 'up',
-    });
-
-    const after = await drafts.listBackgrounds(worldId, 1);
-    expect(after.map((row) => row.mediaId)).toEqual([b, a]);
-
-    await post(cookie, '/admin/worlds-wizard/2/background/delete', {
-      worldId,
-      assetId: second,
-    });
-
-    const remaining = await drafts.listBackgrounds(worldId, 1);
-    expect(remaining.map((row) => row.mediaId)).toEqual([a]);
-
-    // Berkas medianya TIDAK ikut terhapus: alamatnya berbasis isi dan mungkin
-    // masih dipakai dunia lain.
-    const { rows } = await ctx.db.query<{ total: number }>(
-      'SELECT count(*)::int AS total FROM media_blobs',
-    );
-    expect(rows[0]?.total).toBe(3); // sampul + dua latar belakang
-  });
-
-  it(`menolak latar belakang ke-${String(MAX_BACKGROUNDS + 1)} dan berhenti tepat di batas`, async () => {
-    const cookie = await login();
-    const worldId = await createDraftToStep2(cookie);
-    const draft = (await drafts.findDraft(worldId))!;
-    const mediaId = await upload(cookie, png(1280, 720, 'bg-cap'));
-
+  it('lokasi tanpa gambar TIDAK MUNGKIN ada, jadi tidak ada yang dilewati', async () => {
     /*
-     * 49 latar pertama disiapkan lewat repository, bukan 49 pemungutan lewat
-     * HTTP: yang diuji di sini adalah BATASNYA, bukan jalur pemungutannya —
-     * jalur itu sudah diuji di atas. Berkasnya pun boleh sama, karena batas ini
-     * menghitung BARIS latar, bukan berkas yang berbeda.
+     * Penyusun latar melewati lokasi yang gambarnya belum ada — tetapi jalur itu
+     * tidak pernah tercapai, dan uji ini menjelaskan MENGAPA: kunci asing
+     * `locations_media_fk` menolak lokasi yang medianya tidak ada di `media_blobs`.
      *
-     * Dua latar terakhir tetap lewat HTTP supaya batasnya benar-benar diuji dari
-     * sisi yang dipakai admin.
+     * Dokumentasinya penting justru karena jalur itu tidak dapat diuji: pembaca
+     * berikutnya yang menemukan `skipped` di kode akan menduga ada data seperti itu
+     * di produksi, dan mencarinya sia-sia.
      */
-    for (let index = 0; index < MAX_BACKGROUNDS - 1; index += 1) {
-      const created = await drafts.addBackground(worldId, draft.worldVersion, {
-        mediaId,
-        label: '',
-        description: '',
-        usageNote: '',
-        encounterLikelihood: null,
-        blurStrength: 0,
-        focalX: 0.5,
-        focalY: 0.5,
-        width: 1280,
-        height: 720,
-      });
-      expect(created, `latar ke-${String(index + 1)} ditolak`).not.toBeNull();
-    }
-
-    // Ke-50 masih diterima — batasnya harus tepat, bukan "berhenti lebih awal".
-    const fiftieth = await addBackground(cookie, worldId, mediaId);
-    expect(location(fiftieth)).toContain('notice=picked');
-    expect(await drafts.listBackgrounds(worldId, draft.worldVersion)).toHaveLength(MAX_BACKGROUNDS);
-
-    // Ke-51 ditolak, dan tidak ada yang tersisa setengah jalan.
-    const overflow = await addBackground(cookie, worldId, mediaId);
-    expect(location(overflow)).toContain('notice=limit');
-    expect(await drafts.listBackgrounds(worldId, draft.worldVersion)).toHaveLength(MAX_BACKGROUNDS);
+    const categoryId = await testCategory();
+    await expect(
+      ctx.db.query(
+        `INSERT INTO locations (location_id, name, category_id, description, media_id, position)
+         VALUES ('loc_tanpa_gambar', 'Tempat tanpa gambar', $1, '', '', 99)`,
+        [categoryId],
+      ),
+    ).rejects.toThrow();
   });
 
-  it('menolak "Lanjut" bila belum ada satu pun latar belakang', async () => {
+  it('TIDAK menghapus sampul dan potret saat menyusun ulang latar', async () => {
+    /*
+     * Sampul, latar, dan potret berada di TABEL YANG SAMA (`world_assets`) dan
+     * dibedakan oleh `kind`. Menyusun ulang latar dengan menghapus seluruh baris
+     * versi ini akan menghapus sampul dan potret karakter tanpa satu pun galat —
+     * dan admin baru menyadarinya saat dunianya tampil tanpa gambar.
+     */
     const cookie = await login();
     const worldId = await createDraftToStep2(cookie);
 
-    const response = await post(cookie, '/admin/worlds-wizard/2', { worldId, intent: 'next' });
-    expect(location(response)).toContain('/wizard/2?notice=incomplete');
+    const mediaId = await upload(cookie, png(1280, 720, 'latar'));
+    await masterLocation(mediaId);
+
+    const { rows: sebelum } = await ctx.db.query<{ jumlah: number }>(
+      `SELECT count(*)::int AS jumlah FROM world_assets
+       WHERE world_id = $1 AND world_version = 1 AND kind = 'cover'`,
+      [worldId],
+    );
+    expect(sebelum[0]?.jumlah, 'sampul tidak ada sebelum uji ini dimulai').toBe(1);
+
+    await simpanKategori(cookie, worldId, await testCategory());
+
+    const { rows: sesudah } = await ctx.db.query<{ jumlah: number }>(
+      `SELECT count(*)::int AS jumlah FROM world_assets
+       WHERE world_id = $1 AND world_version = 1 AND kind = 'cover'`,
+      [worldId],
+    );
+    expect(sesudah[0]?.jumlah, 'sampul ikut terhapus').toBe(1);
   });
 
-  it('mengizinkan "Simpan & keluar" tanpa latar belakang', async () => {
+  it('menolak kategori yang tidak ada, tanpa mengubah latarnya', async () => {
     const cookie = await login();
     const worldId = await createDraftToStep2(cookie);
 
-    const response = await post(cookie, '/admin/worlds-wizard/2', { worldId, intent: 'draft' });
-    expect(location(response)).toContain('/admin/worlds?notice=draft');
+    const mediaId = await upload(cookie, png(1280, 720, 'tetap'));
+    await masterLocation(mediaId);
+    await simpanKategori(cookie, worldId, await testCategory());
+
+    const response = await simpanKategori(cookie, worldId, 'kat_tidak_ada');
+    expect(location(response)).toContain('notice=category-not-found');
+
+    const rows = await drafts.listBackgrounds(worldId, 1);
+    expect(rows, 'latar lama seharusnya tidak tersentuh').toHaveLength(1);
+  });
+
+  it('mencatat kategori pilihannya pada draf', async () => {
+    const cookie = await login();
+    const worldId = await createDraftToStep2(cookie);
+    const mediaId = await upload(cookie, png(1280, 720, 'catat'));
+    await masterLocation(mediaId);
+
+    const categoryId = await testCategory();
+    await simpanKategori(cookie, worldId, categoryId);
+
+    const draft = await drafts.findDraft(worldId);
+    expect(draft?.locationCategoryId).toBe(categoryId);
   });
 });
 
@@ -1114,7 +1066,7 @@ describe('penerbitan', () => {
 
     for (const action of [
       'world.draft.save',
-      'world.background.pick',
+      'world.location_category.save',
       'world.npc.create',
       'world.publish',
     ]) {
@@ -1257,7 +1209,7 @@ describe('perlindungan dan render halaman wizard', () => {
       expect(body, `markup tampil sebagai teks: ${broken}`).not.toContain(broken);
     }
     expect(body).toContain('Latar belakang');
-    expect(body, 'pemilih latar tidak dirender sebagai elemen').toContain('<select name="pick"');
+    expect(body, 'pemilih kategori tidak dirender sebagai elemen').toContain('<select name="categoryId"');
     expect(body, 'pilihan pemilih harus berisi pasangan lokasi-kategori').toContain(
       'Tempat uji',
     );

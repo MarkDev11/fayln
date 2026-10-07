@@ -1262,57 +1262,24 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     return reply.redirect('/admin/worlds?notice=draft', 302);
   });
 
-  app.post('/admin/worlds-wizard/2', async (request, reply) => {
-    const body = z
-      .object({ worldId: z.string().trim().min(1), intent: z.enum(['next', 'draft']) })
-      .safeParse(request.body);
-    if (!body.success) {
-      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
-    }
-
-    const draft = await ctx.drafts.findDraft(body.data.worldId);
-    if (!draft) {
-      return reply.redirect(`/admin/worlds?notice=not-draft`, 302);
-    }
-
-    if (body.data.intent === 'next' && draft.backgroundCount === 0) {
-      return reply.redirect(
-        `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2?notice=incomplete`,
-        302,
-      );
-    }
-
-    return reply.redirect(
-      body.data.intent === 'next'
-        ? `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3?notice=saved`
-        : '/admin/worlds?notice=draft',
-      302,
-    );
-  });
-
-  /**
-   * Memungut satu latar dari master lokasi ke dalam draf dunia.
+  /*
+   * Menyimpan kategori lokasi dunia, lalu MENYUSUN ULANG latarnya.
    *
-   * Gambar dan keterangannya DISALIN, bukan dirujuk: dunia boleh menyesuaikan
-   * keterangan, blur, dan peluang kemunculannya tanpa mengubah master, dan versi
-   * dunia lama tidak boleh ikut berubah ketika master disunting. Yang tetap
-   * menunjuk master adalah `master_location_id`/`master_category_id` — itulah
-   * yang membuat "latar ini dari lokasi dan era mana" dapat dijawab, dan yang
-   * membuat lokasi serta kategori yang masih dipakai tidak dapat dihapus.
+   * Kategori WAJIB. Dunia tanpa kategori tidak punya latar sama sekali, dan mesin
+   * cerita tidak punya tempat untuk menaruh adegan — jadi "Lanjut" tanpa kategori
+   * ditolak dengan pesan, bukan diteruskan diam-diam ke langkah berikutnya.
    *
-   * Dimensi gambar dibaca dari basis data media, BUKAN dari angka kiriman klien:
-   * server sudah menyimpannya saat unggahan, dan angka itu dipakai menghitung
-   * titik fokus — salahnya akan terlihat sebagai gambar yang tidak pada
-   * tempatnya.
+   * `intent` mengikuti pola yang sama dengan langkah 1: satu formulir, dua tombol.
+   * "Simpan & keluar" menyimpan lalu kembali ke daftar dunia; "Lanjut" menyimpan
+   * lalu pindah ke langkah 3. MENYIMPAN terjadi di KEDUA jalur — tidak ada
+   * keadaan di mana admin menekan Lanjut dan pilihannya hilang.
    */
-  app.post('/admin/worlds-wizard/2/backgrounds/pick', async (request, reply) => {
-    const session = request.adminSession;
+  app.post('/admin/worlds-wizard/2', async (request, reply) => {
     const body = z
       .object({
         worldId: z.string().trim().min(1),
-        // Cukup id lokasinya: setiap lokasi master sudah membawa kategorinya
-        // sendiri, jadi tidak ada dua daftar yang harus dicocokkan admin.
-        pick: z.string().trim().min(1),
+        categoryId: z.string().trim().min(1),
+        intent: z.enum(['next', 'draft']),
       })
       .safeParse(request.body);
     if (!body.success) {
@@ -1326,179 +1293,53 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
     const base = `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2`;
 
-    const location = await ctx.locations.find(body.data.pick);
-    if (!location) {
-      return reply.redirect(`${base}?notice=not-found`, 302);
-    }
-
-    const media = await ctx.media.findById(location.mediaId);
-    if (!media) {
-      return reply.redirect(`${base}?notice=not-found`, 302);
-    }
-
-    /*
-     * Keterangan dan penyetelan DISALIN dari master sebagai titik awal; dunia
-     * boleh menyesuaikannya tanpa mengubah master. Peluang kemunculan, blur, dan
-     * titik fokus mulai dari netral karena ketiganya keputusan CERITA, bukan
-     * sifat tempatnya — master tidak punya pendapat tentang keduanya.
-     */
-    const created = await ctx.drafts.addBackground(draft.worldId, draft.worldVersion, {
-      mediaId: location.mediaId,
-      label: location.name,
-      description: location.description,
-      usageNote: '',
-      encounterLikelihood: null,
-      blurStrength: 0,
-      focalX: 0.5,
-      focalY: 0.5,
-      width: media.width,
-      height: media.height,
-      masterLocationId: location.locationId,
-      masterCategoryId: location.categoryId,
-    });
-
-    if (!created) {
-      return reply.redirect(`${base}?notice=limit`, 302);
-    }
-
-    /*
-     * Daftar lokasi dunia TUMBUH dari latar yang dipungut — ia tidak lagi
-     * diketik admin. Satu tempat punya satu identitas di seluruh sistem, jadi
-     * id-nya sama persis dengan id master.
-     */
-    await ctx.drafts.ensureLocation(
+    const hasil = await ctx.drafts.saveLocationCategory(
       draft.worldId,
       draft.worldVersion,
-      location.locationId,
-      location.name,
+      body.data.categoryId,
     );
 
+    if (!hasil.ok) {
+      const notice =
+        hasil.reason === 'not-found'
+          ? 'category-not-found'
+          : hasil.reason === 'limit'
+            ? 'limit'
+            : 'category-empty';
+      return reply.redirect(`${base}?notice=${notice}`, 302);
+    }
+
+    /*
+     * Satu catatan audit untuk satu penyimpanan, bukan satu per latar.
+     *
+     * Yang dicatat adalah KEPUTUSANNYA — kategori mana yang dipilih, dan berapa
+     * latar yang dihasilkan. Menulis satu baris per latar akan membanjiri audit
+     * dengan fakta turunan yang dapat dihitung ulang kapan saja.
+     */
     await admins.recordAudit({
-      adminId: session?.adminId ?? null,
-      username: session?.username ?? '',
-      action: 'world.background.pick',
+      adminId: request.adminSession?.adminId ?? null,
+      username: request.adminSession?.username ?? '',
+      action: 'world.location_category.save',
       targetKind: 'world',
       targetId: draft.worldId,
-      detail: {
-        assetId: created.assetId,
-        locationId: location.locationId,
-        categoryId: location.categoryId,
-      },
+      detail: { categoryId: body.data.categoryId, backgrounds: hasil.count },
       ipAddress: request.ip,
     });
 
-    return reply.redirect(`${base}?notice=picked`, 302);
-  });
-
-  app.post('/admin/worlds-wizard/2/background', async (request, reply) => {
-    const body = z
-      .object({
-        worldId: z.string().trim().min(1),
-        assetId: z.string().trim().min(1),
-        description: z.string().max(200).optional().default(''),
-        usageNote: z.string().max(500).optional().default(''),
-        encounterLikelihood: z.string().optional().default(''),
-        blurStrength: z.string().optional().default('0'),
-        focalX: z.string().optional().default('0.5'),
-        focalY: z.string().optional().default('0.5'),
-      })
-      .safeParse(request.body);
-    if (!body.success) {
-      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
+    if (body.data.intent === 'next') {
+      return reply.redirect(
+        `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3?notice=saved`,
+        302,
+      );
     }
 
-    const draft = await ctx.drafts.findDraft(body.data.worldId);
-    if (!draft) {
-      return reply.redirect('/admin/worlds?notice=not-draft', 302);
-    }
-
-    const updated = await ctx.drafts.updateBackground(
-      draft.worldId,
-      draft.worldVersion,
-      body.data.assetId,
-      {
-        mediaId: null,
-        label: body.data.description,
-        description: body.data.description,
-        usageNote: body.data.usageNote,
-        encounterLikelihood: body.data.encounterLikelihood,
-        blurStrength: Number(body.data.blurStrength),
-        focalX: Number(body.data.focalX),
-        focalY: Number(body.data.focalY),
-        width: null,
-        height: null,
-      },
-    );
-
-    return reply.redirect(
-      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2?notice=${updated ? 'saved' : 'not-found'}`,
-      302,
-    );
-  });
-
-  app.post('/admin/worlds-wizard/2/background/move', async (request, reply) => {
-    const body = z
-      .object({
-        worldId: z.string().trim().min(1),
-        assetId: z.string().trim().min(1),
-        direction: z.enum(['up', 'down']),
-      })
-      .safeParse(request.body);
-    if (!body.success) {
-      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
-    }
-
-    const draft = await ctx.drafts.findDraft(body.data.worldId);
-    if (!draft) {
-      return reply.redirect('/admin/worlds?notice=not-draft', 302);
-    }
-
-    await ctx.drafts.moveBackground(
-      draft.worldId,
-      draft.worldVersion,
-      body.data.assetId,
-      body.data.direction,
-    );
-
-    return reply.redirect(`/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2`, 302);
-  });
-
-  app.post('/admin/worlds-wizard/2/background/delete', async (request, reply) => {
-    const session = request.adminSession;
-    const body = z
-      .object({ worldId: z.string().trim().min(1), assetId: z.string().trim().min(1) })
-      .safeParse(request.body);
-    if (!body.success) {
-      return reply.redirect('/admin/worlds?notice=invalid-input', 302);
-    }
-
-    const draft = await ctx.drafts.findDraft(body.data.worldId);
-    if (!draft) {
-      return reply.redirect('/admin/worlds?notice=not-draft', 302);
-    }
-
-    const deleted = await ctx.drafts.deleteBackground(
-      draft.worldId,
-      draft.worldVersion,
-      body.data.assetId,
-    );
-
-    if (deleted) {
-      await admins.recordAudit({
-        adminId: session?.adminId ?? null,
-        username: session?.username ?? '',
-        action: 'world.background.delete',
-        targetKind: 'world',
-        targetId: draft.worldId,
-        detail: { assetId: body.data.assetId },
-        ipAddress: request.ip,
-      });
-    }
-
-    return reply.redirect(
-      `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/2?notice=${deleted ? 'deleted' : 'not-found'}`,
-      302,
-    );
+    /*
+     * Jumlah yang DILEWATI dibawa ke pesan. Lokasi yang gambarnya belum diunggah
+     * tidak menjadi latar, dan admin yang memilih kategori berisi sepuluh tempat
+     * lalu mendapat delapan berhak tahu ke mana dua sisanya pergi.
+     */
+    const lewat = hasil.skipped > 0 ? `&skipped=${String(hasil.skipped)}` : '';
+    return reply.redirect(`/admin/worlds?notice=draft${lewat}`, 302);
   });
 
   app.post('/admin/worlds-wizard/3', async (request, reply) => {
@@ -2676,6 +2517,7 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
   if (!raw) {
     return null;
   }
+  const skipped = Number((request.query as { skipped?: string } | undefined)?.skipped ?? '0');
   const MAP: Record<string, { kind: 'ok' | 'error'; text: string }> = {
     saved: { kind: 'ok', text: 'Perubahan tersimpan.' },
     created: { kind: 'ok', text: 'Data baru dibuat.' },
@@ -2694,11 +2536,23 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
       // bukan hanya langkah 1. Isian yang sudah diketik tetap tersimpan.
       text:
         'Masih ada yang kurang. Langkah 1: judul, sinopsis, premis, dan sampul. ' +
-        'Langkah 2: minimal satu latar belakang. Langkah 3: minimal satu karakter, ' +
+        'Langkah 2: pilih satu kategori lokasi. Langkah 3: minimal satu karakter, ' +
         'dan setiap karakter harus punya minimal satu gambar ekspresi. ' +
         'Isian Anda sudah tersimpan sebagai draf.',
     },
-    limit: { kind: 'error', text: 'Batas jumlah tercapai. Hapus salah satu sebelum menambah.' },
+    limit: {
+      kind: 'error',
+      text:
+        'Kategori itu berisi lebih banyak lokasi daripada batas latar yang dapat ditampung ' +
+        'satu dunia. Kurangi isi kategorinya, atau pakai kategori lain.',
+    },
+    'category-not-found': { kind: 'error', text: 'Kategori lokasi yang dipilih tidak ada.' },
+    'category-empty': {
+      kind: 'error',
+      text:
+        'Kategori itu belum punya lokasi bergambar, jadi belum ada yang dapat dijadikan latar. ' +
+        'Unggah gambar lokasinya di halaman master lokasi lebih dulu.',
+    },
     picked: {
       kind: 'ok',
       text:
@@ -2848,6 +2702,20 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
   const entry = MAP[raw];
   if (!entry) {
     return null;
+  }
+
+  /*
+   * Berapa lokasi yang DILEWATI karena gambarnya belum diunggah.
+   *
+   * Dibawa terpisah dari teks notifikasi karena angkanya baru diketahui saat
+   * menyimpan, sedangkan teksnya tetap. Admin yang memilih kategori berisi
+   * sepuluh tempat lalu mendapat delapan berhak tahu ke mana dua sisanya pergi.
+   */
+  if (raw === 'draft' && Number.isFinite(skipped) && skipped > 0) {
+    return {
+      kind: entry.kind,
+      text: `${entry.text} ${String(skipped)} lokasi dilewati karena gambarnya belum diunggah.`,
+    };
   }
 
   // Perincian opsional, mis. nama ekspresi yang kembar. Nilainya dari query

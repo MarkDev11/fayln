@@ -520,21 +520,30 @@ describe('master lokasi: keadaan kosong dan berisi', () => {
     expect(image.statusCode, 'latar yang dipasang daftar tidak dapat dimuat').toBe(200);
   });
 
-  it('tidak menawarkan pemilih di langkah 2 selama master belum punya latar', async () => {
+  it('memperingatkan, bukan menawarkan pilihan kosong, saat master belum berisi', async () => {
     const cookie = await login();
     const { worldId } = await pages.drafts.createDraft();
     const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/2`);
 
-    // Menawarkan pemilih kosong berarti admin menekan Simpan dan tidak terjadi
-    // apa-apa — bentuk kegagalan senyap yang paling mudah lolos.
-    expect(body).not.toContain('<select name="pick"');
+    /*
+     * Menawarkan pemilih tanpa isi berarti admin menekan Simpan dan tidak terjadi
+     * apa-apa — bentuk kegagalan senyap yang paling mudah lolos.
+     *
+     * Formulirnya tetap dirender (tombol Kembali harus selalu tersedia), tetapi
+     * pilihan yang dapat dikirim TIDAK ada, dan peringatannya menyebutkan ke mana
+     * harus pergi.
+     */
+    expect(body, 'pilihan kategori kosong tetap ditawarkan').not.toMatch(
+      /<option value="[^"]+"[^>]*>[^<]*lokasi/,
+    );
     expect(body, 'halaman diam saja padahal master masih kosong').toContain(
-      'Master lokasi masih kosong',
+      'Belum ada kategori lokasi yang berisi',
     );
     expect(body).toContain('/admin/locations');
+    expect(body).toContain('/admin/location-categories');
   });
 
-  it('menawarkan pemilih berisi lokasi yang dikelompokkan per kategori', async () => {
+  it('menawarkan kategori, dan mempratinjau lokasi yang akan menjadi latar', async () => {
     const cookie = await login();
     await seedMedia(MEDIA_ID);
     await seedLocation('Aula Kerajaan', 'era dinasti');
@@ -542,14 +551,17 @@ describe('master lokasi: keadaan kosong dan berisi', () => {
     const { worldId } = await pages.drafts.createDraft();
     const body = await sweep(cookie, `/admin/worlds/${worldId}/wizard/2`);
 
-    expect(body, 'pemilih latar tidak dirender').toContain('<select name="pick"');
-    expect(body, 'lokasi tidak muncul sebagai pilihan').toContain('Aula Kerajaan');
-    // Dikelompokkan memakai elemen bawaan HTML, jadi era-nya terbaca tanpa
-    // satu baris pun JavaScript.
-    expect(body, 'pilihan tidak dikelompokkan menurut kategori').toContain(
-      '<optgroup label="era dinasti">',
-    );
-    expect(body).not.toContain('Master lokasi masih kosong');
+    // Yang dipilih adalah KATEGORI, bukan lokasi satu per satu.
+    expect(body, 'pemilih kategori tidak dirender').toContain('<select name="categoryId"');
+    expect(body, 'kategori tidak muncul sebagai pilihan').toContain('era dinasti');
+
+    /*
+     * Lokasinya tetap terlihat, tetapi sebagai PRATINJAU: itulah yang akan menjadi
+     * latar dunia. Tanpa ini admin memilih kategori tanpa tahu isinya.
+     */
+    expect(body, 'lokasi tidak dipratinjau').toContain('Aula Kerajaan');
+    expect(body, 'pratinjau tidak memakai gambar lokasinya').toContain(`/v1/media/${MEDIA_ID}`);
+    expect(body).not.toContain('Belum ada kategori lokasi yang berisi');
   });
 });
 

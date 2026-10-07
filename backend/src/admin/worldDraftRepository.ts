@@ -43,6 +43,15 @@ import { RELATION_STATUSES } from '../contracts/types';
 export const MAX_BACKGROUNDS = 50;
 
 /**
+ * Kekuatan blur bawaan untuk latar dunia, dari 0 sampai 100.
+ *
+ * 30 dipilih pemilik produk: cukup untuk melembutkan latar sehingga teks di
+ * atasnya terbaca, tanpa membuat tempatnya tidak dikenali. Sebelumnya bawaannya
+ * 0 — latar tajam sepenuhnya, dan teks di atasnya bersaing dengannya.
+ */
+export const DEFAULT_BLUR_STRENGTH = 30;
+
+/**
  * Batas panjang sinopsis dan premis dunia.
  *
  * Dinaikkan dari 240 dan 2000 huruf pada 7 Oktober 2026: pemilik produk menilai
@@ -74,6 +83,13 @@ export type DraftWorld = {
   contentRating: ContentRating;
   genres: GenreId[];
   locales: ResponseLocale[];
+  /**
+   * Kategori (era) yang dipakai dunia ini, atau null bila belum dipilih.
+   *
+   * Latar dunia TURUNAN dari sini, bukan hasil memilih satu per satu: menyimpan
+   * langkah 2 membangun ulang daftarnya dari seluruh lokasi kategori ini.
+   */
+  locationCategoryId: string | null;
   backgroundCount: number;
   npcCount: number;
   createdAt: Date | string;
@@ -236,10 +252,11 @@ export class WorldDraftRepository {
       premise: string;
       cover_asset_id: string;
       content_rating: string;
+      location_category_id: string | null;
       created_at: Date | string;
     }>(
       `SELECT world_id, world_version, title, synopsis, premise, cover_asset_id,
-              content_rating, created_at
+              content_rating, location_category_id, created_at
        FROM world_versions
        WHERE world_id = $1 AND status = 'draft'
        ORDER BY world_version DESC LIMIT 1`,
@@ -264,10 +281,11 @@ export class WorldDraftRepository {
       premise: string;
       cover_asset_id: string;
       content_rating: string;
+      location_category_id: string | null;
       created_at: Date | string;
     }>(
       `SELECT world_id, world_version, title, synopsis, premise, cover_asset_id,
-              content_rating, created_at
+              content_rating, location_category_id, created_at
        FROM world_versions
        WHERE status = 'draft'
        ORDER BY created_at DESC`,
@@ -433,6 +451,128 @@ export class WorldDraftRepository {
 
       const all = await this.listBackgrounds(worldId, worldVersion);
       return all.find((item) => item.assetId === assetId) ?? null;
+    });
+  }
+
+  /**
+   * Menyimpan kategori lokasi dunia, lalu MEMBANGUN ULANG seluruh latarnya.
+   *
+   * ---------------------------------------------------------------------------
+   * MENGAPA DIBANGUN ULANG, BUKAN DITAMBAHKAN
+   * ---------------------------------------------------------------------------
+   * Dunia memakai SATU kategori (era), dan latarnya adalah SELURUH lokasi di
+   * kategori itu. Karena itu daftarnya turunan, bukan kumpulan pilihan: menyimpan
+   * berarti menurunkan ulang, bukan menambahkan satu per satu.
+   *
+   * Akibat yang disengaja: lokasi yang ditambahkan ke kategori SETELAHNYA ikut
+   * masuk saat disimpan lagi. Tidak ada langkah "sinkronkan" yang harus diingat
+   * admin, dan tidak ada keadaan setengah sinkron yang harus dijelaskan.
+   *
+   * HANYA baris ber-`kind = 'background'` yang diganti. Sampul dan potret ada di
+   * tabel yang sama, dan menghapus semuanya akan menghapus potret karakter tanpa
+   * satu pun galat.
+   *
+   * Penyetelannya NETRAL dengan sengaja: keterangan disalin dari master (itu
+   * sifat tempatnya), sedangkan peluang bertemu dan titik fokus adalah keputusan
+   * cerita yang master tidak punya pendapatnya. Blur 30 supaya latarnya tidak
+   * bersaing dengan teks di atasnya sejak awal.
+   */
+  async saveLocationCategory(
+    worldId: string,
+    worldVersion: number,
+    categoryId: string,
+  ): Promise<
+    | { ok: true; count: number; skipped: number }
+    | { ok: false; reason: 'not-found' | 'no-locations' | 'limit' }
+  > {
+    return this.db.transaction(async (client) => {
+      const { rows: kategori } = await client.query<{ category_id: string }>(
+        `SELECT category_id FROM location_categories WHERE category_id = $1`,
+        [categoryId],
+      );
+      if (!kategori[0]) {
+        return { ok: false, reason: 'not-found' as const };
+      }
+
+      /*
+       * LEFT JOIN, bukan JOIN: lokasi yang gambarnya belum diunggah harus
+       * terhitung sebagai "dilewati", bukan menghilang diam-diam dari jumlah.
+       * Latar tanpa gambar tidak dapat dirender klien.
+       */
+      const { rows: lokasi } = await client.query<{
+        location_id: string;
+        name: string;
+        description: string;
+        media_id: string;
+        width: number | null;
+        height: number | null;
+      }>(
+        `SELECT l.location_id, l.name, l.description, l.media_id, m.width, m.height
+         FROM locations l
+         LEFT JOIN media_blobs m ON m.media_id = l.media_id
+         WHERE l.category_id = $1
+         ORDER BY l.position ASC, l.location_id ASC`,
+        [categoryId],
+      );
+
+      if (lokasi.length === 0) {
+        return { ok: false, reason: 'no-locations' as const };
+      }
+
+      const bergambar = lokasi.filter((item) => item.width !== null && item.height !== null);
+      const dilewati = lokasi.length - bergambar.length;
+      if (bergambar.length === 0) {
+        return { ok: false, reason: 'no-locations' as const };
+      }
+      if (bergambar.length > MAX_BACKGROUNDS) {
+        return { ok: false, reason: 'limit' as const };
+      }
+
+      await client.query(
+        `UPDATE world_versions SET location_category_id = $3
+         WHERE world_id = $1 AND world_version = $2 AND status = 'draft'`,
+        [worldId, worldVersion, categoryId],
+      );
+
+      await client.query(
+        `DELETE FROM world_assets
+         WHERE world_id = $1 AND world_version = $2 AND kind = 'background'`,
+        [worldId, worldVersion],
+      );
+
+      let position = 1;
+      for (const item of bergambar) {
+        await client.query(
+          `INSERT INTO world_assets (
+             world_id, world_version, asset_id, kind, label, uri, media_id,
+             description, usage_note, encounter_likelihood,
+             blur_strength, focal_x, focal_y, width, height, position,
+             master_location_id, master_category_id
+           ) VALUES ($1,$2,$3,'background',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17)`,
+          [
+            worldId,
+            worldVersion,
+            `bg_${slug(randomUUID()).slice(0, 10)}`,
+            clamp(item.name, MAX_NAME),
+            mediaUri(item.media_id),
+            item.media_id,
+            clamp(item.description, MAX_DESCRIPTION),
+            '',
+            normaliseLikelihood(null),
+            DEFAULT_BLUR_STRENGTH,
+            0.5,
+            0.5,
+            item.width,
+            item.height,
+            position,
+            item.location_id,
+            categoryId,
+          ],
+        );
+        position += 1;
+      }
+
+      return { ok: true, count: bergambar.length, skipped: dilewati };
     });
   }
 
@@ -821,6 +961,7 @@ export class WorldDraftRepository {
     premise: string;
     cover_asset_id: string;
     content_rating: string;
+    location_category_id: string | null;
     created_at: Date | string;
   }): Promise<DraftWorld> {
     const [genres, locales, backgrounds, npcs, cover, updated] = await Promise.all([
@@ -841,6 +982,7 @@ export class WorldDraftRepository {
       coverAssetId: row.cover_asset_id,
       coverMediaId: cover,
       contentRating: row.content_rating as ContentRating,
+      locationCategoryId: row.location_category_id,
       genres: genres as GenreId[],
       locales: locales as ResponseLocale[],
       backgroundCount: backgrounds,

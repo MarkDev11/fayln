@@ -849,6 +849,18 @@ h2 span{font-weight:500}
   box-shadow:inset 0 1px 0 var(--bevel), var(--shadow-card)}
 .grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(184px,1fr))}
 /*
+ * Pratinjau latar pada langkah 2: gambar dengan keterangannya di bawah.
+ *
+ * aspect-ratio dipakai supaya tingginya mengikuti lebarnya sendiri — tanpa
+ * itu, gambar 1280x720 dan 512x768 akan membuat barisnya bergerigi. Latar
+ * memang selalu 16:9 (dijamin penyimpanan media), jadi rasionya dapat dipatok.
+ */
+.bg-preview-wrap{margin-top:14px}
+.bg-preview{margin:0;border:1px solid var(--line);border-radius:var(--radius);overflow:hidden;background:var(--panel)}
+.bg-preview img{display:block;width:100%;aspect-ratio:16/9;object-fit:cover;background:var(--line)}
+.bg-preview figcaption{display:flex;flex-direction:column;gap:2px;padding:8px 10px;font-size:12px;line-height:1.35}
+.bg-preview figcaption span{font-size:11px}
+/*
  * Kartu yang isinya daftar bergrup: tanpa padding, supaya barisnya menyentuh
  * tepi kartu seperti System Settings. overflow:hidden yang membulatkan sudut
  * baris pertama dan terakhir, jadi tidak perlu aturan first/last-child yang

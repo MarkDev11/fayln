@@ -54,6 +54,7 @@ describe('migrasi', () => {
     '014_provider_api_key.sql',
     '015_buang_token_per_giliran.sql',
     '016_bentuk_lampiran_gambar.sql',
+    '017_kategori_lokasi_dunia.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
