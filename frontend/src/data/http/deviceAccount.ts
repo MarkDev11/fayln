@@ -16,6 +16,27 @@ const ACCOUNT_KEY = 'fayln.accountId';
 /** Dipakai pengujian agar tidak menyentuh penyimpanan perangkat. */
 let memoryOverride: string | null = null;
 
+/**
+ * Janji id akun yang SEDANG diselesaikan, supaya pemanggil bersamaan berbagi satu.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA INI PERLU: TANPA INI, SATU MUAT HALAMAN MEMAKAI BANYAK AKUN
+ * ---------------------------------------------------------------------------
+ * Beranda memanggil beberapa endpoint sekaligus — katalog, genre, meta. Semuanya
+ * memanggil `deviceAccountId()` hampir bersamaan, dan tanpa penahan ini masing-
+ * masing membaca "belum ada id tersimpan" LALU membuat id sendiri. Terukur:
+ * **8 id berbeda dikirim ke API dalam satu muat halaman.**
+ *
+ * Akibatnya bukan sekadar berantakan. Perjalanan yang dibuat pada muat halaman
+ * itu dapat tercatat di bawah id yang BUKAN id yang akhirnya tersimpan — sehingga
+ * pemain membuka daftar Perjalanan dan melihatnya kosong, lagi, walau akunnya
+ * sudah bertahan. Itu bug yang sama, muncul kembali lewat jalur lain.
+ *
+ * Menyimpan JANJINYA, bukan hasilnya, adalah yang membuatnya benar: pemanggil
+ * kedua menunggu penyelesaian yang sama alih-alih memulai yang baru.
+ */
+let sedangDiselesaikan: Promise<string> | null = null;
+
 export function setAccountIdForTesting(value: string | null): void {
   memoryOverride = value;
 }
@@ -48,10 +69,22 @@ function randomId(): string {
  * akun yang tidak bertahan sama sekali lebih buruk daripada akun yang dapat
  * dibaca perangkat itu sendiri.
  */
-export async function deviceAccountId(): Promise<string> {
+export function deviceAccountId(): Promise<string> {
   if (memoryOverride) {
-    return memoryOverride;
+    return Promise.resolve(memoryOverride);
   }
+
+  sedangDiselesaikan ??= selesaikanAkun();
+  return sedangDiselesaikan;
+}
+
+/**
+ * Menyelesaikan id akun sekali saja.
+ *
+ * Dipisah dari  supaya penahannya jelas: yang disimpan adalah
+ * JANJI fungsi ini, sehingga pemanggil bersamaan menunggu hasil yang sama.
+ */
+async function selesaikanAkun(): Promise<string> {
 
   const dariPeramban = bacaPenyimpananPeramban();
   if (dariPeramban) {
