@@ -326,6 +326,7 @@ export class CatalogRepository {
 
     const genresByWorld = await this.groupedValues('world_genres', 'genre', rows);
     const localesByWorld = await this.groupedValues('world_response_locales', 'locale', rows);
+    const coverUris = await this.coverUris(rows);
 
     return rows.map((row) => {
       const key = `${row.world_id}@${row.world_version}`;
@@ -335,6 +336,7 @@ export class CatalogRepository {
         synopsis: row.synopsis,
         genres: (genresByWorld.get(key) ?? []) as GenreId[],
         coverAssetId: row.cover_asset_id,
+        coverUri: coverUris.get(key) ?? '',
         worldVersion: row.world_version,
         status: row.status as WorldStatus,
         contentRating: row.content_rating as ContentRating,
@@ -345,6 +347,47 @@ export class CatalogRepository {
   }
 
   /** Mengambil nilai dari tabel anak dan mengelompokkannya per dunia. */
+  /**
+   * URL sampul untuk sekumpulan versi dunia, dikunci `worldId@worldVersion`.
+   *
+   * Diambil dari `world_assets` — tempat URL itu memang sudah tersimpan sejak
+   * unggahan. Daftar katalog sebelumnya hanya mengirim ID asetnya, sehingga
+   * klien tidak punya cara mengubahnya menjadi gambar: SETIAP sampul di beranda
+   * tampil sebagai placeholder, tanpa satu pun galat dan tanpa permintaan
+   * jaringan yang gagal.
+   *
+   * Dikueri sekaligus untuk semua baris, bukan satu per baris: katalog memuat
+   * puluhan dunia, dan satu kueri per dunia akan membuat beranda bergantung pada
+   * jumlah dunia yang ditampilkan.
+   */
+  private async coverUris(rows: WorldVersionRow[]): Promise<Map<string, string>> {
+    if (rows.length === 0) {
+      return new Map();
+    }
+
+    const values: unknown[] = [];
+    const pairs = rows.map((row) => {
+      values.push(row.world_id, row.world_version, row.cover_asset_id);
+      return `(world_id = $${String(values.length - 2)} AND world_version = $${String(
+        values.length - 1,
+      )} AND asset_id = $${String(values.length)})`;
+    });
+
+    const { rows: found } = await this.db.query<{
+      world_id: string;
+      world_version: number;
+      uri: string;
+    }>(
+      `SELECT world_id, world_version, uri FROM world_assets
+       WHERE kind = 'cover' AND (${pairs.join(' OR ')})`,
+      values,
+    );
+
+    return new Map(
+      found.map((row) => [`${row.world_id}@${String(row.world_version)}`, row.uri]),
+    );
+  }
+
   private async groupedValues(
     table: 'world_genres' | 'world_response_locales',
     column: 'genre' | 'locale',
@@ -467,6 +510,9 @@ export class CatalogRepository {
       premise: versionRow.premise,
       genres: genres as GenreId[],
       coverAssetId: versionRow.cover_asset_id,
+      // Sampul sudah dirakit di atas sebagai `cover`; dipakai ulang, bukan
+      // dikueri lagi — dua sumber untuk hal yang sama akan bercabang.
+      coverUri: cover?.uri ?? '',
       status: versionRow.status as WorldStatus,
       contentRating: versionRow.content_rating as ContentRating,
       supportedResponseLocales: locales as ResponseLocale[],

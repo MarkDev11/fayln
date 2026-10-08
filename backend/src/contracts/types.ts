@@ -92,6 +92,14 @@ export type WorldCatalogItem = {
   synopsis: string;
   genres: GenreId[];
   coverAssetId: string;
+  /**
+   * URL sampul yang SIAP DIMUAT, atau string kosong bila belum ada.
+   *
+   * Daftar katalog sebelumnya hanya mengirim ID ("a_cover_kantor"), dan klien
+   * tidak punya cara mengubahnya menjadi gambar — akibatnya SETIAP sampul di
+   * beranda tampil sebagai placeholder, tanpa satu pun galat.
+   */
+  coverUri: string;
   worldVersion: number;
   status: WorldStatus;
   contentRating: ContentRating;

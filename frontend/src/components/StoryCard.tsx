@@ -86,7 +86,7 @@ export function StoryCard({ item, onPress, note, coverRadius, playing, testID }:
         di bawah kartu; mengulanginya membuat judul terbaca dua kali.
       */}
       <AssetImage
-        uri={assetUri(item.coverAssetId)}
+        uri={assetUri(item.coverUri || item.coverAssetId)}
         accessibilityLabel={item.title}
         aspectRatio={MEDIA_ASPECT.portrait}
         contentFit="cover"

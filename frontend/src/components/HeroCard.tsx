@@ -96,7 +96,7 @@ export function HeroCard({
       */}
       <View testID={`${baseTestID}-media`} style={styles.media} pointerEvents="none">
         <AssetImage
-          uri={assetUri(item.coverAssetId)}
+          uri={assetUri(item.coverUri || item.coverAssetId)}
           accessibilityLabel={item.title}
           aspectRatio={MEDIA_ASPECT.landscape}
           contentFit="cover"

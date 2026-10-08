@@ -59,6 +59,13 @@ export type WorldCatalogItem = {
   synopsis: string;
   genres: GenreId[];
   coverAssetId: string;
+  /**
+   * URL sampul yang siap dimuat, atau string kosong bila belum ada.
+   *
+   * Sebelumnya daftar katalog hanya mengirim ID aset, sehingga SETIAP sampul di
+   * beranda tampil sebagai placeholder tanpa satu pun galat.
+   */
+  coverUri: string;
   worldVersion: number;
   status: WorldStatus;
   contentRating: ContentRating;
