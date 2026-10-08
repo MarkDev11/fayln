@@ -38,6 +38,20 @@ export type StoryContext = {
   personaName: string;
   /** Aksi bebas pemain, bila giliran ini berasal dari input teks. */
   customText?: string;
+  /** Label opsi yang dipilih pemain, bila giliran ini berasal dari pilihan. */
+  optionLabel?: string;
+  /** Sinopsis dunia; konteks tambahan untuk mesin berbasis model. */
+  synopsis?: string;
+  /** Umur persona, bila pemain mengisinya. */
+  personaAge?: number;
+  /**
+   * Ringkasan cerita sejauh ini, atau null pada adegan pertama.
+   *
+   * Inilah yang menjaga cerita tetap nyambung tanpa mengirim seluruh riwayat.
+   */
+  storySoFar?: string | null;
+  /** Beberapa beat terakhir apa adanya, untuk kesinambungan. */
+  recentBeats?: string[];
   /** Opsi yang dipilih, bila giliran ini berasal dari pilihan. */
   optionId?: string;
   /** Nomor turn, dipakai membuat ID yang stabil. */
@@ -87,8 +101,21 @@ export interface StoryEngine {
  * dijalankan. Yang bisa diubah dari panel adalah pengaturan
  * `engine.simulator`, yang hanya menandai niat — karena itu panel
  * menampilkan keduanya dan memperingatkan bila keduanya tidak sejalan.
+ *
+ * ---------------------------------------------------------------------------
+ * MENJADI `false` PADA 8 OKTOBER 2026
+ * ---------------------------------------------------------------------------
+ * Mesin yang terpasang sekarang `AiStoryEngine`: adegan ditulis model, dan
+ * simulator hanya dipakai bila modelnya GAGAL. Jadi penanda tingkat-mesin ini
+ * `false` — mesinnya bukan simulator.
+ *
+ * Satu hal yang tidak tertangkap penanda ini: **giliran yang jatuh ke simulator
+ * tetap mungkin**, dan itu terjadi per giliran, bukan per mesin. Pemain yang
+ * melihat "bukan simulator" lalu mendapat adegan simulator tidak sedang ditipu —
+ * ia sedang melihat cadangan yang bekerja — tetapi panel admin perlu tahu
+ * frekuensinya, dan itu dicatat lewat `onFailure` di `AiStoryEngine`.
  */
-export const STORY_ENGINE_IS_SIMULATOR = true;
+export const STORY_ENGINE_IS_SIMULATOR = false;
 
 /** Model simulasi. Bukan nama model produksi dan bukan janji apa pun. */
 export const SIMULATOR_MODEL_ID = 'simulator/deterministic-v1';

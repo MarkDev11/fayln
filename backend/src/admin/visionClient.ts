@@ -826,6 +826,89 @@ export async function chooseOpeningBackground(
 }
 
 /* ------------------------------------------------------------------ */
+/* Mesin cerita: satu adegan                                           */
+/* ------------------------------------------------------------------ */
+
+export type StorySceneResult =
+  | { ok: true; scene: unknown; raw: string }
+  | { ok: false; reason: VisionFailure; detail: string };
+
+/**
+ * Meminta model menulis SATU adegan.
+ *
+ * Mengembalikan objek JSON MENTAH, belum divalidasi. Pemanggilnya yang memeriksa
+ * apakah id asetnya sah, apakah beatnya tidak melebihi batas, dan apakah
+ * keputusannya ada — pemeriksaan itu milik mesin cerita, karena hanya ia yang
+ * memegang daftar aset dan kontraknya.
+ *
+ * Fungsi ini sengaja tidak menilai isi: memisahkan "mengambil jawaban" dari
+ * "memutuskan jawaban itu sah" membuat keduanya dapat diuji sendiri-sendiri.
+ */
+export async function generateStoryScene(
+  request: { baseUrl: string; apiType: ApiType; modelKey: string },
+  apiKey: string,
+  input: { systemPrompt: string; userPrompt: string },
+  fetchImpl: typeof fetch = fetch,
+): Promise<StorySceneResult> {
+  const { path, body } = buildTextRequest(request, input.systemPrompt, input.userPrompt);
+
+  const call = await sendToProvider(request, path, body, apiKey, fetchImpl, {
+    nama: 'penulisan adegan',
+    timeoutMs: TEXT_TIMEOUT_MS,
+    saranWaktuHabis:
+      'Menulis satu adegan memang lama. Coba lagi, atau pilih model yang lebih cepat.',
+  });
+
+  if (!call.ok) {
+    return call;
+  }
+
+  const scene = lastJsonValue(call.text, 'beats');
+  if (!scene) {
+    return {
+      ok: false,
+      reason: 'bad-response',
+      detail: `Model tidak mengembalikan objek JSON berisi "beats". Jawabannya: ${detailOf(call.text, apiKey)}`,
+    };
+  }
+
+  return { ok: true, scene, raw: call.text };
+}
+
+/**
+ * Objek JSON TERAKHIR yang memiliki kunci tertentu, apa pun jenis nilainya.
+ *
+ * `lastJsonObject` menuntut nilainya berupa string, dan itu tidak cocok di sini:
+ * kunci `beats` berisi ARRAY. Model juga sering menulis contoh bentuk lebih dulu
+ * sebelum jawaban sebenarnya, sehingga yang benar selalu yang TERAKHIR.
+ */
+function lastJsonValue(text: string, key: string): Record<string, unknown> | null {
+  for (let start = text.lastIndexOf('{'); start >= 0; start = text.lastIndexOf('{', start - 1)) {
+    const end = matchingBrace(text, start);
+    if (end < 0) {
+      continue;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(text.slice(start, end + 1));
+    } catch {
+      continue;
+    }
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      continue;
+    }
+
+    const record = parsed as Record<string, unknown>;
+    if (key in record) {
+      return record;
+    }
+  }
+
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /* Teks dunia: sinopsis dan premis dari judul                          */
 /* ------------------------------------------------------------------ */
 

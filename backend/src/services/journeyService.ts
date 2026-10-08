@@ -87,6 +87,17 @@ export type CreateJourneyResult = {
 };
 
 export class JourneyService {
+  /**
+   * Apakah mesin yang terpasang simulator.
+   *
+   * Diumumkan supaya  dapat menyatakannya dari MESIN yang benar-benar
+   * dijalankan, bukan dari konstanta yang ditulis tangan. Konstanta dapat berbeda
+   * dari kenyataan — dan pemain berhak tahu apa yang sedang menulis ceritanya.
+   */
+  get engineIsSimulator(): boolean {
+    return this.deps.engine.isSimulator;
+  }
+
   constructor(private readonly deps: JourneyServiceDeps) {}
 
   /* ------------------------------------------------------------------ */

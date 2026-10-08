@@ -43,8 +43,11 @@ import { UsageRepository } from './repositories/usageRepository';
 import { buildApp } from './server';
 import { JourneyService } from './services/journeyService';
 import { chooseOpeningBackground } from './admin/visionClient';
+import { AiStoryEngine } from './services/aiStoryEngine';
+import type { StorySceneCall } from './services/aiStoryEngine';
 import type { OpeningBackgroundPicker } from './services/journeyService';
-import { DeterministicStoryEngine, STORY_ENGINE_IS_SIMULATOR } from './services/storyEngine';
+import { generateStoryScene } from './admin/visionClient';
+import { DeterministicStoryEngine } from './services/storyEngine';
 
 async function main(): Promise<void> {
   const config = parseConfig();
@@ -155,12 +158,56 @@ async function main(): Promise<void> {
     return hasil.ok ? hasil.assetId : null;
   };
 
+  /*
+   * Mesin cerita berbasis MODEL, dengan simulator sebagai CADANGAN.
+   *
+   * Setiap giliran kini bergantung pada model. Tanpa cadangan, satu kegagalan
+   * jaringan menghentikan cerita di tengah dan pemain tidak dapat berbuat apa pun.
+   * Simulator memang sederhana, tetapi ia selalu berhasil.
+   */
+  const panggilAdegan: StorySceneCall = async (systemPrompt, userPrompt) => {
+    const model = (await modelRepo.listModels()).find(
+      (item) => item.isActive && item.providerId !== null,
+    );
+    if (!model?.providerId) {
+      return { ok: false, detail: 'Belum ada model aktif di panel Provider.' };
+    }
+
+    const provider = await providerRepo.find(model.providerId);
+    if (!provider) {
+      return { ok: false, detail: 'Provider model tidak ditemukan.' };
+    }
+
+    const apiKey = await providerRepo.apiKeyFor(provider.providerId);
+    if (!apiKey) {
+      return { ok: false, detail: 'Provider belum punya kunci API.' };
+    }
+
+    const hasil = await generateStoryScene(
+      { baseUrl: provider.baseUrl, apiType: provider.apiType, modelKey: model.modelKey },
+      apiKey,
+      { systemPrompt, userPrompt },
+    );
+
+    return hasil.ok
+      ? { ok: true, scene: hasil.scene }
+      : { ok: false, detail: hasil.detail };
+  };
+
+  const storyEngine = new AiStoryEngine({
+    call: panggilAdegan,
+    fallback: new DeterministicStoryEngine(),
+    onFailure: (sebab) => {
+      app.log.warn({ sebab }, 'Mesin cerita menyerahkan giliran ke simulator.');
+    },
+  });
+
   const journeyService = new JourneyService({
     catalog,
     journeys,
     operations,
     usage,
-    engine: new DeterministicStoryEngine(),
+    engine: storyEngine,
     pickOpeningBackground,
     newId: () => randomUUID(),
     now: () => new Date(),
@@ -230,7 +277,16 @@ async function main(): Promise<void> {
     {
       port: config.port,
       nodeEnv: config.nodeEnv,
-      simulator: STORY_ENGINE_IS_SIMULATOR,
+      /*
+       * Dibaca dari MESIN yang benar-benar terpasang, bukan dari konstanta.
+       *
+       * Konstanta itu nilai yang ditulis tangan; ia dapat berbeda dari mesin yang
+       * dijalankan — dan perbedaan itu justru terjadi pada harness uji, yang
+       * memasang simulator sementara konstantanya menyatakan sebaliknya. Pemain
+       * berhak tahu apa yang sedang menulis ceritanya, jadi jawabannya diambil
+       * dari mesinnya sendiri.
+       */
+      simulator: journeyService.engineIsSimulator,
     },
     'fayLN backend siap menerima permintaan.',
   );

@@ -28,7 +28,6 @@ import { MediaRepository } from './repositories/mediaRepository';
 import type { ReportRepository } from './repositories/reportRepository';
 import type { UsageRepository } from './repositories/usageRepository';
 import type { JourneyService } from './services/journeyService';
-import { STORY_ENGINE_IS_SIMULATOR } from './services/storyEngine';
 import { CURRENT_IDENTITY_MODE, registerIdentityHook } from './http/identity';
 
 export const SERVICE_VERSION = '0.1.0';
@@ -238,10 +237,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       paid: deps.config.plan.paid,
     },
     storyEngine: {
-      // Dinyatakan terbuka supaya tidak ada yang menyangka ini AI produksi.
-      // Sumbernya satu konstanta, bukan angka yang diketik ulang — panel admin
-      // membaca konstanta yang sama.
-      simulator: STORY_ENGINE_IS_SIMULATOR,
+      /*
+       * Dibaca dari MESIN yang terpasang, bukan dari konstanta.
+       *
+       * Konstanta dapat berbeda dari kenyataan — dan itu justru terjadi pada
+       * harness uji, yang memasang simulator sementara konstantanya menyatakan
+       * sebaliknya. Pemain berhak tahu apa yang sedang menulis ceritanya.
+       */
+      simulator: deps.journeys.engineIsSimulator,
     },
   }));
 
