@@ -4,6 +4,7 @@ import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'reac
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { AssetImage } from '@/components/AssetImage';
+import { assetUri } from '@/domain/assets';
 import { Chip } from '@/components/Chip';
 import { Icon } from '@/components/Icon';
 import { NPCRelationChip } from '@/components/NPCRelationChip';
@@ -18,7 +19,7 @@ import { StoryGatewayError } from '@/data/gateway';
 import { useWorldDetail } from '@/data/queries';
 import { contentRatingLabelKey, worldStatusLabelKey } from '@/domain/labels';
 import { MEDIA_ASPECT } from '@/domain/media';
-import type { NPCPublicDTO } from '@/domain/types';
+import type { NPCPublicDTO, WorldDetailDTO } from '@/domain/types';
 import { StartJourneySheet, type PersonaDraft } from '@/features/catalog/StartJourneySheet';
 import { useProfile } from '@/features/profile/ProfileProvider';
 import { useGenreLabel } from '@/hooks/useGenreLabel';
@@ -193,8 +194,18 @@ export default function WorldDetailScreen() {
         showsVerticalScrollIndicator={false}
         testID="screen-world"
       >
+        {/*
+          * URI diambil dari MANIFEST, bukan disusun dari id aset.
+          *
+          * Bentuk lamanya `asset://${coverAssetId}` membuat AssetImage selalu
+          * menampilkan placeholder dan TIDAK PERNAH meminta gambarnya — sisa dari
+          * masa aset dibuat manual dan belum ada berkasnya. Sekarang server sudah
+          * mengirim URL absolut di manifest, dan `assetUri()` meneruskannya apa
+          * adanya. Kegagalannya senyap: sampulnya hanya tampak seperti placeholder
+          * biasa, tanpa satu pun galat.
+          */}
         <AssetImage
-          uri={`asset://${data.coverAssetId}`}
+          uri={assetUri(data.assetManifest.cover?.uri ?? data.coverAssetId)}
           accessibilityLabel={data.title}
           placeholderLabel={data.title}
           aspectRatio={MEDIA_ASPECT.landscape}
@@ -254,7 +265,11 @@ export default function WorldDetailScreen() {
         <Section title={t('detail.charactersTitle')}>
           <View style={styles.characterList}>
             {data.characters.map((character) => (
-              <CharacterCard key={character.npcId} character={character} />
+              <CharacterCard
+                key={character.npcId}
+                character={character}
+                portraitUri={portraitUriOf(data, character.defaultPortraitAssetId)}
+              />
             ))}
           </View>
         </Section>
@@ -292,6 +307,18 @@ export default function WorldDetailScreen() {
   );
 }
 
+/**
+ * URI potret untuk sebuah asset id, dicari di manifest dunia.
+ *
+ * Manifest yang memegang URL sungguhannya; "defaultPortraitAssetId" hanya
+ * penanda. Mengembalikan asset id apa adanya bila tidak ditemukan, sehingga
+ * pemanggilnya tetap mendapat placeholder berlabel alih-alih URI kosong.
+ */
+function portraitUriOf(data: WorldDetailDTO, assetId: string): string {
+  const potret = data.assetManifest.portraits.find((item) => item.assetId === assetId);
+  return potret?.uri ?? assetId;
+}
+
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   const { colors } = useTheme();
   return (
@@ -304,7 +331,20 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   );
 }
 
-function CharacterCard({ character }: { character: NPCPublicDTO }) {
+function CharacterCard({
+  character,
+  portraitUri,
+}: {
+  character: NPCPublicDTO;
+  /**
+   * URI potret yang SUDAH diselesaikan pemanggilnya.
+   *
+   * Kartu ini tidak mencari sendiri di manifest: ia hanya punya karakter, bukan
+   * seluruh dunia — dan meneruskan seluruh dunia ke setiap kartu berarti setiap
+   * kartu memegang data yang tidak dipakainya.
+   */
+  portraitUri: string;
+}) {
   const { colors } = useTheme();
   const { t } = useI18n();
 
@@ -313,7 +353,7 @@ function CharacterCard({ character }: { character: NPCPublicDTO }) {
       style={[styles.characterCard, { backgroundColor: colors.bgSurface, borderColor: colors.line }]}
     >
       <AssetImage
-        uri={`asset://${character.defaultPortraitAssetId}`}
+        uri={portraitUri}
         accessibilityLabel={character.name}
         aspectRatio={MEDIA_ASPECT.square}
         contentFit="cover"
