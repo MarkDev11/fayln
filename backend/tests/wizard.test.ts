@@ -800,6 +800,47 @@ describe('langkah 3: karakter dari master', () => {
     expect(await drafts.listNpcs(worldId, 1)).toHaveLength(0);
     expect(await characters.find(characterId), 'master ikut terhapus').not.toBeNull();
   });
+  it('tetap berhasil saat dua ekspresi master punya 24 huruf pertama yang sama', async () => {
+    /*
+     * BUG PRODUKSI 8 OKTOBER 2026, dan uji ini yang menjaganya.
+     *
+     * Nama ekspresi dipotong 24 huruf saat membentuk id aset. Dua nama berbeda
+     * yang 24 huruf pertamanya sama karena itu menghasilkan id YANG SAMA:
+     *
+     *   "ekspresi yang sangat panjang sekali satu"
+     *   "ekspresi yang sangat panjang sekali dua"
+     * Keduanya menjadi "ekspresi-yang-sangat-pan" setelah dipotong 24 huruf.
+     *
+     * `world_assets` berkunci utama (world_id, world_version, asset_id), jadi
+     * ekspresi kedua menabrak yang pertama dan SELURUH pemungutan gagal:
+     *
+     *   duplicate key value violates unique constraint "world_assets_pkey"
+     *
+     * Gejalanya di layar hanya "Terjadi kesalahan di server" — tanpa petunjuk
+     * apa pun bahwa sebabnya dua nama ekspresi yang mirip. `position` kini ikut
+     * ke dalam id, sehingga keduanya unik tanpa perlu memanjangkan nama.
+     */
+    const cookie = await login();
+    const worldId = await step3(cookie);
+
+    const characterId = await masterCharacter(cookie, 'Elysia', [
+      'ekspresi yang sangat panjang sekali satu',
+      'ekspresi yang sangat panjang sekali dua',
+    ]);
+
+    const response = await post(cookie, '/admin/worlds-wizard/3/npc', {
+      worldId,
+      characterId,
+      role: 'bosmu',
+    });
+    expect(location(response), 'pemungutan gagal karena id potret kembar').toContain('notice=picked');
+
+    const [npc] = await drafts.listNpcs(worldId, 1);
+    expect(npc?.expressions).toHaveLength(2);
+    // Keduanya tersimpan, dan id asetnya BERBEDA.
+    const ids = npc!.expressions.map((item) => item.assetId);
+    expect(new Set(ids).size, 'id potret masih kembar').toBe(2);
+  });
 });
 
 /* ------------------------------------------------------------------ */

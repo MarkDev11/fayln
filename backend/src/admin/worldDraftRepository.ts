@@ -868,7 +868,7 @@ export class WorldDraftRepository {
       // penanda kosong — dan halaman memperingatkan bahwa NPC ini belum dapat
       // dipakai.
       const defaultAssetId =
-        expressions.length > 0 ? portraitAssetId(npcId, expressions[0]!.expression) : '';
+        expressions.length > 0 ? portraitAssetId(npcId, expressions[0]!.expression, 0) : '';
 
       const { rows: positionRows } = await client.query<{ next_position: number }>(
         `SELECT coalesce(max(position), 0)::int + 1 AS next_position
@@ -949,7 +949,7 @@ export class WorldDraftRepository {
           [
             worldId,
             worldVersion,
-            portraitAssetId(npcId, item.expression),
+            portraitAssetId(npcId, item.expression, portraitPosition),
             `${input.name} — ${item.expression}`,
             mediaUri(item.mediaId),
             item.mediaId,
@@ -1023,7 +1023,7 @@ export class WorldDraftRepository {
       // Ekspresi pertama menjadi potret bawaan, sama seperti aturan `dasar`.
       const ekspresiPertama = karakter.expressions[0];
       const defaultAssetId = ekspresiPertama
-        ? portraitAssetId(npcId, ekspresiPertama.expression)
+        ? portraitAssetId(npcId, ekspresiPertama.expression, 0)
         : '';
 
       await client.query(
@@ -1070,7 +1070,7 @@ export class WorldDraftRepository {
           [
             worldId,
             worldVersion,
-            portraitAssetId(npcId, item.expression),
+            portraitAssetId(npcId, item.expression, portraitPosition),
             `${input.name} — ${item.expression}`,
             mediaUri(item.mediaId),
             item.mediaId,
@@ -1379,8 +1379,29 @@ export function mediaUri(mediaId: string): string {
 }
 
 /** Id aset potret. Diturunkan dari NPC dan nama ekspresinya. */
-export function portraitAssetId(npcId: string, expression: string): string {
-  return `p_${npcId}_${slug(expression).slice(0, 24)}`;
+/**
+ * Id aset untuk satu potret ekspresi.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA `position` IKUT, DAN MENGAPA ITU WAJIB
+ * ---------------------------------------------------------------------------
+ * Nama ekspresinya dipotong supaya id-nya tidak tumbuh tanpa batas. Tetapi
+ * PEMOTONGAN ITU MEMBUAT DUA NAMA BERBEDA MENJADI ID YANG SAMA: "terkejut pakaian
+ * kantor" dan "terkejut pakaian kantor formal" sama-sama menjadi
+ * `p_npc_x_terkejut-pakaian-kantor-` setelah dipotong 24 huruf.
+ *
+ * `world_assets` berkunci utama `(world_id, world_version, asset_id)`, jadi
+ * ekspresi kedua menabrak yang pertama dan SELURUH pemungutan gagal dengan
+ * "duplicate key value violates unique constraint". Terjadi di produksi pada
+ * 8 Oktober 2026 — id yang bentrok itu tepat 24 karakter, yang mengungkap
+ * sebabnya.
+ *
+ * `position` menjamin id-nya unik tanpa perlu memanjangkan nama. Namanya sendiri
+ * tetap tersimpan utuh di kolom `expression`, dan itu yang dibaca mesin cerita —
+ * id aset hanya penanda internal.
+ */
+export function portraitAssetId(npcId: string, expression: string, position: number): string {
+  return `p_${npcId}_${String(position)}_${slug(expression).slice(0, 24)}`;
 }
 
 /**
