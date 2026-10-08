@@ -49,15 +49,23 @@ export function AssetImage({
   return (
     <View
       testID={testID}
-      style={[
-        styles.container,
-        { aspectRatio, backgroundColor: colors.placeholder },
-        style,
-      ]}
+      /*
+       * TIDAK ada `backgroundColor` di sini.
+       *
+       * Bentuk sebelumnya selalu melukis `colors.placeholder` di belakang gambar.
+       * Untuk sampul yang buram itu tidak terlihat, tetapi POTRET karakter adalah
+       * PNG TEMBUS PANDANG — dan latar itu menembusnya sebagai kotak hitam
+       * mengikuti bentuk lengkungnya. Terlihat seperti potret yang salah render,
+       * padahal gambarnya benar.
+       *
+       * Warnanya kini hanya dipakai oleh tampilan placeholder, tempat ia memang
+       * dibutuhkan.
+       */
+      style={[styles.container, { aspectRatio }, style]}
     >
       {showPlaceholder ? (
         <View
-          style={styles.placeholder}
+          style={[styles.placeholder, { backgroundColor: colors.placeholder }]}
           accessible
           accessibilityRole="image"
           accessibilityLabel={`${accessibilityLabel}. Gambar belum tersedia.`}
