@@ -92,6 +92,132 @@ const SIM_COMPLETION_TOKENS = 640;
  * turn yang sesungguhnya). Tanpa itu, dipakai nomor turn — cukup untuk pengujian
  * mesin, tetapi akan bertabrakan bila hasilnya disimpan lebih dari sekali.
  */
+/**
+ * Jumlah kata terbanyak dalam satu balok narasi.
+ *
+ * Dua puluh lima dipilih pemilik produk: itu yang terbaca dalam satu kotak dialog
+ * di layar ponsel tanpa menggulir. Premis 376 kata menjadi sekitar lima belas
+ * potongan, dan pemain menekan untuk lanjut antar potongan.
+ */
+const MAKS_KATA_NARASI = 25;
+
+/**
+ * Memecah teks menjadi potongan pendek, sedekat mungkin dengan batas kalimat.
+ *
+ * Memotong tepat di 25 kata akan memutus kalimat di tengah, dan pembaca
+ * menyadarinya. Karena itu kalimat dikelompokkan: satu kalimat ditambahkan selama
+ * totalnya belum melewati batas. Kalimat yang sendirinya lebih panjang dari batas
+ * tetap dipotong per kata — lebih baik terpotong daripada tidak terbaca.
+ */
+export function potongNarasi(teks: string, maksKata = MAKS_KATA_NARASI): string[] {
+  const bersih = teks.trim();
+  if (bersih.length === 0) {
+    return [];
+  }
+
+  // Paragraf dihormati lebih dulu: pemisah paragraf selalu memulai potongan baru.
+  const potongan: string[] = [];
+
+  for (const paragraf of bersih.split(/\n\s*\n/)) {
+    const kalimat = paragraf
+      .split(/(?<=[.!?…])\s+/)
+      .map((k) => k.trim())
+      .filter((k) => k.length > 0);
+
+    let sedang: string[] = [];
+    let jumlah = 0;
+
+    const tutup = () => {
+      if (sedang.length > 0) {
+        potongan.push(sedang.join(' '));
+        sedang = [];
+        jumlah = 0;
+      }
+    };
+
+    for (const satu of kalimat) {
+      const kata = satu.split(/\s+/).filter(Boolean);
+
+      if (kata.length > maksKata) {
+        tutup();
+        for (let i = 0; i < kata.length; i += maksKata) {
+          potongan.push(kata.slice(i, i + maksKata).join(' '));
+        }
+        continue;
+      }
+
+      if (jumlah + kata.length > maksKata) {
+        tutup();
+      }
+      sedang.push(satu);
+      jumlah += kata.length;
+    }
+
+    tutup();
+  }
+
+  return potongan;
+}
+
+/** Kata yang terlalu umum untuk dipakai mencocokkan latar dengan cerita. */
+const KATA_UMUM = new Set([
+  'dan', 'atau', 'yang', 'di', 'ke', 'dari', 'dengan', 'untuk', 'pada', 'saat',
+  'itu', 'ini', 'dalam', 'adalah', 'akan', 'tidak', 'juga', 'sudah', 'masih',
+  'the', 'and', 'with', 'yang', 'sebuah', 'para', 'lebih', 'bisa', 'kamu',
+]);
+
+/** Kata bermakna dari sebuah label atau teks, untuk pencocokan. */
+function kataBermakna(teks: string): string[] {
+  return teks
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, ' ')
+    .split(/\s+/)
+    .filter((k) => k.length >= 4 && !KATA_UMUM.has(k));
+}
+
+/**
+ * Memilih latar yang LABELNYA paling cocok dengan narasinya.
+ *
+ * Ini TEBAKAN, bukan pengetahuan: mesin cerita tidak memahami gambar. Tetapi
+ * tebakan yang memakai bukti kata mengalahkan entri pertama menurut urutan
+ * master, yang jelas tidak ada hubungannya dengan isi cerita.
+ *
+ * Bila tidak ada satu pun kata yang cocok, entri pertama dikembalikan — sama
+ * seperti sebelumnya, tetapi setidaknya tidak lebih buruk, dan pemanggilnya dapat
+ * melihat bahwa tidak ada dasar untuk memilih.
+ */
+export function pilihLatar(
+  manifest: AssetManifest,
+  teks: string,
+): string | undefined {
+  const latar = manifest.backgrounds;
+  if (latar.length === 0) {
+    return undefined;
+  }
+
+  const kataCerita = new Set(kataBermakna(teks));
+
+  let terbaik = latar[0]?.assetId;
+  let skorTerbaik = 0;
+
+  for (const item of latar) {
+    const skor = kataBermakna(item.label).filter((k) => kataCerita.has(k)).length;
+    if (skor > skorTerbaik) {
+      skorTerbaik = skor;
+      terbaik = item.assetId;
+    }
+  }
+
+  return terbaik;
+}
+
+/**
+ * Awalan ID beat: dari pemanggil bila ada, selain itu dari nomor turn.
+ *
+ * Lihat catatan pada `StoryContext.beatIdPrefix` — `beats.beat_id` adalah kunci
+ * utama tabel, bukan kunci gabungan, sehingga awalan yang hanya berbasis nomor
+ * turn akan bertabrakan antar perjalanan.
+ */
 function beatIdScope(context: StoryContext): string {
   const prefix = context.beatIdPrefix?.trim();
   if (prefix && prefix.length > 0) {
@@ -247,19 +373,48 @@ export class DeterministicStoryEngine implements StoryEngine {
 
   async generateOpening(context: StoryContext): Promise<StoryEngineResult> {
     const turnId = beatIdScope(context);
-    const firstBackground = context.manifest.backgrounds[0]?.assetId;
     const primary = context.characters[0];
 
     const events: StoryEvent[] = [];
-    if (firstBackground) {
-      events.push({ type: 'setBackground', assetId: firstBackground });
-    }
-    events.push({ type: 'narrate', text: context.premise });
 
-    const secondBackground = context.manifest.backgrounds[1]?.assetId;
-    if (secondBackground) {
-      events.push({ type: 'setBackground', assetId: secondBackground });
+    /*
+     * Latar pembuka DIPILIH, bukan diambil yang pertama.
+     *
+     * Bentuk lamanya memakai `backgrounds[0]` — entri pertama menurut urutan
+     * master, yang tidak ada hubungannya dengan isi cerita. Akibatnya adegan
+     * kantor tampil dengan latar "Balkon Apartemen Saat Senja", dan pemilik
+     * produk menyebutnya "ngaco parah".
+     *
+     * Yang dipakai sekarang: latar yang LABELNYA paling banyak berbagi kata
+     * dengan narasinya. Itu tebakan, bukan pengetahuan — mesin ini tidak
+     * memahami gambar. Tetapi tebakan yang memakai bukti mengalahkan entri
+     * pertama yang jelas salah.
+     */
+    const latarPembuka = pilihLatar(context.manifest, context.premise);
+    if (latarPembuka) {
+      events.push({ type: 'setBackground', assetId: latarPembuka });
     }
+
+    /*
+     * Narasi dipecah menjadi potongan pendek.
+     *
+     * Premis bisa 376 kata, dan menyiramkannya sebagai satu balok membuat pemain
+     * menerima dinding teks di layar ponsel. Setiap potongan menjadi PERISTIWA
+     * sendiri — dan setiap peristiwa menjadi BEAT sendiri — sehingga klien
+     * menampilkannya satu per satu tanpa perlu diubah.
+     */
+    for (const potongan of potongNarasi(context.premise)) {
+      events.push({ type: 'narrate', text: potongan });
+    }
+
+    /*
+     * TIDAK ada pergantian latar di sini.
+     *
+     * Bentuk lamanya memasang latar pertama, membacakan narasi, lalu LANGSUNG
+     * menggantinya dengan latar kedua. Karena seluruh peristiwa satu giliran
+     * diterapkan bersamaan, latar pertama tidak pernah sempat terlihat — dan
+     * narasi tentang kantor dibacakan di atas latar yang lain sama sekali.
+     */
 
     if (primary) {
       events.push({

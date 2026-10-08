@@ -30,7 +30,7 @@ import type { SceneNotice } from '@/features/player/types';
 import { useI18n } from '@/i18n';
 import { telemetry } from '@/telemetry/analytics';
 import { useTheme } from '@/theme/ThemeProvider';
-import { space } from '@/theme/tokens';
+import { radius, space } from '@/theme/tokens';
 
 const NOTICE_TIMEOUT_MS = 7000;
 
@@ -336,9 +336,19 @@ function PlayerView({ session }: { session: JourneySession }) {
           <SimulatorBadge />
         </View>
         {!engine.isPersistent ? (
-          <Text variant="caption" tone="warning" numberOfLines={2} style={styles.storageNote}>
-            {t('storage.memoryOnly')}
-          </Text>
+          /*
+           * Papan di belakang teks, bukan teks langsung di atas gambar.
+           *
+           * Tanpa latar, teks peringatan ini duduk di atas latar adegan — yang
+           * bisa terang, gelap, atau ramai — dan kontrasnya habis. Warnanya
+           * "warning" membuatnya tampak kuning pucat yang menghilang di atas
+           * ilustrasi apa pun.
+           */
+          <View style={[styles.storagePlate, { backgroundColor: colors.bgSurface }]}>
+            <Text variant="caption" tone="warning" numberOfLines={2}>
+              {t('storage.memoryOnly')}
+            </Text>
+          </View>
         ) : null}
       </View>
 
@@ -556,8 +566,13 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     opacity: 0.9,
   },
-  storageNote: {
+  /** Papan di belakang peringatan penyimpanan, agar terbaca di atas latar apa pun. */
+  storagePlate: {
     maxWidth: 280,
+    paddingHorizontal: space.sm,
+    paddingVertical: space.xs,
+    borderRadius: radius.chip,
+    alignSelf: 'flex-start',
   },
   bottom: {
     paddingHorizontal: space.lg,
