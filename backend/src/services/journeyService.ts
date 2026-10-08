@@ -234,16 +234,62 @@ export class JourneyService {
         updatedAtTurnId: '',
       }));
 
-      await this.deps.journeys.create({
-        journeyId,
-        accountId: command.accountId,
-        worldId: command.worldId,
-        worldVersion: world.world_version,
-        personaName: command.persona.name,
-        personaAge: command.persona.age,
-        responseLocale: command.responseLocale,
-        baseline,
-      });
+      /*
+       * Balapan dua permintaan DITANGANI, bukan dilaporkan sebagai galat.
+       *
+       * Pemeriksaan di atas dan penyisipan di sini tidak atomik: dua permintaan
+       * yang datang bersamaan sama-sama lolos pemeriksaan, lalu satu kalah di
+       * indeks unik `journeys_one_active_per_world`. Itu bukan keadaan luar biasa
+       * — pemain menekan "Mulai" dua kali karena pembuatan perjalanan kini
+       * menunggu model menulis adegan pembuka, dan itu terasa lama.
+       *
+       * Yang benar saat itu bukan "gagal", melainkan: perjalanannya SUDAH ADA.
+       * Pemain mengirim ulang permintaan yang sama, jadi jawabannya pun sama —
+       * perjalanan yang sudah dibuat, bukan galat yang menyuruh mencoba lagi.
+       */
+      try {
+        await this.deps.journeys.create({
+          journeyId,
+          accountId: command.accountId,
+          worldId: command.worldId,
+          worldVersion: world.world_version,
+          personaName: command.persona.name,
+          personaAge: command.persona.age,
+          responseLocale: command.responseLocale,
+          baseline,
+        });
+      } catch (galat) {
+        /*
+         * Perjalanannya sudah ada — kembalikan yang itu, bukan galat.
+         *
+         * Pemain mengirim ulang permintaan yang sama, jadi jawabannya pun harus
+         * sama: perjalanan yang sudah dibuat. "Coba lagi" akan selalu gagal, dan
+         * itu pesan yang menyesatkan.
+         */
+        const kembar = await this.deps.journeys.findByAccountAndWorld(
+          command.accountId,
+          command.worldId,
+        );
+        if (!kembar) {
+          throw galat;
+        }
+
+        const semuaBeat = await this.deps.journeys.beats(kembar.journey_id);
+        const pembuka = semuaBeat[0]?.turnId ?? '';
+
+        const envelope = await this.buildEnvelope({
+          accountId: command.accountId,
+          operationId: command.operationId,
+          journeyId: kembar.journey_id,
+          turnId: pembuka,
+          revision: 0,
+          modelId: 'idempotent',
+          modelVersion: '1',
+          usage: { promptTokens: 0, completionTokens: 0, chargedTotal: 0 },
+        });
+
+        return { journeyId: kembar.journey_id, worldVersion: kembar.world_version, opening: envelope };
+      }
 
       const revision = await this.deps.journeys.appendTurn({
         turnId,
