@@ -1,6 +1,7 @@
 import React from 'react';
 import { StyleSheet, View } from 'react-native';
 
+import { AssetImage } from '@/components/AssetImage';
 import { Icon } from '@/components/Icon';
 import { Text } from '@/components/Text';
 
@@ -15,6 +16,15 @@ export type StageProps = {
   focusName: string | null;
   /** Label lokasi untuk pembaca layar dan placeholder latar. */
   locationLabel?: string;
+  /**
+   * URL latar yang SIAP DIMUAT, atau undefined bila belum ada.
+   *
+   * Panggung tidak mencari sendiri di manifest: ia tidak memegang dunia, hanya
+   * satu adegan. Pemanggilnya yang menyelesaikan id menjadi URL.
+   */
+  backgroundUri?: string | undefined;
+  /** URL potret karakter fokus yang siap dimuat. */
+  portraitUri?: string | undefined;
   testID?: string;
 };
 
@@ -24,14 +34,30 @@ export type StageProps = {
  * Latar mengisi seluruh area; portrait karakter fokus berada di atasnya; scrim
  * menjaga agar teks dialog tetap terbaca di atas ilustrasi apa pun (docs/05 §6).
  *
- * Selama aset belum tersedia, panggung menampilkan bidang netral berlabel — bukan
- * gambar karangan dan bukan wajah karakter lain (R-06).
+ * ---------------------------------------------------------------------------
+ * KENAPA URL-NYA DIKIRIM, BUKAN ID-nya
+ * ---------------------------------------------------------------------------
+ * Bentuk pertama komponen ini hanya menerima ID aset, dan karena itu ia TIDAK
+ * PERNAH dapat menggambar apa pun — ia hanya menampilkan bidang netral berlabel.
+ * Itu benar selama aset belum ada, tetapi menjadi bug senyap begitu asetnya ada:
+ * latar dan potret tetap kosong, tanpa galat, dan tampilannya masuk akal.
+ *
+ * Sekarang URL-nya datang dari pemanggil, yang memang memegang `assetManifest`.
+ * Bidang netral tetap dipakai sebagai CADANGAN saat URL-nya tidak ada — bukan
+ * sebagai satu-satunya tampilan.
  */
-export function Stage({ scene, focusName, locationLabel, testID }: StageProps) {
+export function Stage({
+  scene,
+  focusName,
+  locationLabel,
+  backgroundUri,
+  portraitUri,
+  testID,
+}: StageProps) {
   const { colors } = useTheme();
 
-  const hasBackground = Boolean(scene.backgroundAssetId);
-  const hasPortrait = Boolean(scene.focusPortraitAssetId);
+  const hasBackground = Boolean(backgroundUri);
+  const hasPortrait = Boolean(portraitUri);
 
   return (
     <View testID={testID} style={[styles.root, { backgroundColor: colors.placeholder }]}>
@@ -46,18 +72,26 @@ export function Stage({ scene, focusName, locationLabel, testID }: StageProps) {
             : 'Latar belum tersedia.'
         }
       >
-        {!hasBackground ? (
+        {hasBackground ? (
+          <AssetImage
+            uri={backgroundUri as string}
+            accessibilityLabel={locationLabel ?? 'Latar'}
+            aspectRatio={16 / 9}
+            contentFit="cover"
+            style={styles.backgroundImage}
+          />
+        ) : (
           <View style={styles.backgroundPlaceholder}>
             <Icon name="book" size={30} color={colors.inkSecondary} />
             <Text variant="caption" tone="secondary">
               Latar belum tersedia
             </Text>
           </View>
-        ) : null}
+        )}
       </View>
 
       {/* Portrait karakter fokus */}
-      {hasPortrait ? (
+      {scene.focusPortraitAssetId ? (
         <View
           style={styles.portraitWrap}
           accessible
@@ -66,22 +100,32 @@ export function Stage({ scene, focusName, locationLabel, testID }: StageProps) {
             focusName ? `${focusName}, ekspresi ${scene.focusExpression ?? 'netral'}` : 'Karakter'
           }
         >
-          <View
-            style={[
-              styles.portrait,
-              { backgroundColor: colors.bgMuted, borderColor: colors.line },
-            ]}
-          >
-            <Icon name="book" size={34} color={colors.inkSecondary} />
-            <Text variant="caption" tone="secondary" center>
-              {focusName ?? 'Karakter'}
-            </Text>
-            {scene.focusExpression ? (
+          {hasPortrait ? (
+            <AssetImage
+              uri={portraitUri as string}
+              accessibilityLabel={focusName ?? 'Karakter'}
+              aspectRatio={2 / 3}
+              contentFit="contain"
+              style={styles.portrait}
+            />
+          ) : (
+            <View
+              style={[
+                styles.portrait,
+                { backgroundColor: colors.bgMuted, borderColor: colors.line },
+              ]}
+            >
+              <Icon name="book" size={34} color={colors.inkSecondary} />
               <Text variant="caption" tone="secondary" center>
-                ({scene.focusExpression})
+                {focusName ?? 'Karakter'}
               </Text>
-            ) : null}
-          </View>
+              {scene.focusExpression ? (
+                <Text variant="caption" tone="secondary" center>
+                  ({scene.focusExpression})
+                </Text>
+              ) : null}
+            </View>
+          )}
         </View>
       ) : null}
 
@@ -104,6 +148,21 @@ const styles = StyleSheet.create({
     bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
+  },
+  /**
+   * Latar mengisi seluruh panggung.
+   *
+   * "absoluteFill" tidak dipakai karena AssetImage membungkus gambarnya dalam
+   * View ber-aspectRatio; latar harus menutupi area, bukan mengikuti rasionya.
+   */
+  backgroundImage: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
   },
   backgroundPlaceholder: {
     alignItems: 'center',

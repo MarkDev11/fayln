@@ -22,6 +22,7 @@ import { LogDrawer } from '@/features/player/components/LogDrawer';
 import { NPCInspector, type InspectorCharacter } from '@/features/player/components/NPCInspector';
 import { PlayerControls } from '@/features/player/components/PlayerControls';
 import { RelationNotice } from '@/features/player/components/RelationNotice';
+import { assetUri } from '@/domain/assets';
 import { Stage } from '@/features/player/components/Stage';
 import { usePlayerEngine } from '@/features/player/usePlayerEngine';
 import type { SceneNotice } from '@/features/player/types';
@@ -144,6 +145,31 @@ function PlayerView({ session }: { session: JourneySession }) {
     return session.world.assetManifest.backgrounds.find((item) => item.assetId === assetId)?.label;
   }, [session.world.assetManifest.backgrounds, state.scene.backgroundAssetId]);
 
+  /*
+   * URL latar dan potret diselesaikan di sini, bukan di dalam panggung.
+   *
+   * Panggung hanya memegang satu adegan; manifest dimiliki layar ini. Bentuk
+   * lamanya hanya mengirim ID, sehingga panggung TIDAK PERNAH dapat menggambar
+   * apa pun — latar dan potret selalu kosong, tanpa galat.
+   */
+  const backgroundUri = useMemo(() => {
+    const assetId = state.scene.backgroundAssetId;
+    if (!assetId) {
+      return undefined;
+    }
+    const item = session.world.assetManifest.backgrounds.find((a) => a.assetId === assetId);
+    return assetUri(item?.uri ?? assetId);
+  }, [session.world.assetManifest.backgrounds, state.scene.backgroundAssetId]);
+
+  const portraitUri = useMemo(() => {
+    const assetId = state.scene.focusPortraitAssetId;
+    if (!assetId) {
+      return undefined;
+    }
+    const item = session.world.assetManifest.portraits.find((a) => a.assetId === assetId);
+    return assetUri(item?.uri ?? assetId);
+  }, [session.world.assetManifest.portraits, state.scene.focusPortraitAssetId]);
+
   const speakerName =
     state.line?.speakerNpcId != null ? (npcNameById[state.line.speakerNpcId] ?? null) : null;
 
@@ -262,7 +288,13 @@ function PlayerView({ session }: { session: JourneySession }) {
         accessibilityHint={t('player.hiddenHint')}
         testID="player-hidden"
       >
-        <Stage scene={state.scene} focusName={focusName} {...(locationLabel !== undefined ? { locationLabel } : null)} />
+        <Stage
+          scene={state.scene}
+          focusName={focusName}
+          {...(locationLabel !== undefined ? { locationLabel } : null)}
+          backgroundUri={backgroundUri}
+          portraitUri={portraitUri}
+        />
         <View style={styles.hiddenHint}>
           <Icon name="eyeOff" size={16} color="#FFFFFF" />
           <Text variant="caption" style={styles.hiddenHintText}>
@@ -280,6 +312,8 @@ function PlayerView({ session }: { session: JourneySession }) {
           scene={state.scene}
           focusName={focusName}
           {...(locationLabel !== undefined ? { locationLabel } : null)}
+          backgroundUri={backgroundUri}
+          portraitUri={portraitUri}
           testID="player-stage"
         />
       </View>
