@@ -336,7 +336,19 @@ export class CatalogRepository {
         synopsis: row.synopsis,
         genres: (genresByWorld.get(key) ?? []) as GenreId[],
         coverAssetId: row.cover_asset_id,
-        coverUri: coverUris.get(key) ?? '',
+        /*
+         * WAJIB lewat `resolveAssetUri`.
+         *
+         * Database menyimpan JALUR RELATIF ("/assets/cover/x.png") supaya satu
+         * baris data dapat dipakai di lokal maupun produksi tanpa menyimpan nama
+         * host. Klien tidak dapat memuat jalur relatif: `assetUri()` hanya
+         * meneruskan URL absolut, dan apa pun selain itu dianggap aset internal
+         * yang belum ada berkasnya.
+         *
+         * Dunia yang dipungut dari unggahan sudah menyimpan URL absolut, jadi
+         * fungsi ini meneruskannya apa adanya — kedua bentuk tertangani.
+         */
+        coverUri: coverUris.get(key) ? this.resolveAssetUri(coverUris.get(key) as string) : '',
         worldVersion: row.world_version,
         status: row.status as WorldStatus,
         contentRating: row.content_rating as ContentRating,
