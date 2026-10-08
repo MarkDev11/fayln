@@ -836,6 +836,11 @@ describe('teks karakter', () => {
     });
   }
 
+  /** Jawaban yang benar: objek JSON berisi kunci `text`. */
+  function berisiTeks(isi: string): string {
+    return jawaban(JSON.stringify({ text: isi }));
+  }
+
   const MASUKAN = {
     kind: 'background' as const,
     name: 'Elysia',
@@ -844,8 +849,8 @@ describe('teks karakter', () => {
     worldTitle: 'Rapat Tengah Malam',
   };
 
-  it('mengembalikan teks bebas, bukan JSON', async () => {
-    const { impl } = fakeFetch(200, jawaban('Dulu mereka satu sekolah. Sekarang ia yang menandatangani cutimu.'));
+  it('mengembalikan isi kolom text', async () => {
+    const { impl } = fakeFetch(200, berisiTeks('Dulu mereka satu sekolah. Sekarang ia yang menandatangani cutimu.'));
 
     const hasil = await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
 
@@ -855,13 +860,42 @@ describe('teks karakter', () => {
     }
   });
 
-  it('membuang pagar kode, judul, dan tanda kutip pembungkus', async () => {
+  it('mengabaikan kalimat pengantar dan mengambil objek JSON TERAKHIR', async () => {
     /*
-     * Model yang diminta teks bebas sering tetap membungkusnya — pagar kode,
-     * judul, atau tanda kutip. Kalau tidak dibuang, yang tersimpan di dunia
-     * adalah ``` dan # alih-alih ceritanya.
+     * INI BUG PRODUKSI 8 OKTOBER 2026, dan uji ini yang menjaganya.
+     *
+     * Bentuk pertama tugas ini meminta TEKS BEBAS, sementara promptnya menyuruh
+     * "berpikir dulu bila perlu". Untuk model tanpa saluran penalaran terpisah,
+     * pikiran itu mendarat DI DALAM jawabannya — dan yang tersimpan di dunia
+     * adalah "Ok, user wants me to expand a hint into a full background..."
+     * beserta seluruh coretannya, bukan latar belakangnya.
+     *
+     * Membersihkannya dari teks bebas tidak dapat diandalkan: tidak ada batas
+     * yang dapat ditemukan mesin antara penalaran dan hasilnya. JSON menyediakan
+     * batas itu, dan `lastJsonObject` mengambil objek TERAKHIR — sehingga
+     * kalimat pengantar sebelumnya diabaikan tanpa perlu dikenali.
      */
-    const kotak = '```\nIsi yang sebenarnya.\n```';
+    const bocor = [
+      'Ok, user wants me to expand a hint into a full background.',
+      'Let me think about the details: they dated in high school.',
+      'Let me try: "@user, kamu pasti masih ingat..."',
+      '',
+      JSON.stringify({ text: 'Dulu mereka satu sekolah. Sekarang ia yang menandatangani cutimu.' }),
+    ].join('\n');
+    const { impl } = fakeFetch(200, jawaban(bocor));
+
+    const hasil = await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      expect(hasil.text, 'penalaran model ikut tersimpan').not.toContain('Ok, user wants');
+      expect(hasil.text).not.toContain('Let me try');
+      expect(hasil.text).toBe('Dulu mereka satu sekolah. Sekarang ia yang menandatangani cutimu.');
+    }
+  });
+
+  it('menerima jawaban yang dibungkus pagar kode', async () => {
+    const kotak = '```json\n' + JSON.stringify({ text: 'Isi yang sebenarnya.' }) + '\n```';
     const { impl } = fakeFetch(200, jawaban(kotak));
 
     const hasil = await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
@@ -879,7 +913,7 @@ describe('teks karakter', () => {
      * seed-nya tidak sampai, hasilnya akan melenceng dari niatnya tanpa admin
      * mengerti mengapa.
      */
-    const { calls, impl } = fakeFetch(200, jawaban('Isi.'));
+    const { calls, impl } = fakeFetch(200, berisiTeks('Isi.'));
 
     await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
 
@@ -927,14 +961,20 @@ describe('teks karakter', () => {
     expect(background).toContain('EXPAND');
   });
 
-  it('menolak jawaban kosong', async () => {
-    const { impl } = fakeFetch(200, jawaban('   '));
+  it('menolak jawaban yang tidak berisi objek JSON yang diminta', async () => {
+    /*
+     * Model yang menjawab dengan teks biasa — misalnya hanya penalarannya saja,
+     * tanpa objek JSON — DITOLAK, bukan disimpan apa adanya. Menyimpannya berarti
+     * menuangkan coretan model ke dalam cerita dunia.
+     */
+    const { impl } = fakeFetch(200, jawaban('Ok, user wants me to expand a hint.'));
 
     const hasil = await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
 
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
-      expect(hasil.reason).toBe('declined');
+      expect(hasil.reason).toBe('bad-response');
+      expect(hasil.detail, 'penyebabnya tidak dijelaskan').toContain('text');
     }
   });
 });

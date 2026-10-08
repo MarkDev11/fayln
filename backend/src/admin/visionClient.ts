@@ -571,11 +571,13 @@ export function characterSystemPrompt(kind: 'background' | 'soul'): string {
     '',
     ATURAN_KARAKTER,
     '',
-    'Reply with ONLY the text itself. No JSON, no markdown heading, no preamble,',
-    'and no commentary before or after it.',
+    'Reply with ONLY a JSON object. No markdown, no code fences, no commentary:',
     '',
-    'You may think first if you need to, but the LAST thing you write must be the',
-    'text itself, with nothing after it.',
+    '  {"text": "<the text itself, with \\n for line breaks>"}',
+    '',
+    'The JSON object must be the LAST thing you write. Anything you think before',
+    'it is ignored, so you may reason freely — but the answer itself belongs inside',
+    'the "text" field.',
   ].join('\n');
 }
 
@@ -638,48 +640,34 @@ export async function generateCharacterText(
     return call;
   }
 
-  const bersih = bersihkanTeksBebas(call.text);
-  if (bersih.length === 0) {
+  /*
+   * Jawabannya JSON, BUKAN teks bebas — dan itu pelajaran dari produksi.
+   *
+   * Bentuk pertamanya meminta teks bebas, dan promptnya menyuruh "berpikir dulu
+   * bila perlu". Untuk model tanpa saluran penalaran terpisah, pikiran itu
+   * MENDARAT DI DALAM JAWABANNYA: yang tersimpan di dunia adalah "Ok, user wants
+   * me to expand a hint into a full background..." beserta seluruh coretannya,
+   * bukan latar belakangnya. Terjadi pada 8 Oktober 2026.
+   *
+   * Membersihkannya dari teks bebas tidak dapat diandalkan — tidak ada batas yang
+   * dapat ditemukan mesin antara penalaran dan hasilnya. JSON menyediakan batas
+   * itu: `lastJsonObject` mengambil objek TERAKHIR yang punya kunci `text`,
+   * sehingga seluruh kalimat pengantar sebelumnya diabaikan tanpa perlu dikenali.
+   */
+  const record = lastJsonObject(call.text, 'text');
+  const isi = record ? record.text : null;
+
+  if (typeof isi !== 'string' || isi.trim().length === 0) {
     return {
       ok: false,
-      reason: 'declined',
-      detail: `Model tidak menulis apa pun. Jawabannya: ${detailOf(call.text, apiKey)}`,
+      reason: 'bad-response',
+      detail: `Model tidak mengembalikan objek JSON berisi "text". Jawabannya: ${detailOf(call.text, apiKey)}`,
     };
   }
 
-  return { ok: true, text: clamp(bersih, MAX_WORLD_TEXT) };
+  return { ok: true, text: clamp(isi.trim(), MAX_WORLD_TEXT) };
 }
 
-/**
- * Membersihkan jawaban teks bebas dari sampah yang sering menyertainya.
- *
- * Tidak seperti tugas JSON, di sini seluruh jawabannya adalah isinya — jadi tidak
- * ada yang boleh dibuang selain pembungkus yang jelas-jelas bukan isi: pagar kode,
- * judul markdown, dan tanda kutip di ujung-ujungnya.
- */
-function bersihkanTeksBebas(teks: string): string {
-  let hasil = teks.trim();
-
-  // Pagar kode, dengan atau tanpa nama bahasanya.
-  const pagar = /^```[a-zA-Z]*\s*\n?([\s\S]*?)\n?```$/s.exec(hasil);
-  if (pagar?.[1] !== undefined) {
-    hasil = pagar[1].trim();
-  }
-
-  // Tanda kutip pembungkus.
-  if (hasil.length >= 2) {
-    const pertama = hasil[0];
-    const terakhir = hasil[hasil.length - 1];
-    if (pertama === terakhir && (pertama === '"' || pertama === "'")) {
-      hasil = hasil.slice(1, -1).trim();
-    }
-  }
-
-  // Judul markdown di awal.
-  hasil = hasil.replace(/^#{1,6}\s+.*\n+/, '').trim();
-
-  return hasil;
-}
 
 /* ------------------------------------------------------------------ */
 /* Teks dunia: sinopsis dan premis dari judul                          */
