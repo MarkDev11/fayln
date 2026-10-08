@@ -1539,6 +1539,22 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       });
     }
 
+    /*
+     * Daftar karakter LAIN di dunia ini dikirim ke model.
+     *
+     * Tanpa daftarnya, `@rina` di kolom seed terlihat seperti salah ketik — dan
+     * model akan mengabaikannya atau menulisnya sebagai "seseorang". Yang
+     * dikirim adalah nama pada DUNIA INI, bukan nama master: tokennya harus
+     * menunjuk nama yang benar-benar dipakai cerita ini.
+     *
+     * Dirinya sendiri dibuang dari daftar: `@rina` di dalam latar belakang Rina
+     * akan berarti ia menyebut dirinya sendiri dengan token orang ketiga.
+     */
+    const semuaNpc = await ctx.drafts.listNpcs(draft.worldId, draft.worldVersion);
+    const others = semuaNpc
+      .filter((item) => item.npcId !== body.data.npcId && item.name.trim().length > 0)
+      .map((item) => item.name);
+
     const hasil = await generateCharacterText(
       { baseUrl: provider.baseUrl, apiType: provider.apiType, modelKey: body.data.modelKey },
       apiKey,
@@ -1548,6 +1564,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
         role: npc.role,
         seed: body.data.seed,
         worldTitle: draft.title,
+        others,
       },
     );
 

@@ -509,23 +509,37 @@ export async function describeCharacterPortrait(
 /**
  * Aturan yang dipakai BERSAMA oleh background dan soul karakter.
  *
- * Yang terpenting ada di urutan pertama: @user adalah NAMA PEMAIN. Ia ditulis
- * APA ADANYA di dalam hasilnya, dan sistem yang menggantinya dengan nama pemain
- * saat cerita berjalan. Karena itu model tidak boleh menebak-nebak nama, dan
- * tidak boleh pula menggantinya dengan "kamu" — dua dunia yang dimainkan orang
- * berbeda harus tetap bisa memakai teks yang sama.
+ * ---------------------------------------------------------------------------
+ * DUA JENIS TOKEN, DAN BEDANYA PENTING
+ * ---------------------------------------------------------------------------
+ * `@user` adalah NAMA PEMAIN. Ia ditulis APA ADANYA dan diganti sistem saat
+ * cerita berjalan. Model tidak boleh menebak namanya, dan tidak boleh
+ * menggantinya dengan "kamu" — dua dunia yang dimainkan orang berbeda harus tetap
+ * bisa memakai teks yang sama.
+ *
+ * `@<nama>` adalah KARAKTER LAIN DI DUNIA INI. Pemilik produk memintanya supaya
+ * model tahu bahwa `@rina` menunjuk orang yang memang ada di dunia itu, bukan
+ * nama yang dikarang. Tanpa daftarnya, model akan mengira `@rina` salah ketik
+ * atau nama asing — dan menuliskannya sebagai "seseorang" atau mengabaikannya.
+ *
+ * Karena itu daftar nama yang SAH ikut dikirim ke model. Nama di luar daftar itu
+ * BUKAN token, dan model dilarang memperlakukannya sebagai karakter.
  */
 const ATURAN_KARAKTER = [
   '1. @user is the NAME OF THE PLAYER. Write it EXACTLY as "@user", never replace',
   '   it with a name, never with "kamu", never with "you". The system substitutes',
   '   the real player name when the story runs.',
-  '2. Write in Indonesian, second person, addressing the player as @user.',
-  '3. NEVER name other characters. Refer to them by their ROLE or relationship to',
-  '   @user: "bosmu", "sahabatmu", "mantan pacarmu". A role may be described',
-  '   further ("sahabatmu yang tahu masa lalumu"), never turned into a name.',
-  '4. Do not mention that this is a game, a novel, or that you are an AI.',
+  '2. "@" followed by a name is ANOTHER CHARACTER IN THIS WORLD — an NPC that',
+  '   already exists here. Write those tokens EXACTLY as given, e.g. "@rina".',
+  '   The system substitutes that character\'s name in this world. NEVER invent a',
+  '   new @token, and NEVER use one that is not in the list you were given.',
+  '3. Any OTHER person must be referred to by their ROLE or relationship to',
+  '   @user: "bosmu", "sahabatmu", "mantan pacarmu". Never write a bare name that',
+  '   was not given to you as a @token.',
+  '4. Write in Indonesian, second person, addressing the player as @user.',
+  '5. Do not mention that this is a game, a novel, or that you are an AI.',
   '   Write as if the situation were real.',
-  '5. No closing line like "pilihan ada di tanganmu".',
+  '6. No closing line like "pilihan ada di tanganmu".',
 ].join('\n');
 
 /**
@@ -598,6 +612,14 @@ export type CharacterTextInput = {
   seed: string;
   /** Judul dunia, supaya hasilnya tidak bertolak belakang dengan ceritanya. */
   worldTitle: string;
+  /**
+   * Nama karakter lain yang SUDAH ada di dunia ini.
+   *
+   * Dikirim ke model supaya ia tahu `@rina` menunjuk orang yang memang ada di
+   * dunia itu, bukan nama yang dikarang. Tanpa daftarnya, `@rina` terlihat
+   * seperti salah ketik.
+   */
+  others: string[];
 };
 
 /**
@@ -614,6 +636,16 @@ export async function generateCharacterText(
   input: CharacterTextInput,
   fetchImpl: typeof fetch = fetch,
 ): Promise<CharacterTextResult> {
+  const daftarNpc =
+    input.others.length > 0
+      ? [
+          '',
+          'Karakter lain yang SUDAH ada di dunia ini — hanya nama-nama inilah yang',
+          'sah ditulis sebagai token @nama:',
+          ...input.others.map((nama) => `  @${nama.toLowerCase()}`),
+        ].join('\n')
+      : '';
+
   const { path, body } = buildTextRequest(
     request,
     characterSystemPrompt(input.kind),
@@ -621,6 +653,7 @@ export async function generateCharacterText(
       `Karakter: ${input.name}`,
       input.role.trim().length > 0 ? `Perannya dalam cerita: ${input.role}` : '',
       input.worldTitle.trim().length > 0 ? `Dunia: ${input.worldTitle}` : '',
+      daftarNpc,
       '',
       `Yang diketik admin — perinci ini: ${input.seed}`,
     ]

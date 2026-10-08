@@ -845,8 +845,9 @@ describe('teks karakter', () => {
     kind: 'background' as const,
     name: 'Elysia',
     role: 'bosmu',
-    seed: 'mantan pacar @user saat SMP dulu',
+    seed: 'sahabat @user dan @rina dari kecil',
     worldTitle: 'Rapat Tengah Malam',
+    others: ['Rina'],
   };
 
   it('mengembalikan isi kolom text', async () => {
@@ -922,7 +923,18 @@ describe('teks karakter', () => {
     };
     const isiPesan = body.messages.map((pesan) => pesan.content).join('\n');
 
-    expect(isiPesan).toContain('mantan pacar @user saat SMP dulu');
+    expect(isiPesan).toContain('sahabat @user dan @rina dari kecil');
+    /*
+     * Daftar nama yang SAH ikut dikirim, dan itu bukan hiasan: tanpa daftarnya,
+     * "@rina" terlihat seperti salah ketik, dan model akan mengabaikannya atau
+     * menulisnya sebagai "seseorang".
+     *
+     * Diperiksa lewat KALIMAT PENGANTARNYA, bukan lewat "@rina" saja — sebab
+     * seed-nya sendiri juga memuat "@rina", sehingga pemeriksaan yang longgar
+     * akan lulus walaupun daftarnya tidak pernah dikirim.
+     */
+    expect(isiPesan, 'daftar karakter lain tidak dikirim').toContain('hanya nama-nama inilah yang');
+    expect(isiPesan).toContain('  @rina');
     expect(isiPesan).toContain('Elysia');
     expect(isiPesan).toContain('bosmu');
     expect(isiPesan).toContain('Rapat Tengah Malam');
@@ -942,7 +954,7 @@ describe('teks karakter', () => {
       expect(prompt, `${kind}: tidak menjelaskan bahwa itu nama pemain`).toContain('NAME OF THE PLAYER');
       expect(prompt, `${kind}: tidak melarang penggantian dengan kamu`).toContain('never with "kamu"');
       expect(prompt, `${kind}: tidak menyebut peran untuk tokoh lain`).toContain('ROLE');
-      expect(prompt, `${kind}: tidak melarang penyebutan nama`).toContain('NEVER name');
+      expect(prompt, `${kind}: tidak mengatur token @nama`).toContain('ANOTHER CHARACTER IN THIS WORLD');
     }
   });
 
