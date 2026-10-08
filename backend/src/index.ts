@@ -42,6 +42,8 @@ import { ReportRepository } from './repositories/reportRepository';
 import { UsageRepository } from './repositories/usageRepository';
 import { buildApp } from './server';
 import { JourneyService } from './services/journeyService';
+import { chooseOpeningBackground } from './admin/visionClient';
+import type { OpeningBackgroundPicker } from './services/journeyService';
 import { DeterministicStoryEngine, STORY_ENGINE_IS_SIMULATOR } from './services/storyEngine';
 
 async function main(): Promise<void> {
@@ -113,12 +115,53 @@ async function main(): Promise<void> {
   const operations = new OperationRepository(db);
   const reports = new ReportRepository(db);
 
+  /*
+   * Pemilih latar pembuka memakai MODEL yang aktif.
+   *
+   * Diletakkan di sini, bukan di dalam layanan, karena hanya lapisan inilah yang
+   * tahu provider dan model mana yang dikonfigurasi. Layanan pemain hanya menerima
+   * satu fungsi, dan tidak perlu tahu dari mana jawabannya datang.
+   *
+   * Bila belum ada model aktif atau kuncinya, pemilihnya null — mesin cerita lalu
+   * menebak seperti sebelumnya, dan perjalanan tetap dapat dimulai.
+   */
+  const providerRepo = new ProvidersRepository(db);
+  const modelRepo = new ModelsRepository(db);
+
+  const pickOpeningBackground: OpeningBackgroundPicker = async (narration, backgrounds) => {
+    const model = (await modelRepo.listModels()).find(
+      (item) => item.isActive && item.providerId !== null,
+    );
+    if (!model?.providerId) {
+      return null;
+    }
+
+    const provider = await providerRepo.find(model.providerId);
+    if (!provider) {
+      return null;
+    }
+
+    const apiKey = await providerRepo.apiKeyFor(provider.providerId);
+    if (!apiKey) {
+      return null;
+    }
+
+    const hasil = await chooseOpeningBackground(
+      { baseUrl: provider.baseUrl, apiType: provider.apiType, modelKey: model.modelKey },
+      apiKey,
+      { narration, backgrounds },
+    );
+
+    return hasil.ok ? hasil.assetId : null;
+  };
+
   const journeyService = new JourneyService({
     catalog,
     journeys,
     operations,
     usage,
     engine: new DeterministicStoryEngine(),
+    pickOpeningBackground,
     newId: () => randomUUID(),
     now: () => new Date(),
   });

@@ -25,6 +25,12 @@ export type StoryContext = {
    * Ini satu-satunya sumber yang benar-benar tahu;  hanya menebak.
    */
   openingLocationId?: string | null;
+  /**
+   * Latar pembuka yang dipilih MODEL, bila ada.
+   *
+   * Ini sumber paling tahu: model membaca narasinya. Bila kosong, mesin menebak.
+   */
+  openingBackgroundAssetId?: string | null;
   /** Nama lokasi pembuka; dipakai mencocokkan label latar. */
   openingLocationLabel?: string | null;
   characters: NPCPublicDTO[];
@@ -415,11 +421,9 @@ export class DeterministicStoryEngine implements StoryEngine {
      * memahami gambar. Tetapi tebakan yang memakai bukti mengalahkan entri
      * pertama yang jelas salah.
      */
-    const latarPembuka = pilihLatar(
-      context.manifest,
-      context.premise,
-      context.openingLocationLabel ?? null,
-    );
+    const latarPembuka =
+      context.openingBackgroundAssetId ??
+      pilihLatar(context.manifest, context.premise, context.openingLocationLabel ?? null);
     if (latarPembuka) {
       events.push({ type: 'setBackground', assetId: latarPembuka });
     }

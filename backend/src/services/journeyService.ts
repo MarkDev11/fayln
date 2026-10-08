@@ -40,9 +40,27 @@ export type JourneyServiceDeps = {
   operations: OperationRepository;
   usage: UsageRepository;
   engine: StoryEngine;
+  /**
+   * Pemilih latar pembuka, atau null bila belum ada model yang dikonfigurasi.
+   *
+   * Port sempit dengan sengaja: layanan pemain tidak boleh bergantung pada
+   * repositori panel admin. Yang dibutuhkan hanyalah satu fungsi.
+   */
+  pickOpeningBackground?: OpeningBackgroundPicker | null;
   newId: () => string;
   now: () => Date;
 };
+
+/**
+ * Memilih latar adegan pembuka dari narasinya.
+ *
+ * Mengembalikan  yang ada di daftar, atau null bila gagal — pemanggilnya
+ * lalu kembali ke tebakan mesin, yang setidaknya menghasilkan latar yang ada.
+ */
+export type OpeningBackgroundPicker = (
+  narration: string,
+  backgrounds: { assetId: string; label: string }[],
+) => Promise<string | null>;
 
 export type CreateJourneyCommand = {
   operationId: string;
@@ -138,9 +156,37 @@ export class JourneyService {
     const turnId = `t_${randomUUID()}`;
 
     try {
+      /*
+       * Latar pembuka dipilih MODEL, bukan ditebak mesin.
+       *
+       * Mesin cerita tidak memahami gambar, dan dua tebakannya sudah terbukti
+       * salah di produksi: entri pertama menurut urutan master, lalu pencocokan
+       * kata yang tertipu kata umum seperti "ruang". Model bahasa membaca
+       * narasinya dan tahu "meja kerja, monitor, lantai 12" berarti kantor.
+       *
+       * Kegagalan di sini TIDAK menggagalkan perjalanan: `openingBackgroundAssetId`
+       * dibiarkan kosong, dan mesin menebak seperti sebelumnya. Perjalanan yang
+       * gagal dimulai jauh lebih buruk daripada latar yang kurang tepat.
+       */
+      let openingBackgroundAssetId: string | null = null;
+      if (this.deps.pickOpeningBackground) {
+        try {
+          openingBackgroundAssetId = await this.deps.pickOpeningBackground(
+            detail.premise,
+            detail.assetManifest.backgrounds.map((item) => ({
+              assetId: item.assetId,
+              label: item.label,
+            })),
+          );
+        } catch {
+          openingBackgroundAssetId = null;
+        }
+      }
+
       const context: StoryContext = {
         worldTitle: detail.title,
         premise: detail.premise,
+        openingBackgroundAssetId,
         /*
          * Nama lokasi pembuka, BUKAN id-nya.
          *

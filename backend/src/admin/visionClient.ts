@@ -714,6 +714,118 @@ export async function generateCharacterText(
 
 
 /* ------------------------------------------------------------------ */
+/* Memilih latar pembuka                                               */
+/* ------------------------------------------------------------------ */
+
+/**
+ * System prompt untuk memilih latar adegan pembuka.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA INI TUGAS AI, BUKAN TEBAKAN MESIN
+ * ---------------------------------------------------------------------------
+ * Mesin cerita harus memilih SATU latar untuk adegan pembuka, dan ia tidak punya
+ * cara mengetahuinya: ia tidak memahami gambar, dan narasinya jarang menyebut nama
+ * lokasi. Dua tebakannya sudah terbukti salah di produksi:
+ *
+ *   - entri pertama menurut urutan master → adegan kantor berlatar balkon apartemen;
+ *   - pencocokan kata → kata umum "ruang" muncul di narasi ("ruang terbuka") DAN
+ *     di label ("Ruang Kelas Penuh Cahaya"), sehingga kecocokan palsu menang.
+ *
+ * Model bahasa MEMBACA narasinya dan tahu "meja kerja, monitor, lantai 12 kantor"
+ * berarti kantor. Itu pengetahuan yang tidak dimiliki pencocokan kata.
+ */
+export const OPENING_BACKGROUND_PROMPT = [
+  'You are given a scene description and a list of available background images,',
+  'each with an ID and a label.',
+  '',
+  'Choose the ONE background that best matches where the scene takes place.',
+  '',
+  'RULES:',
+  '1. Judge by MEANING, not by shared words. A scene mentioning "ruang terbuka"',
+  '   is not necessarily a classroom; read what actually happens there.',
+  '2. Reply with ONLY a JSON object. No markdown, no code fences, no commentary:',
+  '',
+  '   {"assetId": "<the id you chose>"}',
+  '',
+  '3. The assetId MUST be one of the IDs given to you, copied exactly.',
+  '4. If nothing fits well, choose the closest one — never invent an ID.',
+  '',
+  'The JSON object must be the LAST thing you write. Anything you think before it',
+  'is ignored.',
+].join('\n');
+
+export type OpeningBackgroundResult =
+  | { ok: true; assetId: string }
+  | { ok: false; reason: VisionFailure; detail: string };
+
+/**
+ * Meminta model memilih latar adegan pembuka.
+ *
+ * Mengembalikan `assetId` yang HARUS ada di daftar yang dikirim. Model yang
+ * mengarang id ditolak — latar yang tidak ada akan membuat klien menampilkan
+ * placeholder, dan itu lebih buruk daripada kembali ke tebakan mesin.
+ */
+export async function chooseOpeningBackground(
+  request: { baseUrl: string; apiType: ApiType; modelKey: string },
+  apiKey: string,
+  input: { narration: string; backgrounds: { assetId: string; label: string }[] },
+  fetchImpl: typeof fetch = fetch,
+): Promise<OpeningBackgroundResult> {
+  if (input.backgrounds.length === 0) {
+    return { ok: false, reason: 'bad-response', detail: 'Dunia ini belum punya latar.' };
+  }
+
+  const daftar = input.backgrounds
+    .map((item) => `  ${item.assetId} — ${item.label}`)
+    .join('\n');
+
+  const { path, body } = buildTextRequest(
+    request,
+    OPENING_BACKGROUND_PROMPT,
+    [`Latar yang tersedia:`, daftar, '', `Adegannya:`, input.narration].join('\n'),
+  );
+
+  const call = await sendToProvider(request, path, body, apiKey, fetchImpl, {
+    nama: 'pemilihan latar pembuka',
+    timeoutMs: TEXT_TIMEOUT_MS,
+    saranWaktuHabis: 'Memilih satu latar seharusnya cepat. Coba lagi, atau pilih model lain.',
+  });
+
+  if (!call.ok) {
+    return call;
+  }
+
+  const record = lastJsonObject(call.text, 'assetId');
+  const dipilih = record ? record.assetId : null;
+
+  if (typeof dipilih !== 'string' || dipilih.trim().length === 0) {
+    return {
+      ok: false,
+      reason: 'bad-response',
+      detail: `Model tidak mengembalikan objek JSON berisi "assetId". Jawabannya: ${detailOf(call.text, apiKey)}`,
+    };
+  }
+
+  /*
+   * ID yang dikarang DITOLAK.
+   *
+   * Latar yang tidak ada di manifest akan membuat klien menampilkan placeholder —
+   * dan pemanggilnya lalu kembali ke tebakan mesin, yang setidaknya menghasilkan
+   * latar yang benar-benar ada.
+   */
+  const sah = input.backgrounds.find((item) => item.assetId === dipilih.trim());
+  if (!sah) {
+    return {
+      ok: false,
+      reason: 'bad-response',
+      detail: `Model memilih latar yang tidak ada di manifest: ${dipilih.trim()}`,
+    };
+  }
+
+  return { ok: true, assetId: sah.assetId };
+}
+
+/* ------------------------------------------------------------------ */
 /* Teks dunia: sinopsis dan premis dari judul                          */
 /* ------------------------------------------------------------------ */
 

@@ -129,8 +129,15 @@ export function Stage({
         </View>
       ) : null}
 
-      {/* Scrim agar teks selalu terbaca di atas ilustrasi */}
-      <View style={[styles.scrim, { backgroundColor: colors.scrim }]} />
+      {/*
+        * TIDAK ada scrim di sini.
+        *
+        * Bentuk lamanya memasang lapisan gelap setinggi 55% dari panggung, untuk
+        * menjaga teks dialog tetap terbaca di atas ilustrasi. Sejak kotak dialog
+        * pindah ke BAWAH panggung, tidak ada lagi teks di atas gambar — dan
+        * lapisan itu hanya membuat separuh bawah latar tampak hitam. Pemilik
+        * produk melihatnya sebagai latar yang rusak.
+        */}
     </View>
   );
 }
@@ -187,14 +194,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'center',
     gap: space.xs,
-  },
-  scrim: {
-    position: 'absolute',
-    left: 0,
-    right: 0,
-    bottom: 0,
-    height: '55%',
-    // pointerEvents lewat style; prop-nya sudah usang di React Native terbaru.
-    pointerEvents: 'none',
   },
 });
