@@ -30,25 +30,73 @@ function randomId(): string {
 /**
  * Mengambil ID akun perangkat, membuatnya bila belum ada.
  *
- * Bila penyimpanan aman tidak tersedia (misal di peramban), jatuh ke nilai acak
- * yang hanya bertahan selama sesi — aplikasi tetap dapat dipakai, hanya saja
- * perjalanannya tidak terbaca lagi setelah dimuat ulang.
+ * ---------------------------------------------------------------------------
+ * DI PERAMBAN, `SecureStore` TIDAK ADA — dan itu membuat perjalanan hilang
+ * ---------------------------------------------------------------------------
+ * Bentuk pertama fungsi ini hanya memakai `SecureStore`, lalu jatuh ke nilai acak
+ * ketika penyimpanannya tidak tersedia. Di peramban, `SecureStore` memang tidak
+ * ada, sehingga SETIAP MUAT ULANG halaman menghasilkan akun baru.
+ *
+ * Akibatnya terlihat seperti bug yang sama sekali lain: pemain membuat perjalanan,
+ * memuat ulang, lalu daftar Perjalanan berkata "Belum ada perjalanan" — padahal
+ * perjalanannya ada, hanya saja tercatat pada akun yang sudah tidak dipakai lagi.
+ * Ia juga membuat pemain dapat membuat perjalanan berkali-kali di dunia yang sama,
+ * karena setiap sesi adalah akun yang berbeda.
+ *
+ * `localStorage` dipakai sebagai gantinya di peramban. Ia BUKAN penyimpanan aman,
+ * tetapi identitas ini memang bukan autentikasi (lihat catatan di atas) — dan
+ * akun yang tidak bertahan sama sekali lebih buruk daripada akun yang dapat
+ * dibaca perangkat itu sendiri.
  */
 export async function deviceAccountId(): Promise<string> {
   if (memoryOverride) {
     return memoryOverride;
   }
 
+  const dariPeramban = bacaPenyimpananPeramban();
+  if (dariPeramban) {
+    return dariPeramban;
+  }
+
   try {
     const stored = await SecureStore.getItemAsync(ACCOUNT_KEY);
     if (stored && stored.length > 0) {
+      tulisPenyimpananPeramban(stored);
       return stored;
     }
 
     const created = randomId();
     await SecureStore.setItemAsync(ACCOUNT_KEY, created);
+    tulisPenyimpananPeramban(created);
     return created;
   } catch {
-    return randomId();
+    /*
+     * Penyimpanan aman tidak tersedia — di peramban, dan mungkin di perangkat
+     * yang penyimpanannya terkunci. Nilainya tetap disimpan di peramban bila
+     * memungkinkan; hanya bila keduanya gagal, akunnya bertahan selama sesi.
+     */
+    const dibuat = randomId();
+    tulisPenyimpananPeramban(dibuat);
+    return dibuat;
+  }
+}
+
+/** Membaca `localStorage` bila ada; null di lingkungan yang tidak punya. */
+function bacaPenyimpananPeramban(): string | null {
+  try {
+    const nilai = globalThis.localStorage?.getItem(ACCOUNT_KEY);
+    return nilai && nilai.length > 0 ? nilai : null;
+  } catch {
+    // Mode privat atau penyimpanan yang diblokir dapat melempar saat diakses.
+    return null;
+  }
+}
+
+/** Menulis `localStorage` bila ada; gagal dengan tenang bila tidak. */
+function tulisPenyimpananPeramban(nilai: string): void {
+  try {
+    globalThis.localStorage?.setItem(ACCOUNT_KEY, nilai);
+  } catch {
+    // Tidak dapat ditulis — bukan alasan menggagalkan permintaan.
   }
 }
