@@ -370,6 +370,40 @@ ${wizardSteps(2, worldId, stepOfDraft(draft))}
     <select name="categoryId" required data-kategori-pilih>${categoryOptions}</select>
   </label>
 
+  ${
+    /*
+     * Latar pembuka: satu lokasi dari kategori terpilih.
+     *
+     * Mesin cerita harus memilih SATU latar untuk adegan pembuka, dan ia tidak
+     * punya cara mengetahui yang mana: ia tidak memahami gambar, dan narasinya
+     * jarang menyebut nama lokasi. Dua tebakannya sudah terbukti salah —
+     * "Balkon Apartemen Saat Senja" untuk adegan kantor, lalu "Ruang Kelas"
+     * karena kata umum "ruang" muncul di keduanya.
+     *
+     * Hanya admin yang tahu, jadi pilihannya diminta di sini. Boleh dikosongkan:
+     * mesin lalu menebak seperti sebelumnya, dan admin dapat mengisinya kapan saja.
+     */
+    kategoriTerpilih
+      ? html`<label><span>Latar adegan pembuka</span>
+    <select name="openingLocationId" data-pembuka-pilih>
+      <option value="">— biarkan mesin memilih —</option>
+      ${masterLocations
+        .filter((location) => location.categoryId === kategoriTerpilih.categoryId && location.mediaId)
+        .map(
+          (location) =>
+            html`<option value="${inputValue(location.locationId)}"${
+              location.locationId === draft.openingLocationId ? ' selected' : ''
+            }>${esc(location.name)}</option>`,
+        )}
+    </select>
+  </label>
+  <p class="sub" style="margin-top:0">
+    Tempat cerita dimulai. Bila dikosongkan, mesin cerita menebak dari narasinya —
+    dan tebakannya sering salah.
+  </p>`
+      : ''
+  }
+
   <p class="sub" style="margin-top:0">
     Seluruh lokasi di kategori ini menjadi latar, berurut seperti di master. Lokasi yang
     belum punya gambar dilewati — angka di daftar di atas hanya menghitung yang bergambar.

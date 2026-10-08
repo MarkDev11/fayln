@@ -147,6 +147,15 @@ export type NPCPublicDTO = {
 
 export type WorldDetailDTO = WorldCatalogItem & {
   premise: string;
+  /**
+   * Lokasi tempat cerita DIMULAI, atau null bila admin belum memilih.
+   *
+   * Mesin cerita memakainya untuk memilih latar adegan pembuka. Tanpa ini ia
+   * hanya dapat menebak — dan dua tebakannya sudah terbukti salah di produksi:
+   * entri pertama menurut urutan master, lalu pencocokan kata yang tertipu kata
+   * umum seperti "ruang".
+   */
+  openingLocationId: string | null;
   locations: { locationId: string; label: string }[];
   characters: NPCPublicDTO[];
   assetManifest: AssetManifest;

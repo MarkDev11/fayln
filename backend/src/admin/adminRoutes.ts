@@ -1265,6 +1265,8 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       .object({
         worldId: z.string().trim().min(1),
         categoryId: z.string().trim().min(1),
+        // Boleh kosong: admin mungkin belum memutuskan adegan pembukanya.
+        openingLocationId: z.string().trim().optional().default(''),
         intent: z.enum(['next', 'draft']),
       })
       .safeParse(request.body);
@@ -1283,6 +1285,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       draft.worldId,
       draft.worldVersion,
       body.data.categoryId,
+      body.data.openingLocationId.length > 0 ? body.data.openingLocationId : null,
     );
 
     if (!hasil.ok) {

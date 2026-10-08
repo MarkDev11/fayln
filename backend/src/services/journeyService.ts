@@ -141,6 +141,18 @@ export class JourneyService {
       const context: StoryContext = {
         worldTitle: detail.title,
         premise: detail.premise,
+        /*
+         * Nama lokasi pembuka, BUKAN id-nya.
+         *
+         * Manifest aset tidak memuat `location_id`; penghubungnya adalah nama
+         * lokasi, yang disalin ke label latar saat latarnya dipungut. Mencocokkan
+         * lewat nama karena itu, dan bila lokasi pembukanya tidak ditemukan,
+         * mesin cerita kembali menebak seperti sebelumnya.
+         */
+        openingLocationId: detail.openingLocationId,
+        openingLocationLabel:
+          detail.locations.find((item) => item.locationId === detail.openingLocationId)?.label ??
+          null,
         characters: detail.characters,
         manifest: detail.assetManifest,
         personaName: command.persona.name,

@@ -28,6 +28,8 @@ type WorldVersionRow = {
   synopsis: string;
   premise: string;
   cover_asset_id: string;
+  /** Lokasi pembuka yang dipilih admin, atau null bila belum dipilih. */
+  opening_location_id: string | null;
   status: string;
   content_rating: string;
   published_at: Date | null;
@@ -520,6 +522,7 @@ export class CatalogRepository {
       title: versionRow.title,
       synopsis: versionRow.synopsis,
       premise: versionRow.premise,
+      openingLocationId: versionRow.opening_location_id ?? null,
       genres: genres as GenreId[],
       coverAssetId: versionRow.cover_asset_id,
       // Sampul sudah dirakit di atas sebagai `cover`; dipakai ulang, bukan
@@ -538,7 +541,7 @@ export class CatalogRepository {
   async findWorldVersionAt(worldId: string, worldVersion: number): Promise<WorldVersionRow | null> {
     const { rows } = await this.db.query<WorldVersionRow>(
       `SELECT world_id, world_version, title, synopsis, premise, cover_asset_id,
-              status, content_rating, published_at, created_at
+              opening_location_id, status, content_rating, published_at, created_at
        FROM world_versions
        WHERE world_id = $1 AND world_version = $2
        LIMIT 1`,

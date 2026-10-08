@@ -141,6 +141,13 @@ export type DraftWorld = {
    * langkah 2 membangun ulang daftarnya dari seluruh lokasi kategori ini.
    */
   locationCategoryId: string | null;
+  /**
+   * Lokasi tempat cerita DIMULAI, atau null bila admin belum memilih.
+   *
+   * Mesin cerita memakainya untuk memilih latar adegan pembuka. Tanpa ini ia
+   * hanya dapat menebak, dan tebakannya terbukti salah di produksi.
+   */
+  openingLocationId: string | null;
   backgroundCount: number;
   npcCount: number;
   createdAt: Date | string;
@@ -330,10 +337,11 @@ export class WorldDraftRepository {
       cover_asset_id: string;
       content_rating: string;
       location_category_id: string | null;
+      opening_location_id: string | null;
       created_at: Date | string;
     }>(
       `SELECT world_id, world_version, title, synopsis, premise, cover_asset_id,
-              content_rating, location_category_id, created_at
+              content_rating, location_category_id, opening_location_id, created_at
        FROM world_versions
        WHERE world_id = $1 AND status = 'draft'
        ORDER BY world_version DESC LIMIT 1`,
@@ -359,10 +367,11 @@ export class WorldDraftRepository {
       cover_asset_id: string;
       content_rating: string;
       location_category_id: string | null;
+      opening_location_id: string | null;
       created_at: Date | string;
     }>(
       `SELECT world_id, world_version, title, synopsis, premise, cover_asset_id,
-              content_rating, location_category_id, created_at
+              content_rating, location_category_id, opening_location_id, created_at
        FROM world_versions
        WHERE status = 'draft'
        ORDER BY created_at DESC`,
@@ -558,6 +567,8 @@ export class WorldDraftRepository {
     worldId: string,
     worldVersion: number,
     categoryId: string,
+    /** Lokasi pembuka yang dipilih admin; kosong berarti belum dipilih. */
+    openingLocationId: string | null = null,
   ): Promise<
     | { ok: true; count: number; skipped: number }
     | { ok: false; reason: 'not-found' | 'no-locations' | 'limit' }
@@ -605,10 +616,17 @@ export class WorldDraftRepository {
         return { ok: false, reason: 'limit' as const };
       }
 
+      /*
+       * Lokasi pembuka ikut disimpan, dan SENGAJA boleh kosong.
+       *
+       * Kosong berarti admin belum memilih; mesin cerita lalu menebak seperti
+       * sebelumnya. Menolak simpan karena ini kosong akan memaksa admin memilih
+       * sesuatu yang mungkin belum ia putuskan.
+       */
       await client.query(
-        `UPDATE world_versions SET location_category_id = $3
+        `UPDATE world_versions SET location_category_id = $3, opening_location_id = $4
          WHERE world_id = $1 AND world_version = $2 AND status = 'draft'`,
-        [worldId, worldVersion, categoryId],
+        [worldId, worldVersion, categoryId, openingLocationId],
       );
 
       await client.query(
@@ -1209,6 +1227,7 @@ export class WorldDraftRepository {
     cover_asset_id: string;
     content_rating: string;
     location_category_id: string | null;
+    opening_location_id: string | null;
     created_at: Date | string;
   }): Promise<DraftWorld> {
     const [genres, locales, backgrounds, npcs, cover, updated] = await Promise.all([
@@ -1230,6 +1249,7 @@ export class WorldDraftRepository {
       coverMediaId: cover,
       contentRating: row.content_rating as ContentRating,
       locationCategoryId: row.location_category_id,
+      openingLocationId: row.opening_location_id,
       genres: genres as GenreId[],
       locales: locales as ResponseLocale[],
       backgroundCount: backgrounds,

@@ -19,6 +19,14 @@ import type { AssetManifest, Beat, ChoiceOption, NPCPublicDTO, StoryEvent } from
 export type StoryContext = {
   worldTitle: string;
   premise: string;
+  /**
+   * Lokasi pembuka yang DIPILIH ADMIN, bila ada.
+   *
+   * Ini satu-satunya sumber yang benar-benar tahu;  hanya menebak.
+   */
+  openingLocationId?: string | null;
+  /** Nama lokasi pembuka; dipakai mencocokkan label latar. */
+  openingLocationLabel?: string | null;
   characters: NPCPublicDTO[];
   manifest: AssetManifest;
   personaName: string;
@@ -189,10 +197,27 @@ function kataBermakna(teks: string): string[] {
 export function pilihLatar(
   manifest: AssetManifest,
   teks: string,
+  labelPilihan?: string | null,
 ): string | undefined {
   const latar = manifest.backgrounds;
   if (latar.length === 0) {
     return undefined;
+  }
+
+  /*
+   * Pilihan admin MENANG atas tebakan apa pun.
+   *
+   * Ia satu-satunya sumber yang benar-benar tahu; pencocokan kata di bawah hanya
+   * menebak, dan sudah terbukti tertipu kata umum seperti "ruang" — narasi
+   * "ruang terbuka" cocok dengan label "Ruang Kelas Penuh Cahaya".
+   */
+  if (labelPilihan) {
+    const cocok = latar.find(
+      (item) => item.label.trim().toLowerCase() === labelPilihan.trim().toLowerCase(),
+    );
+    if (cocok) {
+      return cocok.assetId;
+    }
   }
 
   const kataCerita = new Set(kataBermakna(teks));
@@ -390,7 +415,11 @@ export class DeterministicStoryEngine implements StoryEngine {
      * memahami gambar. Tetapi tebakan yang memakai bukti mengalahkan entri
      * pertama yang jelas salah.
      */
-    const latarPembuka = pilihLatar(context.manifest, context.premise);
+    const latarPembuka = pilihLatar(
+      context.manifest,
+      context.premise,
+      context.openingLocationLabel ?? null,
+    );
     if (latarPembuka) {
       events.push({ type: 'setBackground', assetId: latarPembuka });
     }
