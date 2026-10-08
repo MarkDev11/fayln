@@ -64,7 +64,9 @@ export const elysia: NPCPublicDTO = {
   npcId: 'npc_elysia',
   name: 'Elysia',
   role: 'Atasan langsung',
-  traits: ['Tegas', 'Menjaga batas profesional', 'Sinis bila terusik'],
+  // Jiwa berupa paragraf: apa yang mendorongnya, dan di mana ia bertentangan.
+  soul:
+    'Tegas dan tidak pernah mengulang perintah dua kali. Ia menjaga batas profesional seperti garis yang tidak boleh disentuh siapa pun — termasuk dirinya sendiri. Sinismenya muncul hanya bila seseorang mencoba mendekat tanpa alasan yang jelas, dan ia sendiri tidak pernah yakin apakah itu benteng atau kebiasaan lama.',
   publicBackstory:
     'Elysia memimpin tim operasional dan dikenal menuntut standar tinggi. Ia mengenal protagonis dari masa kuliah, sebuah bab yang tidak pernah ia bahas di kantor.',
   initialRelation: 'normal',
@@ -76,7 +78,8 @@ export const leo: NPCPublicDTO = {
   npcId: 'npc_leo',
   name: 'Leo',
   role: 'Rekan senior',
-  traits: ['Santai', 'Peka suasana', 'Suka menengahi'],
+  soul:
+    'Santai sampai orang lain mengira ia tidak peduli, padahal ia membaca suasana ruangan lebih cepat daripada siapa pun. Ia selalu menengahi — bukan karena ingin disukai, tetapi karena pertengkaran membuatnya gelisah dan ia tidak pernah menjelaskan mengapa.',
   publicBackstory:
     'Leo sudah tiga tahun di tim yang sama dan mengenal Elysia maupun protagonis sejak masa kuliah. Ia satu-satunya orang yang berani menggoda keduanya.',
   initialRelation: 'normal',
@@ -149,7 +152,8 @@ export const worldLenteraTerakhir: WorldDetailDTO = {
       npcId: 'npc_penjaga',
       name: 'Penjaga Lentera',
       role: 'Mentor',
-      traits: ['Pendiam', 'Hati-hati'],
+      soul:
+        'Pendiam karena terbiasa mengamati, bukan karena tidak peduli. Ia menyimpan pertanyaannya sampai yakin jawabannya tidak akan menyakiti siapa pun — dan karena itu sering terlambat bertanya.',
       publicBackstory: 'Ia menjaga lentera desa sejak lama dan menyimpan catatan yang tidak dibaca siapa pun.',
       initialRelation: 'normal',
       expressions: ['netral', 'khawatir'],
@@ -182,7 +186,8 @@ export const worldRapatTengahMalam: WorldDetailDTO = {
       npcId: 'npc_rekan_baru',
       name: 'Rekan Baru',
       role: 'Rekan sekantor',
-      traits: ['Cemas', 'Detail'],
+      soul:
+        'Cemas pada hal-hal kecil dan sangat teliti pada hal-hal besar. Ia memeriksa ulang pekerjaannya bukan karena kurang percaya diri, tetapi karena pernah sekali kehilangan sesuatu yang tidak pernah ia periksa.',
       publicBackstory: 'Ia ikut rapat itu dan sejak malam tersebut tidak mau membicarakannya.',
       initialRelation: 'normal',
       expressions: ['cemas', 'netral'],

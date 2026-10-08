@@ -17,7 +17,7 @@ export type InspectorCharacter = {
   npcId: string;
   name: string;
   role: string;
-  traits: string[];
+  soul: string;
   relation: RelationEntry['status'];
   reasonPublic: string;
 };
@@ -99,12 +99,21 @@ export function NPCInspector({ visible, characters, onClose, testID }: NPCInspec
                   {character.role}
                 </Text>
 
-                {character.traits.length > 0 ? (
+                {/*
+                  * Jiwa ditampilkan sebagai PARAGRAF, bukan daftar kata.
+                  *
+                  * Bentuk lamanya adalah `traits` — deretan kata yang dipisah titik
+                  * tengah. Jiwa menggantikannya, dan ia satu sampai dua paragraf:
+                  * apa yang mendorong orang ini, apa yang ditakutinya, bagaimana ia
+                  * bicara. `join(' · ')` karena itu tidak lagi tepat — ia akan
+                  * merangkai kalimat menjadi satu baris panjang yang tidak terbaca.
+                  */}
+                {character.soul.trim().length > 0 ? (
                   <View style={styles.traitBlock}>
                     <Text variant="caption" tone="secondary">
-                      {t('inspector.traits')}
+                      {t('inspector.soul')}
                     </Text>
-                    <Text variant="small">{character.traits.join(' · ')}</Text>
+                    <Text variant="small">{character.soul}</Text>
                   </View>
                 ) : null}
 

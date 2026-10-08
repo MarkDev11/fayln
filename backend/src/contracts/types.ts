@@ -123,7 +123,14 @@ export type NPCPublicDTO = {
   npcId: string;
   name: string;
   role: string;
-  traits: string[];
+  /**
+   * Jiwa: kepribadian mendalam karakter pada dunia ini.
+   *
+   * Menggantikan `traits` (daftar kata) sejak 7 Oktober 2026. Satu paragraf dapat
+   * menyatakan "pendiam" sekaligus MENGAPA ia pendiam, sedangkan daftar kata tidak
+   * dapat — dan mesin cerita memakai ini untuk menggambarkan dialognya.
+   */
+  soul: string;
   publicBackstory: string;
   initialRelation: RelationStatus;
   expressions: string[];

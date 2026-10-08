@@ -163,7 +163,7 @@ function PlayerView({ session }: { session: JourneySession }) {
           npcId,
           name: definition.name,
           role: definition.role,
-          traits: definition.traits,
+          soul: definition.soul,
           relation: relation?.status ?? definition.initialRelation,
           reasonPublic: relation?.reasonPublic ?? '',
         };

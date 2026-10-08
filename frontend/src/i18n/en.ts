@@ -301,7 +301,7 @@ export const en: Dictionary = {
   'inspector.title': 'Characters',
   'inspector.close': 'Close character list',
   'inspector.relation': 'Relationship',
-  'inspector.traits': 'Traits',
+  'inspector.soul': 'Soul',
   'inspector.reason': 'Reason for change',
   'inspector.empty': 'No character has appeared in this journey yet.',
 

@@ -313,7 +313,7 @@ export const id = {
   'inspector.title': 'Tokoh',
   'inspector.close': 'Tutup daftar tokoh',
   'inspector.relation': 'Hubungan',
-  'inspector.traits': 'Sifat',
+  'inspector.soul': 'Jiwa',
   'inspector.reason': 'Alasan perubahan',
   'inspector.empty': 'Belum ada tokoh yang muncul di perjalanan ini.',
 

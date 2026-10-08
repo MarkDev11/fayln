@@ -78,8 +78,13 @@ export type NPCPublicDTO = {
   npcId: string;
   name: string;
   role: string;
-  /** Trait yang boleh diketahui sebelum bermain. */
-  traits: string[];
+  /**
+   * Jiwa: kepribadian mendalam karakter ini di dunia ini.
+   *
+   * Menggantikan `traits` sejak 7 Oktober 2026. Satu paragraf dapat menyatakan
+   * "pendiam" sekaligus MENGAPA ia pendiam.
+   */
+  soul: string;
   /** Backstory versi publik; tidak memuat rahasia kanon. */
   publicBackstory: string;
   /** Hubungan awal yang ditetapkan admin, bukan hubungan perjalanan pemain. */

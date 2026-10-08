@@ -510,10 +510,11 @@ export class CatalogRepository {
       name: string;
       role: string;
       public_backstory: string;
+      soul: string;
       initial_relation: string;
       default_portrait_asset_id: string;
     }>(
-      `SELECT npc_id, name, role, public_backstory, initial_relation, default_portrait_asset_id
+      `SELECT npc_id, name, role, public_backstory, soul, initial_relation, default_portrait_asset_id
        FROM world_characters
        WHERE world_id = $1 AND world_version = $2
        ORDER BY position ASC`,
@@ -524,16 +525,23 @@ export class CatalogRepository {
       return [];
     }
 
-    const [traits, expressions] = await Promise.all([
-      this.characterChildList('world_character_traits', 'trait', worldId, worldVersion),
-      this.characterChildList('world_character_expressions', 'expression', worldId, worldVersion),
-    ]);
+    /*
+     * Hanya ekspresi yang dibaca. Tabel `world_character_traits` tidak lagi dipakai
+     * sejak jiwa (soul) menggantikan sifat — dan membacanya akan mengirim daftar
+     * kosong ke pemain, yang lebih buruk daripada tidak mengirim apa pun.
+     */
+    const expressions = await this.characterChildList(
+      'world_character_expressions',
+      'expression',
+      worldId,
+      worldVersion,
+    );
 
     return rows.map((row) => ({
       npcId: row.npc_id,
       name: row.name,
       role: row.role,
-      traits: traits.get(row.npc_id) ?? [],
+      soul: row.soul,
       publicBackstory: row.public_backstory,
       initialRelation: row.initial_relation as RelationStatus,
       expressions: expressions.get(row.npc_id) ?? [],
