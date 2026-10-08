@@ -519,27 +519,38 @@ export async function describeCharacterPortrait(
  *
  * `@<nama>` adalah KARAKTER LAIN DI DUNIA INI. Pemilik produk memintanya supaya
  * model tahu bahwa `@rina` menunjuk orang yang memang ada di dunia itu, bukan
- * nama yang dikarang. Tanpa daftarnya, model akan mengira `@rina` salah ketik
- * atau nama asing — dan menuliskannya sebagai "seseorang" atau mengabaikannya.
+ * nama yang dikarang.
  *
- * Karena itu daftar nama yang SAH ikut dikirim ke model. Nama di luar daftar itu
- * BUKAN token, dan model dilarang memperlakukannya sebagai karakter.
+ * ---------------------------------------------------------------------------
+ * TOKENNYA SAH WALAU KARAKTERNYA BELUM DIBUAT
+ * ---------------------------------------------------------------------------
+ * Admin sering menulis `@daniel` lebih dulu, lalu membuat Daniel setelahnya.
+ * Karena itu daftar karakter yang sudah ada adalah PETUNJUK, bukan daftar putih:
+ * model TIDAK BOLEH menolak token yang belum ada di sana.
+ *
+ * Aturan pertama saya menjadikannya daftar putih — "never use one that is not in
+ * the list" — dan itu salah. Ia memaksa admin membuat karakternya lebih dulu,
+ * padahal urutan sebaliknya sama masuk akal, dan yang belum dibuat pun tetap
+ * dapat diperlakukan sebagai NPC.
  */
 const ATURAN_KARAKTER = [
   '1. @user is the NAME OF THE PLAYER. Write it EXACTLY as "@user", never replace',
   '   it with a name, never with "kamu", never with "you". The system substitutes',
   '   the real player name when the story runs.',
-  '2. "@" followed by a name is ANOTHER CHARACTER IN THIS WORLD — an NPC that',
-  '   already exists here. Write those tokens EXACTLY as given, e.g. "@rina".',
-  '   The system substitutes that character\'s name in this world. NEVER invent a',
-  '   new @token, and NEVER use one that is not in the list you were given.',
-  '3. Any OTHER person must be referred to by their ROLE or relationship to',
+  '2. "@" followed by a name is A CHARACTER IN THIS WORLD — someone who exists',
+  '   here, or who will be created later. Write those tokens EXACTLY as given,',
+  '   e.g. "@rina", "@daniel". The system substitutes that character\'s name in',
+  '   this world.',
+  '3. A @token is VALID EVEN IF THAT CHARACTER DOES NOT EXIST YET. Do not refuse,',
+  '   rename, or drop it because you cannot find it. Treat it as an NPC of this',
+  '   world and keep writing.',
+  '4. Any OTHER person must be referred to by their ROLE or relationship to',
   '   @user: "bosmu", "sahabatmu", "mantan pacarmu". Never write a bare name that',
   '   was not given to you as a @token.',
-  '4. Write in Indonesian, second person, addressing the player as @user.',
-  '5. Do not mention that this is a game, a novel, or that you are an AI.',
+  '5. Write in Indonesian, second person, addressing the player as @user.',
+  '6. Do not mention that this is a game, a novel, or that you are an AI.',
   '   Write as if the situation were real.',
-  '6. No closing line like "pilihan ada di tanganmu".',
+  '7. No closing line like "pilihan ada di tanganmu".',
 ].join('\n');
 
 /**
@@ -640,8 +651,9 @@ export async function generateCharacterText(
     input.others.length > 0
       ? [
           '',
-          'Karakter lain yang SUDAH ada di dunia ini — hanya nama-nama inilah yang',
-          'sah ditulis sebagai token @nama:',
+          'Karakter yang SUDAH dibuat di dunia ini — mereka ini nyata, bukan nama',
+          'yang dikarang. Daftar ini PETUNJUK, bukan batas: token @nama di luar',
+          'daftar ini tetap sah, karena karakternya mungkin baru dibuat nanti.',
           ...input.others.map((nama) => `  @${nama.toLowerCase()}`),
         ].join('\n')
       : '';

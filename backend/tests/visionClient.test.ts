@@ -933,7 +933,7 @@ describe('teks karakter', () => {
      * seed-nya sendiri juga memuat "@rina", sehingga pemeriksaan yang longgar
      * akan lulus walaupun daftarnya tidak pernah dikirim.
      */
-    expect(isiPesan, 'daftar karakter lain tidak dikirim').toContain('hanya nama-nama inilah yang');
+    expect(isiPesan, 'daftar karakter lain tidak dikirim').toContain('SUDAH dibuat di dunia ini');
     expect(isiPesan).toContain('  @rina');
     expect(isiPesan).toContain('Elysia');
     expect(isiPesan).toContain('bosmu');
@@ -954,7 +954,9 @@ describe('teks karakter', () => {
       expect(prompt, `${kind}: tidak menjelaskan bahwa itu nama pemain`).toContain('NAME OF THE PLAYER');
       expect(prompt, `${kind}: tidak melarang penggantian dengan kamu`).toContain('never with "kamu"');
       expect(prompt, `${kind}: tidak menyebut peran untuk tokoh lain`).toContain('ROLE');
-      expect(prompt, `${kind}: tidak mengatur token @nama`).toContain('ANOTHER CHARACTER IN THIS WORLD');
+      expect(prompt, `${kind}: tidak mengatur token @nama`).toContain('A CHARACTER IN THIS WORLD');
+      // Token yang belum dibuat tetap SAH — admin sering menulis @daniel lebih dulu.
+      expect(prompt, `${kind}: token yang belum dibuat akan ditolak`).toContain('DOES NOT EXIST YET');
     }
   });
 
