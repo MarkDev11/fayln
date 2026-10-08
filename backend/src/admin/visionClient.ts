@@ -575,9 +575,8 @@ export function characterSystemPrompt(kind: 'background' | 'soul'): string {
     '',
     '  {"text": "<the text itself, with \\n for line breaks>"}',
     '',
-    'The JSON object must be the LAST thing you write. Anything you think before',
-    'it is ignored, so you may reason freely — but the answer itself belongs inside',
-    'the "text" field.',
+    'Write the JSON object DIRECTLY. Do not explain your reasoning, do not restate',
+    'these instructions, and do not describe what you are about to write.',
   ].join('\n');
 }
 
@@ -681,8 +680,23 @@ export async function generateCharacterText(
  * premis). Dengan batas 2.000 token, model yang bernalar akan menghabiskan
  * jatahnya untuk berpikir dan jawabannya terpotong di tengah — persis kegagalan
  * yang sudah pernah terjadi pada tugas lokasi.
+ *
+ * DINAIKKAN dari 8.000 pada 8 Oktober 2026, setelah model yang sama menghabiskan
+ * SELURUH 8.000 token untuk bernalar tentang satu latar belakang karakter, dan
+ * jawabannya terpotong sebelum objek JSON-nya sempat ditulis:
+ *
+ *   "…never replace with actual name or pronouns l"
+ *
+ * Jawaban yang terpotong di tengah kalimat adalah tanda jatahnya habis, bukan
+ * tanda modelnya menolak. 16.000 memberi ruang bagi model yang bernalar panjang
+ * tanpa membiarkannya tumbuh tanpa batas — dan model yang tidak bernalar tetap
+ * hanya memakai sebanyak yang ia butuhkan.
+ *
+ * Prompt-nya juga tidak lagi MENGAJAK bernalar: "berpikir dulu bila perlu" pada
+ * tugas teks bebas pernah membuat penalarannya tersimpan sebagai isi. Keduanya
+ * diperbaiki bersama karena keduanya menyumbang kegagalan yang sama.
  */
-const MAX_TEXT_TOKENS = 8_000;
+const MAX_TEXT_TOKENS = 16_000;
 
 /**
  * Batas waktu untuk tugas TEKS.

@@ -961,6 +961,31 @@ describe('teks karakter', () => {
     expect(background).toContain('EXPAND');
   });
 
+  it('tidak mengajak model bernalar, dan memberi jatah token yang cukup', async () => {
+    /*
+     * DUA KEGAGALAN PRODUKSI 8 OKTOBER 2026, dan keduanya bermuara pada hal yang
+     * sama: penalaran model.
+     *
+     *   1. Prompt menyuruh "berpikir dulu bila perlu" pada tugas TEKS BEBAS,
+     *      sehingga penalarannya tersimpan sebagai isi cerita.
+     *   2. Jatah 8.000 token habis dipakai bernalar, sehingga jawabannya
+     *      terpotong di tengah kalimat sebelum objek JSON-nya sempat ditulis.
+     *
+     * Uji ini menjaga KEDUANYA, karena memperbaiki satu saja tidak menolong:
+     * prompt yang tidak mengajak bernalar tetap dapat dihabiskan model yang
+     * bernalar sendiri.
+     */
+    const prompt = characterSystemPrompt('background');
+    expect(prompt, 'prompt masih mengajak bernalar').not.toMatch(/think first|reason freely/i);
+    expect(prompt, 'prompt tidak melarang penjelasan').toMatch(/do not explain your reasoning/i);
+
+    const { calls, impl } = fakeFetch(200, berisiTeks("Isi."));
+    await generateCharacterText(TEKS, KUNCI, MASUKAN, impl);
+
+    const body = JSON.parse(String(calls[0]?.init.body)) as { max_tokens?: number };
+    expect(body.max_tokens, 'jatah token terlalu kecil untuk model yang bernalar').toBeGreaterThanOrEqual(16_000);
+  });
+
   it('menolak jawaban yang tidak berisi objek JSON yang diminta', async () => {
     /*
      * Model yang menjawab dengan teks biasa — misalnya hanya penalarannya saja,
