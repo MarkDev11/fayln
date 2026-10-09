@@ -1,5 +1,13 @@
 import React, { useEffect, useState } from 'react';
-import { Modal, Pressable, ScrollView, StyleSheet, TextInput, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Modal,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  TextInput,
+  View,
+} from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Button } from '@/components/Button';
@@ -209,13 +217,54 @@ export function StartJourneySheet({
               </Text>
             </View>
           ) : null}
+
+          {/*
+            Keadaan "sedang menyusun cerita".
+            Sebelum ini, selama 19–24 detik pembuatan perjalanan, isi lembar
+            tidak berubah sama sekali kecuali tombol yang memudar — tidak ada
+            yang memberi tahu pemain bahwa ada sesuatu yang sedang terjadi.
+            `accessibilityLiveRegion` dipakai agar pembaca layar mengumumkan
+            perubahannya, bukan hanya pemain yang melihat layar.
+          */}
+          {submitting ? (
+            <View
+              testID="persona-creating"
+              accessible
+              accessibilityLiveRegion="polite"
+              accessibilityLabel={`${t('persona.creating')} ${t('persona.creatingHint')}`}
+              style={[styles.creating, { backgroundColor: colors.bgSurface, borderColor: colors.line }]}
+            >
+              <View style={styles.creatingRow}>
+                <ActivityIndicator size="small" color={colors.accent} />
+                <Text variant="small" weight="700">
+                  {t('persona.creating')}
+                </Text>
+              </View>
+              <Text variant="caption" tone="secondary">
+                {t('persona.creatingHint')}
+              </Text>
+            </View>
+          ) : null}
         </ScrollView>
 
         <View style={styles.actions}>
-          <Button label={t('persona.cancel')} onPress={onCancel} variant="ghost" />
+          {/*
+            Batal dikunci selama pembuatan berjalan.
+            Menutup lembar di tengah jalan tidak membatalkan permintaan yang
+            sudah berangkat — perjalanannya tetap terbuat, dan pemain yang
+            mengira sudah membatalkan akan menemukan perjalanan hantu di dunia
+            itu. Lebih baik tombolnya mati daripada menjanjikan hal yang tidak
+            bisa ditepati.
+          */}
+          <Button
+            label={t('persona.cancel')}
+            onPress={onCancel}
+            variant="ghost"
+            disabled={submitting}
+          />
           <View style={styles.primarySlot}>
             <Button
-              label={t('persona.confirm')}
+              label={submitting ? t('persona.creating') : t('persona.confirm')}
               onPress={handleConfirm}
               loading={submitting}
               disabled={submitting}
@@ -271,6 +320,17 @@ const styles = StyleSheet.create({
     padding: space.md,
     borderRadius: radius.card,
     borderWidth: StyleSheet.hairlineWidth,
+  },
+  creating: {
+    padding: space.md,
+    borderRadius: radius.card,
+    borderWidth: StyleSheet.hairlineWidth,
+    gap: space.xs,
+  },
+  creatingRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: space.sm,
   },
   actions: {
     flexDirection: 'row',

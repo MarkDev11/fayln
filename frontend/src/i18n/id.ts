@@ -368,6 +368,17 @@ export const id = {
   'persona.oneActivePerWorld':
     'Kamu sudah punya perjalanan aktif di dunia ini. Lanjutkan perjalanan itu alih-alih membuat yang baru.',
   'persona.startFailed': 'Perjalanan gagal dibuat. Coba lagi sebentar lagi.',
+  /*
+   * Keadaan "sedang dibuat" untuk pembuatan perjalanan.
+   *
+   * Perjalanan butuh 19–24 detik (terukur), dan sebelumnya tombol hanya diam
+   * dalam keadaan nonaktif selama itu — terbaca sebagai aplikasi yang membeku,
+   * bukan sebagai aplikasi yang bekerja. Kalimatnya menyebut LANGKAH YANG SEDANG
+   * BERJALAN dan lamanya, karena pemain yang tahu ada yang sedang dikerjakan
+   * jauh lebih sabar daripada pemain yang melihat tombol mati.
+   */
+  'persona.creating': 'Menyusun cerita…',
+  'persona.creatingHint': 'Ini biasanya 20 detik. Tetap di halaman ini, ya.',
 
   'storage.persistent': 'Posisi baca tersimpan di perangkat ini.',
   'storage.memoryOnly':

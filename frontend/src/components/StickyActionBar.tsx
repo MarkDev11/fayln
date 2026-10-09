@@ -12,6 +12,19 @@ export type StickyActionBarProps = {
   primaryLabel: string;
   onPrimary: () => void;
   primaryDisabled?: boolean;
+  /**
+   * Aksi primer sedang berjalan: tombol menampilkan indikator dan menolak ketukan.
+   *
+   * Dipisahkan dari `primaryDisabled` karena artinya berbeda. `primaryDisabled`
+   * berarti "aksi ini belum tersedia" — pemain tidak boleh diberi harapan bahwa
+   * menunggu akan mengubahnya, jadi tidak ada indikator. `busy` berarti "aksi ini
+   * SEDANG dikerjakan", dan justru sebaliknya: diamnya tombol tanpa indikator
+   * itulah yang membuat pekerjaan sepanjang 20 detik terasa seperti aplikasi
+   * yang membeku.
+   */
+  busy?: boolean;
+  /** Uraian tambahan saat `busy`; dibacakan pembaca layar, tidak tampil di tombol. */
+  busyLabel?: string;
   /** Aksi sekunder, misalnya Hapus. Ditempatkan terpisah agar tidak salah tekan. */
   secondaryIcon?: IconName;
   secondaryLabel?: string;
@@ -31,6 +44,8 @@ export function StickyActionBar({
   primaryLabel,
   onPrimary,
   primaryDisabled = false,
+  busy = false,
+  busyLabel,
   secondaryIcon,
   secondaryLabel,
   onSecondary,
@@ -53,7 +68,16 @@ export function StickyActionBar({
       ]}
     >
       <View style={styles.primarySlot}>
-        <Button label={primaryLabel} onPress={onPrimary} disabled={primaryDisabled} fullWidth />
+        <Button
+          label={primaryLabel}
+          onPress={onPrimary}
+          // `busy` menonaktifkan lewat `loading`, jadi `primaryDisabled` tidak
+          // perlu digandakan di sini — `Button` sudah memperlakukan keduanya sama.
+          disabled={primaryDisabled}
+          loading={busy}
+          accessibilityHint={busy ? busyLabel : undefined}
+          fullWidth
+        />
       </View>
       {secondaryIcon && onSecondary ? (
         <View style={styles.secondarySlot}>

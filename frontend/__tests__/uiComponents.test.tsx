@@ -4,6 +4,7 @@ import { View } from 'react-native';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Icon, type IconName } from '@/components/Icon';
+import { StickyActionBar } from '@/components/StickyActionBar';
 import { TestProviders } from '@/testing/TestProviders';
 
 /**
@@ -126,5 +127,65 @@ describe('ConfirmDialog', () => {
     );
 
     expect(view.queryByTestId('hidden-confirm')).toBeNull();
+  });
+});
+
+describe('StickyActionBar', () => {
+  const baseProps = {
+    primaryLabel: 'Mulai Perjalanan',
+    onPrimary: () => {},
+  };
+
+  it('merender label primer apa adanya', async () => {
+    const view = await render(
+      <TestProviders>
+        <StickyActionBar {...baseProps} testID="bar" />
+      </TestProviders>,
+    );
+
+    expect(view.getByText('Mulai Perjalanan')).toBeTruthy();
+  });
+
+  /*
+   * `busy` dan `disabled` sengaja dibedakan. Pekerjaan sepanjang 20 detik yang
+   * hanya menonaktifkan tombol tanpa indikator apa pun terbaca sebagai aplikasi
+   * yang membeku — persis keluhan yang melahirkan keadaan ini.
+   */
+  it('menonaktifkan aksi primer selama sibuk', async () => {
+    const onPrimary = jest.fn();
+    const view = await render(
+      <TestProviders>
+        <StickyActionBar {...baseProps} busy onPrimary={onPrimary} testID="busy" />
+      </TestProviders>,
+    );
+
+    /*
+     * Dicari lewat LABEL AKSESIBILITAS, bukan lewat teks tombolnya.
+     *
+     * Saat `busy`, `Button` mengganti isi tombol dengan indikator dan tidak lagi
+     * merender `Text` labelnya — jadi labelnya memang tidak ada sebagai teks di
+     * pohon tampilan. Label itu tetap ada sebagai `accessibilityLabel`, dan itu
+     * justru yang harus bertahan: pemain yang memakai pembaca layar tetap harus
+     * dapat menemukan tombolnya.
+     */
+    const button = view.getByLabelText('Mulai Perjalanan');
+    expect(button.props.accessibilityState.busy).toBe(true);
+
+    await fireEvent.press(button);
+
+    expect(onPrimary).not.toHaveBeenCalled();
+  });
+
+  it('tetap menonaktifkan aksi primer saat tidak tersedia', async () => {
+    const onPrimary = jest.fn();
+    const view = await render(
+      <TestProviders>
+        <StickyActionBar {...baseProps} primaryDisabled onPrimary={onPrimary} testID="off" />
+      </TestProviders>,
+    );
+
+    await fireEvent.press(view.getByText('Mulai Perjalanan'));
+
+    expect(onPrimary).not.toHaveBeenCalled();
   });
 });

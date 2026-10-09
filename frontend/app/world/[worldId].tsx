@@ -283,9 +283,27 @@ export default function WorldDetailScreen() {
 
       <StickyActionBar
         testID="world-action-bar"
-        primaryLabel={isPlayable ? t('detail.startJourney') : t('detail.unavailable')}
+        /*
+         * Label primer berubah selama pembuatan.
+         *
+         * Ini jalur yang paling sering terlihat: pemain dengan profil lengkap
+         * tidak pernah membuka lembar persona, jadi selama 19–24 detik
+         * pembuatan perjalanan satu-satunya umpan baliknya adalah tombol ini.
+         * Karena itu labelnya menyebut apa yang sedang dikerjakan, bukan
+         * sekadar menjadi nonaktif.
+         *
+         * `disabled` ditulis eksplisit walau `loading` sudah menonaktifkan
+         * tombolnya: pembuatan perjalanan TIDAK idempoten pada lapisan UI ini —
+         * menekan dua kali akan mengirim dua operasi berbeda — sehingga niat
+         * "matikan selama berjalan" lebih baik terbaca langsung di sini.
+         */
+        primaryLabel={
+          creating ? t('persona.creating') : isPlayable ? t('detail.startJourney') : t('detail.unavailable')
+        }
+        busyLabel={t('persona.creatingHint')}
         onPrimary={onStartJourney}
-        primaryDisabled={!isPlayable}
+        busy={creating}
+        primaryDisabled={!isPlayable || creating}
       />
 
       <StartJourneySheet

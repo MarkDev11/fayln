@@ -239,4 +239,72 @@ describe('StartJourneySheet', () => {
       responseLocale: 'id-ID',
     });
   });
+
+  /*
+   * Pembuatan perjalanan butuh 19–24 detik (terukur). Selama itu lembar ini
+   * dulu tidak berubah sama sekali selain tombol yang memudar — terbaca sebagai
+   * aplikasi yang membeku. Uji di bawah menuntut umpan balik yang NYATA, bukan
+   * sekadar "tidak ada galat".
+   */
+  it('menampilkan keadaan menyusun cerita selama pembuatan berjalan', async () => {
+    const view = await render(
+      <TestProviders>
+        <StartJourneySheet {...baseProps} submitting />
+      </TestProviders>,
+    );
+
+    expect(view.getByTestId('persona-creating')).toBeTruthy();
+    expect(view.getByText('Menyusun cerita…')).toBeTruthy();
+    // Lamanya disebut supaya pemain tahu ini wajar, bukan tanda aplikasi macet.
+    expect(view.getByText('Ini biasanya 20 detik. Tetap di halaman ini, ya.')).toBeTruthy();
+  });
+
+  it('TIDAK menampilkan keadaan menyusun cerita saat diam', async () => {
+    // Pasangan wajib: tanpa uji ini, panel yang selalu tampil akan lolos juga.
+    const view = await render(
+      <TestProviders>
+        <StartJourneySheet {...baseProps} />
+      </TestProviders>,
+    );
+
+    expect(view.queryByTestId('persona-creating')).toBeNull();
+  });
+
+  /*
+   * Menutup lembar tidak membatalkan permintaan yang sudah berangkat —
+   * perjalanannya tetap terbuat. Batal yang tetap dapat ditekan akan
+   * menjanjikan pembatalan yang tidak bisa ditepati, lalu meninggalkan
+   * perjalanan hantu di dunia itu.
+   */
+  it('mengunci Batal selama pembuatan berjalan', async () => {
+    const onCancel = jest.fn();
+    const view = await render(
+      <TestProviders>
+        <StartJourneySheet {...baseProps} submitting onCancel={onCancel} />
+      </TestProviders>,
+    );
+
+    await fireEvent.press(view.getByText('Batal'));
+
+    expect(onCancel).not.toHaveBeenCalled();
+  });
+
+  it('mengirim hanya satu persona walau konfirmasi ditekan dua kali', async () => {
+    const onConfirm = jest.fn();
+    const view = await render(
+      <TestProviders>
+        <StartJourneySheet
+          {...baseProps}
+          initialName="Arfan"
+          initialAge={24}
+          submitting
+          onConfirm={onConfirm}
+        />
+      </TestProviders>,
+    );
+
+    await fireEvent.press(view.getByTestId('persona-confirm'));
+
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
 });

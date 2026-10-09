@@ -356,6 +356,9 @@ export const en: Dictionary = {
   'persona.oneActivePerWorld':
     'You already have an active journey in this world. Continue that one instead of starting a new one.',
   'persona.startFailed': 'The journey could not be created. Try again shortly.',
+  /* See the Indonesian dictionary for why this state exists at all. */
+  'persona.creating': 'Composing your story…',
+  'persona.creatingHint': 'This usually takes 20 seconds. Stay on this page.',
 
   'storage.persistent': 'Your reading position is saved on this device.',
   'storage.memoryOnly':
