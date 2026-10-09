@@ -8,6 +8,7 @@ import {
   AGE_MIN,
   EMPTY_PROFILE,
   NAME_MAX,
+  adoptAccountFields,
   isProfileComplete,
   normalizeProfile,
   validateAge,
@@ -165,6 +166,84 @@ describe('ProfileProvider', () => {
     );
 
     expect(view.getByTestId('probe-persistent').props.children).toBe('memori');
+  });
+
+  /*
+   * ---------------------------------------------------------------------
+   * PROFIL DIISI DARI AKUN
+   * ---------------------------------------------------------------------
+   * Layar daftar menanyakan nama dan usia lalu menyimpannya di AKUN, sedangkan
+   * profil disimpan di PERANGKAT. Tanpa jembatan di antara keduanya, pemain
+   * yang baru mendaftar menemukan halaman Profil kosong padahal ia baru saja
+   * mengetikkan namanya — dan karena profil kosong berarti `isComplete` salah,
+   * lembar persona muncul lagi saat memulai cerita.
+   *
+   * Diuji lewat nilai murni `adoptAccountFields` di bawah, sebab itulah tempat
+   * SELURUH keputusannya berada. Provider hanya menyambungkannya.
+   */
+  it('TIDAK menimpa nama yang sudah diisi pemain', async () => {
+    const store = new InMemoryProfileStore();
+    await store.save({ name: 'Pilihan Sendiri', age: 30, responseLocale: 'id-ID' });
+
+    const view = await render(
+      <TestProviders>
+        <ProfileProvider store={store}>
+          <ProfileProbe />
+        </ProfileProvider>
+      </TestProviders>,
+    );
+
+    expect(view.getByTestId('probe-name').props.children).toBe('Pilihan Sendiri');
+    expect(view.getByTestId('probe-age').props.children).toBe('30');
+  });
+});
+
+describe('adoptAccountFields', () => {
+  const akun = { displayName: 'Verifikator', age: 24 };
+
+  it('mengisi nama dan usia yang masih kosong', () => {
+    const hasil = adoptAccountFields({ ...EMPTY_PROFILE }, akun);
+    expect(hasil.name).toBe('Verifikator');
+    expect(hasil.age).toBe(24);
+    // Bahasa respons tidak punya padanan di akun, jadi dibiarkan apa adanya.
+    expect(hasil.responseLocale).toBe('id-ID');
+  });
+
+  it('TIDAK menimpa nama yang sudah diisi pemain', () => {
+    const hasil = adoptAccountFields({ name: 'Arfan', age: null, responseLocale: 'id-ID' }, akun);
+    expect(hasil.name).toBe('Arfan');
+    // Usia tetap tertolong walau namanya sengaja berbeda.
+    expect(hasil.age).toBe(24);
+  });
+
+  it('TIDAK menimpa usia yang sudah diisi pemain', () => {
+    const hasil = adoptAccountFields({ name: '', age: 31, responseLocale: 'id-ID' }, akun);
+    expect(hasil.name).toBe('Verifikator');
+    expect(hasil.age).toBe(31);
+  });
+
+  it('mengabaikan usia akun yang di luar rentang yang sah', () => {
+    /*
+     * Akun lama dapat menyimpan usia di luar aturan yang berlaku sekarang.
+     * Menyalinnya mentah-mentah menghasilkan profil yang "terisi" tetapi tetap
+     * TIDAK lengkap: kolom berisi angka yang ditolak validasinya sendiri.
+     */
+    const hasil = adoptAccountFields({ ...EMPTY_PROFILE }, { displayName: 'X', age: 5 });
+    expect(hasil.name).toBe('X');
+    expect(hasil.age).toBeNull();
+  });
+
+  it('mengembalikan objek yang SAMA bila tidak ada yang berubah', () => {
+    // Pemanggil membandingkan dengan `===` untuk menghindari penulisan ulang
+    // penyimpanan, jadi identitasnya penting.
+    const awal = { name: 'Arfan', age: 24, responseLocale: 'id-ID' as const };
+    expect(adoptAccountFields(awal, akun)).toBe(awal);
+  });
+
+  it('menangani akun tanpa nama dan tanpa usia', () => {
+    const hasil = adoptAccountFields({ ...EMPTY_PROFILE }, { displayName: '', age: null });
+    expect(hasil.name).toBe('');
+    expect(hasil.age).toBeNull();
   });
 });
 

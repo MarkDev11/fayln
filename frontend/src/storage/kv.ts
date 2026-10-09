@@ -1,97 +1,42 @@
 /**
  * Penyimpanan kunci-nilai — bagian netral.
  *
- * Berkas ini TIDAK mengimpor modul native apa pun. Implementasi native ada di
- * `kv.native.ts`, dan Metro memilihnya otomatis pada iOS/Android.
+ * Berkas ini TIDAK mengimpor modul native apa pun, sehingga Metro dapat
+ * menggantinya dengan varian platform: `kv.web.ts` di web, `kv.native.ts` di
+ * iOS/Android.
  *
  * Mengapa dipisah: `require()` bersyarat tetap dianalisis Metro saat build, jadi
  * mengimpor expo-sqlite di sini akan menarik `expo-sqlite/web/worker.ts` ke bundel
  * web dan menggagalkan bundling.
+ *
+ * Primitif bersama (antarmuka, penyimpanan memori, pembaca/penulis JSON) tinggal
+ * di `kvCore.ts` dan DIEKSPOR ULANG dari sini, supaya pemanggil lama yang
+ * mengimpor `'@/storage/kv'` tetap bekerja tanpa perubahan.
+ *
+ * PENTING: berkas varian platform tidak boleh mengimpor dari `'./kv'`; lihat
+ * penjelasan lengkap beserta kegagalan nyatanya di kepala `kvCore.ts`.
  */
 
-export interface KeyValueStore {
-  /**
-   * Apakah data bertahan setelah aplikasi ditutup. UI tidak boleh mengklaim
-   * penyimpanan permanen bila nilainya `false`.
-   */
-  readonly isPersistent: boolean;
-  get(key: string): Promise<string | null>;
-  set(key: string, value: string): Promise<void>;
-  remove(key: string): Promise<void>;
-}
+export {
+  InMemoryKeyValueStore,
+  NativeKeyValueStore,
+  readJson,
+  writeJson,
+} from './kvCore';
+export type { KeyValueStore, NativeKeyValueStorage } from './kvCore';
 
-export class InMemoryKeyValueStore implements KeyValueStore {
-  readonly isPersistent = false;
-  private readonly records = new Map<string, string>();
-
-  async get(key: string): Promise<string | null> {
-    return this.records.get(key) ?? null;
-  }
-
-  async set(key: string, value: string): Promise<void> {
-    this.records.set(key, value);
-  }
-
-  async remove(key: string): Promise<void> {
-    this.records.delete(key);
-  }
-}
-
-/** Bentuk minimal penyimpanan native; sengaja tidak bergantung tipe paket. */
-export type NativeKeyValueStorage = {
-  getItem: (key: string) => Promise<string | null>;
-  setItem: (key: string, value: string) => Promise<void>;
-  removeItem: (key: string) => Promise<void>;
-};
-
-export class NativeKeyValueStore implements KeyValueStore {
-  readonly isPersistent = true;
-
-  constructor(private readonly storage: NativeKeyValueStorage) {}
-
-  get(key: string): Promise<string | null> {
-    return this.storage.getItem(key);
-  }
-
-  set(key: string, value: string): Promise<void> {
-    return this.storage.setItem(key, value);
-  }
-
-  remove(key: string): Promise<void> {
-    return this.storage.removeItem(key);
-  }
-}
-
-/** Membaca JSON dengan aman; data rusak dianggap tidak ada. */
-export async function readJson<T>(
-  store: KeyValueStore,
-  key: string,
-): Promise<T | null> {
-  const raw = await store.get(key);
-  if (!raw) {
-    return null;
-  }
-  try {
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
-  }
-}
-
-export async function writeJson<T>(
-  store: KeyValueStore,
-  key: string,
-  value: T,
-): Promise<void> {
-  await store.set(key, JSON.stringify(value));
-}
+import { InMemoryKeyValueStore, type KeyValueStore } from './kvCore';
 
 let cached: KeyValueStore | null = null;
 
 /**
- * Default netral: memori saja. Dipakai di web dan lingkungan uji.
- * Pemulihan lintas sesi tidak berlaku di sini, dan UI menampilkannya lewat
- * `isPersistent`.
+ * Default netral: memori saja. Dipakai di lingkungan uji dan sebagai cadangan
+ * bila varian platform tidak tersedia.
+ *
+ * Di web, Metro memilih `kv.web.ts` yang memakai `localStorage` sungguhan. Di
+ * native, `kv.native.ts` memakai `expo-sqlite/kv-store`. Keduanya melaporkan
+ * apakah data benar-benar bertahan lewat `isPersistent`; berkas ini jujur
+ * menyatakan `false`.
  */
 export function createKeyValueStore(): KeyValueStore {
   if (!cached) {

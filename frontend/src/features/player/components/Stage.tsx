@@ -10,6 +10,17 @@ import type { PresentedScene } from '../types';
 import { useTheme } from '@/theme/ThemeProvider';
 import { space } from '@/theme/tokens';
 
+/**
+ * Kekuatan blur latar saat karakter tampil. Diputuskan pemilik produk.
+ *
+ * Angka 4, BUKAN 12. Nilai 12 sempat dipilih, lalu terukur terlalu kuat: gambar
+ * latar hanya selebar layar ponsel (~390 px), jadi `blur(12px)` menghapus hampir
+ * seluruh detail ruangan dan menyisakan noda warna rata. Pemilik produk melihat
+ * hasilnya dan memilih 4 — cukup untuk memisahkan karakter dari latar, tanpa
+ * menghilangkan tempatnya.
+ */
+const BACKGROUND_BLUR_RADIUS = 4;
+
 export type StageProps = {
   scene: PresentedScene;
   /** Nama karakter fokus, bila ada. */
@@ -59,6 +70,24 @@ export function Stage({
   const hasBackground = Boolean(backgroundUri);
   const hasPortrait = Boolean(portraitUri);
 
+  /*
+   * Latar diblur HANYA saat ada karakter.
+   *
+   * Alasannya bukan sekadar gaya. Potret karakter adalah PNG tembus pandang yang
+   * berdiri di atas latar; latar yang tajam dan ramai (papan tulis, jendela,
+   * meja berderet) menarik mata menjauh dari karakter dan membuat potretnya
+   * terbaca seperti tempelan. Diblur, latar tetap memberi tahu pemain DI MANA
+   * adegan ini berlangsung, tanpa bersaing dengan siapa yang sedang bicara.
+   *
+   * Saat tidak ada karakter, latar dibiarkan tajam: pada adegan pembuka ruangan
+   * kosong itulah yang justru ingin dilihat pemain.
+   *
+   * Angkanya 12 dipilih pemilik produk. Terlalu kecil tidak terasa, terlalu
+   * besar membuat ruangan jadi noda warna dan kehilangan fungsinya sebagai
+   * penunjuk tempat.
+   */
+  const backgroundBlur = hasPortrait ? BACKGROUND_BLUR_RADIUS : 0;
+
   return (
     <View testID={testID} style={[styles.root, { backgroundColor: colors.placeholder }]}>
       {/* Latar */}
@@ -78,6 +107,7 @@ export function Stage({
             accessibilityLabel={locationLabel ?? 'Latar'}
             aspectRatio={16 / 9}
             contentFit="cover"
+            blurRadius={backgroundBlur}
             style={styles.backgroundImage}
           />
         ) : (
@@ -112,6 +142,7 @@ export function Stage({
             <View
               style={[
                 styles.portrait,
+                styles.portraitPlaceholder,
                 { backgroundColor: colors.bgMuted, borderColor: colors.line },
               ]}
             >
@@ -185,14 +216,35 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     justifyContent: 'flex-end',
   },
+  /**
+   * Potret karakter fokus — TANPA bingkai.
+   *
+   * Bentuk sebelumnya memberi `borderTopLeftRadius`/`borderTopRightRadius` 120
+   * plus `borderWidth` satu helai, sehingga tergambar LENGKUNGAN seperti pintu
+   * di sekeliling karakter. Pemilik produk melihatnya sebagai "frame di pinggir
+   * karakter" — dan memang bukan bagian dari ilustrasinya: potret sudah punya
+   * siluetnya sendiri yang tembus pandang, jadi lengkungan tambahan itu hanya
+   * garis asing yang menempel di ruang kosong.
+   *
+   * Radius DAN garis tepinya dibuang bersama: menyisakan salah satunya tetap
+   * memperlihatkan bentuk lengkung yang sama.
+   */
   portrait: {
     width: '62%',
     aspectRatio: 2 / 3,
-    borderTopLeftRadius: 120,
-    borderTopRightRadius: 120,
-    borderWidth: StyleSheet.hairlineWidth,
     alignItems: 'center',
     justifyContent: 'center',
     gap: space.xs,
+  },
+  /**
+   * Hanya untuk CADANGAN saat gambar potret belum tersedia.
+   *
+   * Di sinilah garis tepi masih berguna: tanpa gambar, bidang ini tidak punya
+   * siluet apa pun dan akan lenyap ke dalam latar. Pada potret sungguhan, garis
+   * itu justru menjadi lengkungan asing yang mengelilingi karakter.
+   */
+  portraitPlaceholder: {
+    borderRadius: 12,
+    borderWidth: StyleSheet.hairlineWidth,
   },
 });

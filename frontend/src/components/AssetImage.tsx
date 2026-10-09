@@ -21,6 +21,19 @@ export type AssetImageProps = {
   style?: StyleProp<ViewStyle>;
   /** `cover` untuk sampul, `contain` untuk portrait karakter. */
   contentFit?: 'cover' | 'contain';
+  /**
+   * Kekuatan blur dalam satuan perangkat. `0` berarti tajam.
+   *
+   * Dipakai panggung cerita: saat potret karakter muncul, latar diblur agar
+   * karakter dan teks di atasnya terbaca. Latar TIDAK diblur saat tidak ada
+   * karakter — ruangan kosong justru yang ingin dilihat pemain pada adegan
+   * pembuka.
+   *
+   * Dikerjakan `expo-image`, bukan lapisan terpisah: memblur gambar yang sama
+   * dua kali (satu tajam, satu buram di atasnya) berarti mengunduh dan menyimpan
+   * dua salinan untuk setiap latar.
+   */
+  blurRadius?: number;
   testID?: string;
 };
 
@@ -39,6 +52,7 @@ export function AssetImage({
   aspectRatio = 3 / 4,
   style,
   contentFit = 'cover',
+  blurRadius = 0,
   testID,
 }: AssetImageProps) {
   const { colors } = useTheme();
@@ -82,6 +96,7 @@ export function AssetImage({
           source={{ uri }}
           style={StyleSheet.absoluteFill}
           contentFit={contentFit}
+          blurRadius={blurRadius}
           transition={120}
           accessible
           accessibilityLabel={accessibilityLabel}

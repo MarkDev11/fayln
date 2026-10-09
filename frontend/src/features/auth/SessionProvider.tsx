@@ -130,3 +130,20 @@ export function useSession(): SessionValue {
   }
   return value;
 }
+
+/**
+ * Sesi bila ada, tanpa mewajibkannya.
+ *
+ * Dipakai oleh konsumen yang HANYA memanfaatkan sesi sebagai tambahan, bukan
+ * sebagai syarat. `ProfileProvider` adalah contohnya: profil adalah data
+ * perangkat dan tetap berfungsi tanpa masuk sama sekali — hanya saja ia tidak
+ * dapat diisi otomatis dari akun. Mewajibkan penyedia sesi di sana akan membuat
+ * profil tidak dapat dipakai di mode contoh.
+ *
+ * Ia tetap melempar bila `SessionProvider` ada tetapi nilainya rusak, supaya
+ * kesalahan penyusunan yang sesungguhnya tidak diam-diam berubah menjadi
+ * "dianggap belum masuk".
+ */
+export function useOptionalSession(): SessionValue | null {
+  return useContext(SessionContext);
+}

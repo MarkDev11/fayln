@@ -7,6 +7,10 @@
  *
  * Bila modul native gagal dimuat, kita jatuh ke memori dan melaporkan
  * `isPersistent: false` — bukan berpura-pura penyimpanan berhasil.
+ *
+ * Impor primitif dari `./kvCore`, BUKAN `./kv`: di native, `'./kv'` akan
+ * menyelesaikan ke berkas ini sendiri. Lihat `kvCore.ts` untuk kegagalan nyata
+ * yang pernah ditimbulkan oleh kekeliruan itu.
  */
 
 import Storage from 'expo-sqlite/kv-store';
@@ -16,16 +20,15 @@ import {
   NativeKeyValueStore,
   type KeyValueStore,
   type NativeKeyValueStorage,
-} from './kv';
+} from './kvCore';
 
 export {
   InMemoryKeyValueStore,
   NativeKeyValueStore,
   readJson,
-  resetKeyValueStoreCache,
   writeJson,
-} from './kv';
-export type { KeyValueStore, NativeKeyValueStorage } from './kv';
+} from './kvCore';
+export type { KeyValueStore, NativeKeyValueStorage } from './kvCore';
 
 let cached: KeyValueStore | null = null;
 

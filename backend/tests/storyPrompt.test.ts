@@ -96,6 +96,71 @@ describe('prompt sistem', () => {
   });
 });
 
+/**
+ * Kesinambungan antar-adegan — keluhan pemilik produk.
+ *
+ * Ia membandingkan mesin cerita dengan dungeon master D&D: dari kota ke desa
+ * tidak mungkin dipindahkan begitu saja, harus ada cara berpindah dan biasanya
+ * ada interaksi dengan seseorang di jalan. Uji di bawah ini menjaga KEWAJIBAN
+ * menjembatani itu tetap tertulis.
+ *
+ * Uji ini membaca TEKS PROMPT, jadi ia hanya menjaga bahwa aturannya tidak
+ * terhapus — bukan bahwa model mematuhinya. Itu batas yang disengaja: perilaku
+ * model tidak dapat diuji tanpa memanggil model, dan panggilan seperti itu tidak
+ * deterministik. Yang dapat dijamin di sini adalah aturannya masih dikirim.
+ */
+describe('kesinambungan adegan (dungeon master)', () => {
+  it('melarang berpindah tempat tanpa jembatan', () => {
+    expect(STORY_SYSTEM_PROMPT).toContain('you are a dungeon master, not a fast-travel menu');
+    expect(STORY_SYSTEM_PROMPT).toContain('That is a teleport');
+  });
+
+  it('menyebut ketiga langkah jembatan secara berurutan', () => {
+    // Niat lalu perjalanan lalu tiba. Bila salah satu hilang, model akan
+    // memilih jalan pintas: langsung mengganti latar.
+    expect(STORY_SYSTEM_PROMPT).toContain('(a) INTENT');
+    expect(STORY_SYSTEM_PROMPT).toContain('(b) BRIDGE');
+    expect(STORY_SYSTEM_PROMPT).toContain('(c) ARRIVAL');
+  });
+
+  it('menjadikan jembatan sebagai tempat world building, bukan pengisi', () => {
+    expect(STORY_SYSTEM_PROMPT).toContain('WORLD BUILDING');
+    expect(STORY_SYSTEM_PROMPT).toContain('bridge beat in between is mandatory');
+  });
+
+  it('mengingatkan agar tidak meloncat saat meneruskan aksi pemain', () => {
+    const pesan = buildStoryUserPrompt({ ...MASUKAN, playerAction: 'Pergi ke kantin' });
+
+    expect(pesan).toContain('apakah tindakan itu MEMINDAHKAN pemain ke tempat lain');
+    expect(pesan).toContain('jangan langsung mengganti latar');
+  });
+
+  it('menegaskan jangan meloncat saat sudah ada riwayat cerita', () => {
+    const pesan = buildStoryUserPrompt({
+      ...MASUKAN,
+      storySoFar: 'Rina memintamu mengambil berkas.',
+      recentBeats: ['narrate: Kamu berdiri di depan lift.'],
+    });
+
+    expect(pesan).toContain('jangan meloncat ke tempat');
+  });
+
+  it('TIDAK menambahkan peringatan riwayat pada adegan pertama', () => {
+    // Adegan pembuka tidak punya riwayat, jadi peringatannya hanya menambah
+    // kebisingan bagi model.
+    const pesan = buildStoryUserPrompt(MASUKAN);
+
+    expect(pesan).not.toContain('jangan meloncat ke tempat');
+  });
+
+  it('meminta adegan pembuka membangun tempat, bukan menamainya', () => {
+    const pesan = buildStoryUserPrompt(MASUKAN);
+
+    expect(pesan).toContain('Ini kesan pertama pemain terhadap dunia ini');
+    expect(pesan).toContain('Jangan hanya menamai ruangan');
+  });
+});
+
 describe('pesan pengguna', () => {
   it('memuat seluruh id latar yang sah', () => {
     const pesan = buildStoryUserPrompt(MASUKAN);
