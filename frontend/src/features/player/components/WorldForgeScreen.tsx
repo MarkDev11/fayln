@@ -15,7 +15,7 @@ export type WorldForgeScreenProps = {
 };
 
 /** Tinggi kanvas gelombang. */
-const WAVE_CANVAS_HEIGHT = 260;
+const WAVE_CANVAS_HEIGHT = 320;
 /** Lama satu siklus penuh. Cukup lambat untuk terbaca sebagai ombak. */
 const CYCLE_MS = 10_000;
 /** Berapa pita gelombang yang ditumpuk. Semakin banyak, semakin dalam efeknya. */
@@ -145,15 +145,31 @@ export function WorldForgeScreen({ worldTitle, testID }: WorldForgeScreenProps) 
    * Satu pita gelombang.
    *
    * `lebarKanvas` membuat setiap pita melewati tepi kanan layar walau sudah
-   * bergeser sejauh satu lebar layar. `skewX` memberi sisi miring; nilainya
-   * berselang-seling tanda supaya pita-pitanya tidak sejajar sempurna — pita
-   * yang sejajar akan terbaca sebagai satu blok, bukan sebagai ombak.
+   * bergeser sejauh satu lebar layar. `skewX` memberi sisi miring, dan tiap pita
+   * juga DIPUTAR sedikit (`rotate`) supaya kemiringannya tidak seragam — pita
+   * yang semuanya miring dengan sudut sama terbaca sebagai satu blok miring,
+   * bukan sebagai ombak.
+   *
+   * ---------------------------------------------------------------------------
+   * CATATAN PENGUKURAN: tinggi dan kemiringan ini BUKAN nilai pertama
+   * ---------------------------------------------------------------------------
+   * Nilai awalnya (tinggi 12–42 px, tanpa rotasi) terukur hampir tidak terlihat
+   * di tangkapan layar: pita-pitanya menempel di dasar layar dan terbaca sebagai
+   * satu garis cokelat tipis, bukan sebagai gelombang. Angka di bawah ini hasil
+   * MEMERIKSA GAMBARNYA, bukan menebak dari kode — dan itu memang cara satu-
+   * satunya untuk menilai sesuatu yang hanya punya arti secara visual.
    */
   const pita = (index: number) => {
-    const tinggi = 12 + index * 8;
-    const bawah = index * 26;
-    const miring = index % 2 === 0 ? '-18deg' : '18deg';
-    const opasitas = 0.1 + index * 0.06;
+    // Setiap pita naik dan menebal; yang teratas paling tipis dan paling redup,
+    // sehingga tumpukannya terbaca sebagai kedalaman, bukan sebagai garis.
+    const tinggi = 22 + index * 16;
+    const bawah = index * 34;
+    // Kemiringan BERGANDA: `skewX` membuat sisi miring, `rotate` memiringkan
+    // seluruh pita. Tanpa `rotate`, semua pita tetap sejajar dan hasilnya
+    // terbaca sebagai pita-pita horizontal, bukan sebagai gelombang.
+    const miring = index % 2 === 0 ? '-26deg' : '26deg';
+    const putar = index % 2 === 0 ? '-3.2deg' : '3.2deg';
+    const opasitas = 0.2 + index * 0.11;
 
     return (
       <View
@@ -161,18 +177,18 @@ export function WorldForgeScreen({ worldTitle, testID }: WorldForgeScreenProps) 
         style={[
           styles.pita,
           {
-            left: -lebarPita * 0.05,
-            width: lebarKanvas * 1.1,
+            left: -lebarPita * 0.12,
+            width: lebarKanvas * 1.24,
             height: tinggi,
             bottom: bawah,
-            transform: [{ skewX: miring }],
+            transform: [{ skewX: miring }, { rotate: putar }],
           },
         ]}
       >
         <LinearGradient
           // Gradien di kedua ujung supaya tepi pita tidak terputus mendadak.
           colors={['transparent', colors.accent, colors.accent, 'transparent']}
-          locations={[0, 0.28, 0.72, 1]}
+          locations={[0, 0.18, 0.82, 1]}
           start={{ x: 0, y: 0.5 }}
           end={{ x: 1, y: 0.5 }}
           style={[StyleSheet.absoluteFill, { opacity: opasitas }]}
