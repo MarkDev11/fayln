@@ -17,18 +17,20 @@ import { registerAdminRoutes } from './admin/adminRoutes';
 import type { AdminRepository } from './admin/adminRepository';
 import type { AdminPageContext } from './admin/pages/context';
 import { registerAdminAuthHook } from './admin/session';
-import { defaultAssetsRoot, registerAssetRoutes } from './routes/assets';
+import { registerAssetRoutes, defaultAssetsRoot } from './routes/assets';
+import { registerAuthRoutes, readBearerToken } from './routes/auth';
 import { registerCatalogRoutes } from './routes/catalog';
 import { registerHealthRoutes } from './routes/health';
 import { registerJourneyRoutes } from './routes/journeys';
 import { registerMediaRoutes } from './routes/media';
 import { registerUsageAndReportRoutes } from './routes/usage';
 import type { CatalogRepository } from './repositories/catalogRepository';
+import type { AuthRepository } from './repositories/authRepository';
 import { MediaRepository } from './repositories/mediaRepository';
 import type { ReportRepository } from './repositories/reportRepository';
 import type { UsageRepository } from './repositories/usageRepository';
 import type { JourneyService } from './services/journeyService';
-import { CURRENT_IDENTITY_MODE, registerIdentityHook } from './http/identity';
+import { CURRENT_IDENTITY_MODE, registerIdentityHook, UnauthenticatedError } from './http/identity';
 
 export const SERVICE_VERSION = '0.1.0';
 
@@ -42,6 +44,11 @@ export type AppDeps = {
    * benar-benar ada sebelum route menyentuh tabel yang berkias-asing padanya.
    */
   accounts: { ensure: (accountId: string) => Promise<void> };
+  /**
+   * Akun pemain dan sesinya. Wajib: tanpa ini tidak ada cara membuktikan
+   * identitas, dan seluruh jalur pemain akan menolak setiap permintaan.
+   */
+  auth: AuthRepository;
   catalog: CatalogRepository;
   /**
    * Penyimpanan berkas gambar unggahan. Opsional: bawaannya dibangun dari `db`,
@@ -103,7 +110,17 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(cors, {
     origin: deps.config.corsOrigins.length > 0 ? deps.config.corsOrigins : false,
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
-    allowedHeaders: ['content-type', 'x-account-id'],
+    /*
+     * `authorization` WAJIB ada di daftar ini.
+     *
+     * Tanpa itu, peramban menolak permintaan sebelum mengirimnya karena header
+     * `Authorization` tidak diizinkan oleh preflight — dan gejalanya menyesatkan:
+     * aplikasi tampak "tidak dapat menghubungi server" padahal server sehat dan
+     * tidak pernah menerima permintaannya.
+     *
+     * `x-account-id` masih didaftarkan demi mode transisi (FAYLN_ALLOW_LEGACY_ACCOUNT_HEADER).
+     */
+    allowedHeaders: ['content-type', 'authorization', 'x-account-id'],
     maxAge: 600,
   });
 
@@ -114,6 +131,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     // Kunci per akun, bukan per alamat IP: satu kantor dengan satu IP publik
     // tidak boleh saling memblokir.
     keyGenerator: (request) => {
+      /*
+       * Token sesi dipakai lebih dulu. Sebelum login ada, kuncinya adalah header
+       * `x-account-id`; sekarang header itu tidak lagi dipercaya, sehingga
+       * memakai token membuat batasnya tetap per pemain. Nilainya sudah berupa
+       * token acak dari server, jadi aman dipakai sebagai kunci.
+       */
+      const token = readBearerToken(request.headers.authorization);
+      if (token) {
+        return token;
+      }
       const raw = request.headers['x-account-id'];
       const value = Array.isArray(raw) ? raw[0] : raw;
       return typeof value === 'string' && value.length > 0 ? value : request.ip;
@@ -130,6 +157,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   /* ---------------- Penanganan galat ---------------- */
   app.setErrorHandler((error, request, reply) => {
+    // Identitas tidak terbukti: bentuk balasannya disamakan dengan galat API lain
+    // supaya klien hanya perlu mengenali satu bentuk.
+    if (error instanceof UnauthenticatedError) {
+      return reply.status(401).send({
+        code: 'UNAUTHORIZED',
+        message: 'Kamu belum masuk. Masuk dulu untuk melanjutkan.',
+        retryable: false,
+      });
+    }
+
     // Kesalahan domain: pesannya sudah aman untuk pemain.
     if (error instanceof AppError) {
       request.log?.warn(
@@ -221,7 +258,22 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // Akun diadakan sebelum route mana pun berjalan. Tanpa ini, perangkat baru
   // yang mengirim ID buatannya sendiri akan ditolak kunci asing saat membuat
   // perjalanan pertama (terlihat sebagai HTTP 500).
-  registerIdentityHook(app, deps.accounts);
+  //
+  // Sejak 9 Oktober 2026 hook ini juga MENYELESAIKAN IDENTITAS dari token sesi:
+  // akun tidak lagi berasal dari klaim yang dikirim klien, melainkan dari token
+  // yang dibuktikan terhadap tabel `player_sessions`.
+  registerIdentityHook(app, {
+    accounts: deps.accounts,
+    resolveToken: async (token) => {
+      const account = await deps.auth.resolveSession(token);
+      return account?.accountId ?? null;
+    },
+    touchToken: (token) => deps.auth.touchSession(token),
+  });
+
+  // Didaftarkan setelah hook identitas agar rute auth melewatinya (lihat daftar
+  // jalur publik di dalam hook).
+  registerAuthRoutes(app, { auth: deps.auth });
 
   registerCatalogRoutes(app, { catalog: deps.catalog });
   registerJourneyRoutes(app, { journeys: deps.journeys });

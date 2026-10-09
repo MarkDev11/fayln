@@ -27,6 +27,7 @@ import { WorldDraftRepository } from '../src/admin/worldDraftRepository';
 import { resetLoginAttempts, SESSION_COOKIE } from '../src/admin/session';
 import { parseConfig, type AppConfig } from '../src/config';
 import { AccountRepository } from '../src/repositories/accountRepository';
+import { AuthRepository } from '../src/repositories/authRepository';
 import { CatalogRepository } from '../src/repositories/catalogRepository';
 import { JourneyRepository } from '../src/repositories/journeyRepository';
 import { MediaRepository } from '../src/repositories/mediaRepository';
@@ -162,6 +163,7 @@ async function build(): Promise<FastifyInstance> {
     config,
     db: ctx.db,
     accounts: new AccountRepository(ctx.db),
+    auth: new AuthRepository(ctx.db),
     catalog: new CatalogRepository(ctx.db),
     usage,
     reports: new ReportRepository(ctx.db),

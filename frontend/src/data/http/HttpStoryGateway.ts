@@ -48,14 +48,17 @@ export type HttpGatewayConfig = {
   /** Alamat dasar API, mis. `https://fayln-api.marky.blitz.cloud`. */
   baseUrl: string;
   /**
-   * ID akun yang dikirim pada header `x-account-id`, atau penyedia yang
-   * menghasilkannya secara asinkron.
+   * Token sesi pemain, atau penyedia yang menghasilkannya secara asinkron.
    *
-   * Penyedia diperlukan karena identitas perangkat disimpan di penyimpanan aman
-   * yang bersifat asinkron, sedangkan gateway harus dapat dibuat segera agar
-   * pohon komponen tidak perlu menunggu.
+   * Menggantikan `x-account-id` sejak 9 Oktober 2026. Server membuktikan token
+   * ini terhadap tabel sesi; nilai `null` berarti pemain belum masuk, dan
+   * permintaan akan dijawab 401 — yang memang diinginkan.
+   *
+   * Penyedia diperlukan karena token dibaca dari penyimpanan perangkat yang
+   * bersifat asinkron, sedangkan gateway harus dapat dibuat segera agar pohon
+   * komponen tidak perlu menunggu.
    */
-  accountId: string | (() => Promise<string>);
+  accountId: string | (() => Promise<string | null>);
   /** Disuntikkan pengujian. */
   fetchImpl?: typeof globalThis.fetch;
   /** Batas waktu dalam milidetik. Bawaan 20 detik. */
@@ -64,13 +67,24 @@ export type HttpGatewayConfig = {
 
 type MetaResponse = { storyEngine?: { simulator?: boolean } };
 
+/**
+ * Anggaran waktu untuk rute yang menyusun adegan lewat model cerita.
+ *
+ * Terukur 9 Oktober 2026 terhadap API produksi: membuat perjalanan butuh
+ * 19,1–24,0 detik (tiga kali pengukuran). Batas bawaan 20 detik karena itu
+ * memutus permintaan yang sebenarnya akan berhasil — pengguna melihat
+ * "Perjalanan gagal dibuat" padahal server mengembalikan 201.
+ *
+ * 90 detik memberi ruang bagi model yang sedang lambat tanpa membiarkan
+ * antarmuka menggantung selamanya. Rute baca tetap memakai batas bawaan.
+ */
+const STORY_GENERATION_TIMEOUT_MS = 90_000;
+
 export class HttpStoryGateway implements StoryGateway {
   private readonly baseUrl: string;
-  private readonly accountIdProvider: string | (() => Promise<string>);
+  private readonly accountIdProvider: string | (() => Promise<string | null>);
   private readonly fetchImpl: typeof globalThis.fetch;
   private readonly timeoutMs: number;
-  /** Menyimpan hasil penyedia supaya penyimpanan tidak dibaca setiap permintaan. */
-  private resolvedAccountId: string | null = null;
 
   /**
    * Penanda simulator. Nilai awalnya `true` karena itu pilihan yang aman: bila
@@ -83,9 +97,6 @@ export class HttpStoryGateway implements StoryGateway {
     // Buang garis miring di akhir agar tidak menjadi alamat ganda.
     this.baseUrl = config.baseUrl.replace(/\/+$/, '');
     this.accountIdProvider = config.accountId;
-    if (typeof config.accountId === 'string') {
-      this.resolvedAccountId = config.accountId;
-    }
     /*
      * WAJIB diikat ke `globalThis`.
      *
@@ -211,6 +222,7 @@ export class HttpStoryGateway implements StoryGateway {
   async createJourney(input: CreateJourneyInput): Promise<CreateJourneyResult> {
     return this.request<CreateJourneyResult>('/v1/journeys', {
       method: 'POST',
+      timeoutMs: STORY_GENERATION_TIMEOUT_MS,
       body: {
         clientOperationId: input.clientOperationId,
         worldId: input.worldId,
@@ -258,6 +270,7 @@ export class HttpStoryGateway implements StoryGateway {
       `/v1/journeys/${encodeURIComponent(input.journeyId)}/turns`,
       {
         method: 'POST',
+        timeoutMs: STORY_GENERATION_TIMEOUT_MS,
         body: {
           clientOperationId: input.clientOperationId,
           decisionId: input.decisionId,
@@ -299,21 +312,51 @@ export class HttpStoryGateway implements StoryGateway {
   /* Internal                                                            */
   /* ---------------------------------------------------------------- */
 
+  /**
+   * Mengirim satu permintaan.
+   *
+   * `timeoutMs` dapat ditimpa per panggilan. Rute yang menyentuh model cerita
+   * (membuat perjalanan, mengirim giliran) perlu anggaran lebih besar daripada
+   * rute baca biasa: menyusun satu adegan penuh butuh belasan detik, sedangkan
+   * katalog hanya membaca baris basis data.
+   */
   private async request<T>(
     path: string,
-    options: { method: string; body?: unknown },
+    options: { method: string; body?: unknown; timeoutMs?: number },
   ): Promise<T> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+
+    /*
+     * Penghitung waktu dipasang SETELAH identitas akun diselesaikan, bukan sebelum.
+     *
+     * Alasannya: `resolveAccountId()` dapat menyentuh penyimpanan aman secara
+     * asinkron. Bila penghitung sudah berjalan sejak awal, waktu yang dipakai
+     * membuka penyimpanan ikut termakan oleh batas waktu permintaan — dan rute
+     * lambat (membuat perjalanan) menjadi gagal hanya karena perangkat lambat,
+     * bukan karena server tidak menjawab. Gejalanya menipu: pesan yang muncul
+     * adalah "Tidak dapat menghubungi server", padahal server sehat.
+     */
+    let timer: ReturnType<typeof setTimeout> | undefined;
 
     try {
-      const accountId = await this.resolveAccountId();
+      /*
+       * Token sesi, bukan id akun.
+       *
+       * Identitas tidak lagi berupa klaim yang dikirim klien — server membuktikan
+       * token terhadap tabel sesi. Bila belum ada token, header `Authorization`
+       * tidak dikirim sama sekali, dan server akan menjawab 401. Itu memang yang
+       * diinginkan: permintaan tanpa identitas harus gagal, bukan dilayani
+       * sebagai akun demo seperti sebelumnya.
+       */
+      const token = await this.resolveAccountId();
+
+      timer = setTimeout(() => controller.abort(), options.timeoutMs ?? this.timeoutMs);
 
       const response = await this.fetchImpl(`${this.baseUrl}${path}`, {
         method: options.method,
         headers: {
           accept: 'application/json',
-          'x-account-id': accountId,
+          ...(token ? { authorization: `Bearer ${token}` } : null),
           ...(options.body !== undefined ? { 'content-type': 'application/json' } : null),
         },
         ...(options.body !== undefined ? { body: JSON.stringify(options.body) } : null),
@@ -344,20 +387,27 @@ export class HttpStoryGateway implements StoryGateway {
         retryable: true,
       });
     } finally {
-      clearTimeout(timer);
+      if (timer !== undefined) {
+        clearTimeout(timer);
+      }
     }
   }
 
-  private async resolveAccountId(): Promise<string> {
-    if (this.resolvedAccountId) {
-      return this.resolvedAccountId;
-    }
+  /**
+   * Mengembalikan token sesi yang berlaku.
+   *
+   * TIDAK di-cache di tingkat instance. Versi sebelumnya menyimpan id akun di
+   * `resolvedAccountId` supaya penyimpanan tidak dibaca berulang — tetapi untuk
+   * token, cache itu menjadi salah begitu pemain keluar lalu masuk dengan akun
+   * lain: permintaan berikutnya masih membawa token LAMA, dan pemain melihat
+   * perjalanan akun sebelumnya. `authSession.ts` sudah memoized pembacaannya,
+   * jadi tidak ada pembacaan mahal yang perlu dihindari di sini.
+   */
+  private async resolveAccountId(): Promise<string | null> {
     if (typeof this.accountIdProvider === 'string') {
-      this.resolvedAccountId = this.accountIdProvider;
-      return this.resolvedAccountId;
+      return this.accountIdProvider;
     }
-    this.resolvedAccountId = await this.accountIdProvider();
-    return this.resolvedAccountId;
+    return this.accountIdProvider();
   }
 
   private toGatewayError(status: number, payload: unknown): StoryGatewayError {

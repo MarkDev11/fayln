@@ -4,7 +4,7 @@ import type { StoryGateway } from './gateway';
 import { MockStoryGateway } from './mock/MockStoryGateway';
 import { HttpStoryGateway } from './http/HttpStoryGateway';
 import { apiBaseUrl } from './http/apiConfig';
-import { deviceAccountId } from './http/deviceAccount';
+import { readToken } from './http/authSession';
 
 const GatewayContext = createContext<StoryGateway | null>(null);
 
@@ -37,9 +37,11 @@ export function GatewayProvider({ children, gateway }: GatewayProviderProps) {
 
     return new HttpStoryGateway({
       baseUrl,
-      // Penyedia asinkron: identitas perangkat dibaca dari penyimpanan aman,
-      // tetapi gateway harus tersedia segera agar pohon komponen tidak menunggu.
-      accountId: () => deviceAccountId(),
+      // Penyedia asinkron: token sesi dibaca dari penyimpanan perangkat, tetapi
+      // gateway harus tersedia segera agar pohon komponen tidak menunggu.
+      // Mengembalikan null berarti pemain belum masuk; server menjawab 401 dan
+      // lapisan atas mengalihkan ke layar masuk.
+      accountId: () => readToken(),
     });
   }, [gateway]);
 

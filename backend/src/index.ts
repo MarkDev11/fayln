@@ -35,6 +35,7 @@ import { createDatabase, createPool } from './db/pool';
 import { createLogger } from './logging';
 import { CatalogRepository } from './repositories/catalogRepository';
 import { AccountRepository } from './repositories/accountRepository';
+import { AuthRepository } from './repositories/authRepository';
 import { JourneyRepository } from './repositories/journeyRepository';
 import { MediaRepository } from './repositories/mediaRepository';
 import { OperationRepository } from './repositories/operationRepository';
@@ -102,6 +103,11 @@ async function main(): Promise<void> {
   // Akun diadakan saat pertama kali terlihat. Klien membuat ID perangkat sendiri,
   // jadi baris `accounts`-nya belum ada sampai hook identitas membuatkannya.
   const accounts = new AccountRepository(db);
+
+  // Akun pemain dan sesinya: sumber identitas sejak 9 Oktober 2026. Identitas
+  // tidak lagi berasal dari klaim klien, melainkan dari token yang dibuktikan
+  // terhadap tabel `player_sessions`.
+  const auth = new AuthRepository(db);
 
   /**
    * Mengubah jalur aset tersimpan menjadi URL yang dapat dimuat klien.
@@ -242,6 +248,7 @@ async function main(): Promise<void> {
     config,
     db,
     accounts,
+    auth,
     catalog,
     usage,
     reports,

@@ -10,6 +10,7 @@ import { Text } from '@/components/Text';
 
 import { useGateway } from '@/data/GatewayProvider';
 import type { ReportInput, ReportResult } from '@/data/gateway';
+import { useSession } from '@/features/auth/SessionProvider';
 import {
   AGE_MAX,
   AGE_MIN,
@@ -53,6 +54,7 @@ export default function SettingsScreen() {
   const { t, locale, setLocale } = useI18n();
   const { preference, setPreference, textSize, setTextSize } = useTheme();
   const { profile, isLoading, isPersistent, isComplete, saveProfile } = useProfile();
+  const { account, signOut } = useSession();
 
   const [name, setName] = useState('');
   const [age, setAge] = useState('');
@@ -66,6 +68,7 @@ export default function SettingsScreen() {
   const [cacheBusy, setCacheBusy] = useState(false);
   const [cacheResult, setCacheResult] = useState<CacheClearResult | null>(null);
   const [reportVisible, setReportVisible] = useState(false);
+  const [signOutVisible, setSignOutVisible] = useState(false);
 
   const submitReport = useCallback(
     async (input: Omit<ReportInput, 'clientOperationId'>): Promise<ReportResult> =>
@@ -248,6 +251,25 @@ export default function SettingsScreen() {
         ) : null}
       </Section>
 
+      <Section title={t('settings.account')}>
+        <Text variant="caption" tone="secondary">
+          {t('settings.accountNotice')}
+        </Text>
+        {account ? (
+          <Text variant="small" tone="primary" testID="settings-account-email">
+            {t('auth.loggedInAs', { email: account.email })}
+          </Text>
+        ) : null}
+        <View style={styles.saveRow}>
+          <Button
+            label={t('settings.signOut')}
+            variant="danger"
+            onPress={() => setSignOutVisible(true)}
+            testID="settings-sign-out"
+          />
+        </View>
+      </Section>
+
       <Section title={t('settings.languageUi')}>
         <Text variant="caption" tone="secondary">
           {t('settings.languageNotice')}
@@ -368,6 +390,23 @@ export default function SettingsScreen() {
         }}
         onCancel={() => setCacheDialogVisible(false)}
         testID="cache-dialog"
+      />
+
+      <ConfirmDialog
+        visible={signOutVisible}
+        title={t('auth.logoutConfirm')}
+        body={t('auth.logoutBody')}
+        confirmLabel={t('auth.logout')}
+        cancelLabel={t('common.cancel')}
+        onConfirm={() => {
+          setSignOutVisible(false);
+          // Gerbang sesi di kerangka akar yang mengalihkan ke layar masuk
+          // setelah keadaan sesi berubah. Tidak perlu mengalihkan di sini —
+          // satu tempat memutuskan, bukan dua.
+          void signOut();
+        }}
+        onCancel={() => setSignOutVisible(false)}
+        testID="signout-dialog"
       />
 
       <ReportSheet

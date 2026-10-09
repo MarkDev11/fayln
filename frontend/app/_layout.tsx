@@ -5,18 +5,25 @@ import React, { useState } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 
 import { GatewayProvider } from '@/data/GatewayProvider';
+import { SessionProvider } from '@/features/auth/SessionProvider';
 import { ProfileProvider } from '@/features/profile/ProfileProvider';
 import { I18nProvider } from '@/i18n';
 import { ThemeProvider, useTheme } from '@/theme/ThemeProvider';
+import { useSessionGuard } from '@/features/auth/useSessionGuard';
 
 /**
  * Kerangka akar fayLN.
  *
  * Urutan penyedia penting: tema dan bahasa harus tersedia sebelum layar mana pun
- * dirender, karena keduanya dipakai oleh seluruh komponen dasar.
+ * dirender, karena keduanya dipakai oleh seluruh komponen dasar. `SessionProvider`
+ * berada di dalamnya karena layar masuk pun memakai tema dan bahasa.
  */
 function ThemedStack() {
   const { colors, scheme } = useTheme();
+
+  // Mengalihkan ke layar masuk bila sesinya belum ada. Diletakkan di dalam
+  // penyedia tema agar layar tujuan sudah bertema saat muncul.
+  useSessionGuard();
 
   return (
     <>
@@ -28,6 +35,7 @@ function ThemedStack() {
           animation: 'slide_from_right',
         }}
       >
+        <Stack.Screen name="login" />
         <Stack.Screen name="(tabs)" />
         <Stack.Screen name="world/[worldId]" />
         <Stack.Screen name="journey/[journeyId]" />
@@ -65,9 +73,11 @@ export default function RootLayout() {
         <I18nProvider>
           <QueryClientProvider client={queryClient}>
             <GatewayProvider>
-              <ProfileProvider>
-                <ThemedStack />
-              </ProfileProvider>
+              <SessionProvider>
+                <ProfileProvider>
+                  <ThemedStack />
+                </ProfileProvider>
+              </SessionProvider>
             </GatewayProvider>
           </QueryClientProvider>
         </I18nProvider>

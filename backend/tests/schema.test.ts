@@ -57,6 +57,7 @@ describe('migrasi', () => {
     '017_kategori_lokasi_dunia.sql',
     '018_jiwa_karakter.sql',
     '019_latar_pembuka.sql',
+    '020_akun_pemain.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {

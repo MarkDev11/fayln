@@ -113,3 +113,41 @@ export const reportBodySchema = z.object({
   journeyId: z.string().max(80).optional(),
   beatId: z.string().max(120).optional(),
 });
+
+/**
+ * Pendaftaran pemain.
+ *
+ * Email dinormalkan (`trim` + huruf kecil) di sini, bukan di repository, supaya
+ * "  Budi@Mail.com " dan "budi@mail.com" tidak pernah menjadi dua akun berbeda.
+ * Keunikan sesungguhnya tetap ditegakkan indeks unik di basis data — pemeriksaan
+ * di kode saja tidak cukup karena dua permintaan dapat berjalan bersamaan.
+ *
+ * Umur dibatasi 13–99 untuk memenuhi syarat layanan (batas bawah) sekaligus
+ * menolak masukan yang jelas salah (batas atas). Batasnya sama dengan konstrain
+ * `accounts_age_range` di migrasi 001 — sengaja, agar pesan kesalahannya datang
+ * sebagai VALIDATION yang ramah, bukan galat basis data.
+ */
+export const registerBodySchema = z.object({
+  email: z
+    .string()
+    .trim()
+    .toLowerCase()
+    .email('Alamat email tidak sah.')
+    .max(200),
+  password: z.string().min(8, 'Kata sandi minimal 8 karakter.').max(200),
+  displayName: z.string().trim().min(1, 'Nama tidak boleh kosong.').max(80),
+  age: z.number().int().min(13, 'Umur minimal 13 tahun.').max(99, 'Umur maksimal 99 tahun.').nullable(),
+});
+
+/**
+ * Masuk.
+ *
+ * Email TIDAK dinormalkan dengan `.email()` di sini. Alasannya: bila formatnya
+ * ditolak lebih dulu, penyerang dapat membedakan "email tidak sah" dari "email
+ * atau kata sandi salah" — dan perbedaan itu membocorkan email mana yang terdaftar.
+ * Yang penting hanya panjangnya, untuk mencegah masukan raksasa.
+ */
+export const loginBodySchema = z.object({
+  email: z.string().trim().toLowerCase().min(3).max(200),
+  password: z.string().min(1).max(200),
+});

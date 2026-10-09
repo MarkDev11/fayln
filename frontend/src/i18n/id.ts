@@ -246,6 +246,10 @@ export const id = {
     'Bahasa respons berlaku untuk cerita yang kamu mulai atau lanjutkan berikutnya, bukan untuk riwayat yang sudah ada.',
   'settings.reading': 'Membaca',
   'settings.textSize': 'Ukuran teks',
+  'settings.account': 'Akun',
+  'settings.signOut': 'Keluar dari akun',
+  'settings.accountNotice':
+    'Ceritamu tersimpan di akun ini, bukan di perangkat. Masuk lagi di perangkat lain untuk melanjutkannya.',
   'settings.theme': 'Tema',
   'settings.themeSystem': 'Ikuti sistem',
   'settings.themeLight': 'Terang',
@@ -370,6 +374,37 @@ export const id = {
     'Posisi baca hanya tersimpan selama aplikasi terbuka. Penyimpanan permanen menyusul di tahap berikutnya.',
   'storage.profileMemoryOnly':
     'Profil hanya tersimpan selama aplikasi terbuka di perangkat ini. Penyimpanan permanen menyusul di tahap berikutnya.',
+
+  'auth.loginTitle': 'Masuk',
+  'auth.loginSubtitle': 'Lanjutkan ceritamu dari tempat terakhir.',
+  'auth.registerTitle': 'Buat akun',
+  'auth.registerSubtitle': 'Ceritamu tersimpan di akunmu, bukan di perangkat ini.',
+  'auth.email': 'Email',
+  'auth.emailPlaceholder': 'nama@contoh.com',
+  'auth.password': 'Kata sandi',
+  'auth.passwordPlaceholder': 'Minimal 8 karakter',
+  'auth.name': 'Nama tokoh',
+  'auth.namePlaceholder': 'Nama yang dipakai narator',
+  'auth.age': 'Usia tokoh',
+  'auth.agePlaceholder': 'Contoh: 24',
+  'auth.loginAction': 'Masuk',
+  'auth.registerAction': 'Daftar & mulai',
+  'auth.toRegister': 'Belum punya akun? Daftar',
+  'auth.toLogin': 'Sudah punya akun? Masuk',
+  'auth.logout': 'Keluar',
+  'auth.logoutConfirm': 'Keluar dari akun ini?',
+  'auth.logoutBody':
+    'Ceritamu tetap tersimpan di akun. Masuk lagi kapan saja untuk melanjutkannya.',
+  'auth.loggedInAs': 'Masuk sebagai {email}',
+  'auth.errorEmailTaken': 'Email ini sudah terdaftar. Coba masuk, atau pakai email lain.',
+  'auth.errorCredentials': 'Email atau kata sandi salah.',
+  'auth.errorRateLimited': 'Terlalu banyak percobaan. Tunggu sebentar, lalu coba lagi.',
+  'auth.errorEmailInvalid': 'Alamat email tidak sah.',
+  'auth.errorPasswordShort': 'Kata sandi minimal 8 karakter.',
+  'auth.errorNameEmpty': 'Nama wajib diisi, 1 sampai 80 karakter.',
+  'auth.errorAgeRange': 'Usia harus berupa angka antara 13 dan 99.',
+  'auth.errorGeneric': 'Tidak dapat terhubung. Periksa koneksi, lalu coba lagi.',
+  'auth.required': 'Masuk dulu untuk melanjutkan.',
 } as const;
 
 export type TranslationKey = keyof typeof id;

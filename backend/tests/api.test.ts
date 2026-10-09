@@ -12,6 +12,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { parseConfig, type AppConfig } from '../src/config';
 import { AccountRepository } from '../src/repositories/accountRepository';
+import { AuthRepository } from '../src/repositories/authRepository';
 import { CatalogRepository } from '../src/repositories/catalogRepository';
 import { JourneyRepository } from '../src/repositories/journeyRepository';
 import { OperationRepository } from '../src/repositories/operationRepository';
@@ -22,9 +23,30 @@ import { JourneyService } from '../src/services/journeyService';
 import { DeterministicStoryEngine } from '../src/services/storyEngine';
 
 import { createTestDatabase, type TestDatabase } from './helpers/testDb';
+import { bearer, createTestAccount } from './helpers/auth';
 
 let ctx: TestDatabase;
 let app: FastifyInstance;
+
+/**
+ * Akun yang dipakai seluruh pengujian di berkas ini.
+ *
+ * Sejak identitas dibuktikan dengan token, setiap permintaan perlu akun yang
+ * benar-benar terdaftar. Akun ini dibuat sekali per pengujian, dan tokennya
+ * dipasang sebagai header bawaan pada `inject`.
+ */
+let auth: { accountId: string; token: string; email: string };
+
+/** Membungkus `app.inject` agar setiap permintaan membawa token akun uji. */
+function inject(
+  options: Parameters<FastifyInstance['inject']>[0],
+): ReturnType<FastifyInstance['inject']> {
+  const withAuth = options as { headers?: Record<string, string> };
+  return app.inject({
+    ...options,
+    headers: { ...bearer(auth.token), ...(withAuth.headers ?? {}) },
+  });
+}
 
 /** Operation id harus cukup panjang sesuai skema validasi. */
 function operationId(label: string): string {
@@ -65,6 +87,7 @@ async function buildTestApp(config: AppConfig = testConfig()): Promise<FastifyIn
     config,
     db: ctx.db,
     accounts: new AccountRepository(ctx.db),
+    auth: new AuthRepository(ctx.db),
     catalog,
     usage,
     reports,
@@ -75,6 +98,7 @@ async function buildTestApp(config: AppConfig = testConfig()): Promise<FastifyIn
 beforeEach(async () => {
   ctx = await createTestDatabase();
   app = await buildTestApp();
+  auth = await createTestAccount(app, ctx.db);
 });
 
 afterEach(async () => {
@@ -84,30 +108,36 @@ afterEach(async () => {
 
 describe('kesehatan', () => {
   it('menjawab /health tanpa menyentuh database', async () => {
-    const response = await app.inject({ method: 'GET', url: '/health' });
+    const response = await inject({ method: 'GET', url: '/health' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ status: 'ok' });
   });
 
   it('menjawab /health/ready setelah database tersambung', async () => {
-    const response = await app.inject({ method: 'GET', url: '/health/ready' });
+    const response = await inject({ method: 'GET', url: '/health/ready' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({ status: 'ready', database: 'ok' });
   });
 
-  it('menyatakan mode simulator secara terbuka', async () => {
-    const response = await app.inject({ method: 'GET', url: '/v1/meta' });
+  it('menyatakan mode identitas dan simulator secara terbuka', async () => {
+    const response = await inject({ method: 'GET', url: '/v1/meta' });
     expect(response.statusCode).toBe(200);
     expect(response.json()).toMatchObject({
       storyEngine: { simulator: true },
-      identityMode: 'placeholder',
+      /*
+       * Berubah dari 'placeholder' menjadi 'authenticated' pada 9 Oktober 2026.
+       * Nilai ini memang dimaksudkan terbaca publik: klien memakainya untuk tahu
+       * apakah identitas masih berupa klaim (dan karena itu tidak aman) atau
+       * sudah dibuktikan.
+       */
+      identityMode: 'authenticated',
     });
   });
 });
 
 describe('katalog', () => {
   it('menyembunyikan dunia berstatus draf', async () => {
-    const response = await app.inject({ method: 'GET', url: '/v1/worlds' });
+    const response = await inject({ method: 'GET', url: '/v1/worlds' });
     expect(response.statusCode).toBe(200);
 
     const body = response.json() as { items: { status: string }[]; total: number };
@@ -116,16 +146,16 @@ describe('katalog', () => {
   });
 
   it('mencari judul tanpa memperhatikan huruf besar-kecil', async () => {
-    const response = await app.inject({ method: 'GET', url: '/v1/worlds?search=MANTAN' });
+    const response = await inject({ method: 'GET', url: '/v1/worlds?search=MANTAN' });
     const body = response.json() as { items: { worldId: string }[] };
     expect(body.items.map((item) => item.worldId)).toEqual(['w_bosku-mantan']);
   });
 
   it('menerapkan filter genre dengan semantik OR', async () => {
-    const fantasy = await app.inject({ method: 'GET', url: '/v1/worlds?genres=fantasy' });
+    const fantasy = await inject({ method: 'GET', url: '/v1/worlds?genres=fantasy' });
     expect((fantasy.json() as { items: unknown[] }).items).toHaveLength(1);
 
-    const combined = await app.inject({ method: 'GET', url: '/v1/worlds?genres=fantasy,mystery' });
+    const combined = await inject({ method: 'GET', url: '/v1/worlds?genres=fantasy,mystery' });
     expect((combined.json() as { total: number }).total).toBe(2);
   });
 
@@ -143,7 +173,7 @@ describe('katalog', () => {
    * tersimpan tanpa genre tanpa satu pun pesan galat.
    */
   it('mengembalikan hasil kosong untuk genre yang tidak ada, bukan seluruh katalog', async () => {
-    const response = await app.inject({ method: 'GET', url: '/v1/worlds?genres=horor' });
+    const response = await inject({ method: 'GET', url: '/v1/worlds?genres=horor' });
     expect(response.statusCode).toBe(200);
     expect((response.json() as { total: number }).total).toBe(0);
   });
@@ -162,7 +192,7 @@ describe('katalog', () => {
        FROM world_versions WHERE world_id = 'w_bosku-mantan'`,
     );
 
-    const response = await app.inject({ method: 'GET', url: '/v1/worlds?genres=slice_of_life' });
+    const response = await inject({ method: 'GET', url: '/v1/worlds?genres=slice_of_life' });
     expect(response.statusCode).toBe(200);
     expect(
       (response.json() as { items: { worldId: string }[] }).items.map((item) => item.worldId),
@@ -170,13 +200,13 @@ describe('katalog', () => {
   });
 
   it('mengembalikan hasil kosong tanpa gagal', async () => {
-    const response = await app.inject({ method: 'GET', url: '/v1/worlds?search=tidakada' });
+    const response = await inject({ method: 'GET', url: '/v1/worlds?search=tidakada' });
     expect(response.statusCode).toBe(200);
     expect((response.json() as { items: unknown[] }).items).toEqual([]);
   });
 
   it('menyajikan detail dunia lengkap dengan karakter dan manifest', async () => {
-    const response = await app.inject({ method: 'GET', url: '/v1/worlds/w_bosku-mantan' });
+    const response = await inject({ method: 'GET', url: '/v1/worlds/w_bosku-mantan' });
     expect(response.statusCode).toBe(200);
 
     const body = response.json() as {
@@ -197,7 +227,7 @@ describe('katalog', () => {
   });
 
   it('mengembalikan 404 untuk dunia yang tidak ada', async () => {
-    const response = await app.inject({ method: 'GET', url: '/v1/worlds/w_tidak-ada' });
+    const response = await inject({ method: 'GET', url: '/v1/worlds/w_tidak-ada' });
     expect(response.statusCode).toBe(404);
     expect(response.json()).toMatchObject({ code: 'NOT_FOUND' });
   });
@@ -206,7 +236,7 @@ describe('katalog', () => {
 describe('rail beranda', () => {
   describe('Top 10 Minggu Ini', () => {
     it('mengurutkan menurut jumlah perjalanan minggu ini, menurun', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/top' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/top' });
       expect(response.statusCode).toBe(200);
 
       const body = response.json() as {
@@ -226,7 +256,7 @@ describe('rail beranda', () => {
     });
 
     it('mengabaikan perjalanan yang lebih tua dari jendela mingguan', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/top' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/top' });
       const body = response.json() as { items: { worldId: string; rank: number }[] };
 
       // w_rapat-tengah-malam punya 2 perjalanan berumur 20 dan 45 hari. Bila
@@ -237,7 +267,7 @@ describe('rail beranda', () => {
     });
 
     it('tidak memasukkan dunia yang diarsipkan', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/top' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/top' });
       const body = response.json() as { items: { worldId: string; status: string }[] };
 
       expect(body.items.every((item) => item.status === 'published')).toBe(true);
@@ -245,17 +275,17 @@ describe('rail beranda', () => {
     });
 
     it('menghormati batas limit dan menolak nilai di luar rentang', async () => {
-      const limited = await app.inject({ method: 'GET', url: '/v1/worlds/top?limit=2' });
+      const limited = await inject({ method: 'GET', url: '/v1/worlds/top?limit=2' });
       expect((limited.json() as { items: unknown[] }).items).toHaveLength(2);
 
-      const tooBig = await app.inject({ method: 'GET', url: '/v1/worlds/top?limit=500' });
+      const tooBig = await inject({ method: 'GET', url: '/v1/worlds/top?limit=500' });
       expect(tooBig.statusCode).toBe(400);
     });
 
     it('memperlakukan "top" sebagai rute sendiri, bukan sebagai ID dunia', async () => {
       // Bila rute statis kalah oleh /v1/worlds/:worldId, permintaan ini akan
       // menjawab 404 "Cerita tidak ditemukan" alih-alih daftar peringkat.
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/top' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/top' });
       expect(response.statusCode).toBe(200);
       expect(response.json()).toHaveProperty('items');
     });
@@ -263,7 +293,7 @@ describe('rail beranda', () => {
 
   describe('Terbaru Dirilis', () => {
     it('mengembalikan dunia terbit, diurutkan menurut tanggal terbit menurun', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/new' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/new' });
       expect(response.statusCode).toBe(200);
 
       const body = response.json() as { items: { worldId: string; publishedAt: string }[] };
@@ -276,7 +306,7 @@ describe('rail beranda', () => {
     });
 
     it('tidak menawarkan dunia yang diarsipkan', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/new' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/new' });
       const body = response.json() as { items: { worldId: string }[] };
       expect(body.items.some((item) => item.worldId === 'w_arsip-lama')).toBe(false);
     });
@@ -284,7 +314,7 @@ describe('rail beranda', () => {
 
   describe('Baru Diperbarui', () => {
     it('mengurutkan menurut waktu revisi terakhir, bukan tanggal terbit', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/updated' });
       expect(response.statusCode).toBe(200);
 
       const body = response.json() as { items: { worldId: string; updatedAt: string }[] };
@@ -303,8 +333,8 @@ describe('rail beranda', () => {
      * kembali sama, uji ini gagal.
      */
     it('menghasilkan urutan yang berbeda dari Terbaru Dirilis', async () => {
-      const updated = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
-      const fresh = await app.inject({ method: 'GET', url: '/v1/worlds/new' });
+      const updated = await inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const fresh = await inject({ method: 'GET', url: '/v1/worlds/new' });
 
       const orderOf = (response: { json: () => { items: { worldId: string }[] } }): string[] =>
         response.json().items.map((item) => item.worldId);
@@ -313,7 +343,7 @@ describe('rail beranda', () => {
     });
 
     it('menempatkan dunia yang terbit lama tetapi baru direvisi di puncak', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/updated' });
       const body = response.json() as { items: { worldId: string }[] };
 
       // Migrasi 006: terbit 90 hari lalu, direvisi 2 hari lalu.
@@ -321,7 +351,7 @@ describe('rail beranda', () => {
     });
 
     it('membedakan updatedAt dari publishedAt', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/updated' });
       const body = response.json() as {
         items: { worldId: string; updatedAt: string; publishedAt: string }[];
       };
@@ -333,18 +363,18 @@ describe('rail beranda', () => {
     });
 
     it('tidak menawarkan dunia yang diarsipkan', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/updated' });
       const body = response.json() as { items: { worldId: string }[] };
       expect(body.items.some((item) => item.worldId === 'w_arsip-lama')).toBe(false);
     });
 
     it('menolak batas yang di luar jangkauan', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated?limit=500' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/updated?limit=500' });
       expect(response.statusCode).toBe(400);
     });
 
     it('tidak direbut oleh rute dunia berbasis id', async () => {
-      const response = await app.inject({ method: 'GET', url: '/v1/worlds/updated' });
+      const response = await inject({ method: 'GET', url: '/v1/worlds/updated' });
       expect(response.statusCode).toBe(200);
       expect(response.json()).toHaveProperty('items');
     });
@@ -360,7 +390,7 @@ describe('pembuatan perjalanan', () => {
   });
 
   it('membuat perjalanan beserta giliran pembuka yang valid', async () => {
-    const response = await app.inject({ method: 'POST', url: '/v1/journeys', payload: body('a') });
+    const response = await inject({ method: 'POST', url: '/v1/journeys', payload: body('a') });
     expect(response.statusCode).toBe(201);
 
     const result = response.json() as {
@@ -384,38 +414,45 @@ describe('pembuatan perjalanan', () => {
    * Pengujian lain tidak menangkap ini karena semuanya memakai akun demo yang
    * sudah dibuat oleh migrasi seed.
    */
-  it('menerima perangkat baru yang belum pernah terdaftar', async () => {
-    const deviceId = `acc_perangkat_baru_${Math.random().toString(36).slice(2, 10)}`;
-
+  it('MENOLAK permintaan tanpa token, bukan memakai akun demo', async () => {
+    /*
+     * Perilaku lama: permintaan tanpa header apa pun menjadi `acc_demo`, sehingga
+     * pemain yang belum masuk melihat perjalanan akun demo dan mengira itu
+     * ceritanya sendiri. Sekarang harus ditolak.
+     */
     const response = await app.inject({
       method: 'POST',
       url: '/v1/journeys',
-      headers: { 'x-account-id': deviceId },
-      payload: body('perangkat-baru'),
+      payload: body('tanpa-token'),
     });
 
-    expect(response.statusCode).toBe(201);
-    expect((response.json() as { journeyId: string }).journeyId).toMatch(/^j_/);
-
-    // Akunnya benar-benar tercatat, bukan sekadar dilewatkan.
-    const { rows } = await ctx.db.query<{ account_id: string }>(
-      'SELECT account_id FROM accounts WHERE account_id = $1',
-      [deviceId],
-    );
-    expect(rows).toHaveLength(1);
+    expect(response.statusCode).toBe(401);
+    expect((response.json() as { code: string }).code).toBe('UNAUTHORIZED');
   });
 
-  it('menerima perangkat baru pada route yang hanya membaca', async () => {
-    const deviceId = `acc_baca_${Math.random().toString(36).slice(2, 10)}`;
+  it('MENOLAK header x-account-id sebagai identitas', async () => {
+    /*
+     * Inti perbaikan keamanan. Sebelumnya header ini cukup untuk menjadi akun
+     * mana pun — terbukti terhadap produksi: satu permintaan dengan id akun orang
+     * lain mengembalikan seluruh perjalanannya.
+     */
     const response = await app.inject({
       method: 'GET',
-      url: '/v1/usage',
-      headers: { 'x-account-id': deviceId },
+      url: '/v1/journeys',
+      headers: { 'x-account-id': auth.accountId },
     });
 
-    // Sebelumnya route ini juga menyentuh tabel berkias-asing dan gagal.
-    expect(response.statusCode).toBe(200);
-    expect((response.json() as { available: number }).available).toBeGreaterThan(0);
+    expect(response.statusCode).toBe(401);
+  });
+
+  it('MENOLAK token yang tidak dikenal', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/journeys',
+      headers: bearer('token-yang-dikarang'),
+    });
+
+    expect(response.statusCode).toBe(401);
   });
 
   /**
@@ -428,12 +465,12 @@ describe('pembuatan perjalanan', () => {
    * terlihat setelah perbaikan sebelumnya masuk. Sekarang diuji langsung.
    */
   it('mengizinkan perjalanan pada dunia berbeda tanpa tabrakan ID beat', async () => {
-    const first = await app.inject({ method: 'POST', url: '/v1/journeys', payload: body('dua-a') });
+    const first = await inject({ method: 'POST', url: '/v1/journeys', payload: body('dua-a') });
     expect(first.statusCode).toBe(201);
 
     // Dunia berbeda supaya aturan "satu perjalanan aktif per dunia" (D-12) tidak
     // menutupi masalahnya dengan balasan 409.
-    const second = await app.inject({
+    const second = await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: body('dua-b', 'w_lentera-terakhir'),
@@ -462,8 +499,8 @@ describe('pembuatan perjalanan', () => {
 
   it('bersifat idempotent untuk operation id yang sama (FR-52)', async () => {
     const payload = body('idem');
-    const first = await app.inject({ method: 'POST', url: '/v1/journeys', payload });
-    const second = await app.inject({ method: 'POST', url: '/v1/journeys', payload });
+    const first = await inject({ method: 'POST', url: '/v1/journeys', payload });
+    const second = await inject({ method: 'POST', url: '/v1/journeys', payload });
 
     expect(second.statusCode).toBe(201);
     const a = first.json() as { journeyId: string; opening: { turnId: string } };
@@ -473,15 +510,15 @@ describe('pembuatan perjalanan', () => {
   });
 
   it('menolak perjalanan kedua pada dunia yang sama (D-12)', async () => {
-    await app.inject({ method: 'POST', url: '/v1/journeys', payload: body('satu') });
-    const second = await app.inject({ method: 'POST', url: '/v1/journeys', payload: body('dua') });
+    await inject({ method: 'POST', url: '/v1/journeys', payload: body('satu') });
+    const second = await inject({ method: 'POST', url: '/v1/journeys', payload: body('dua') });
 
     expect(second.statusCode).toBe(409);
     expect(second.json()).toMatchObject({ code: 'CONFLICT' });
   });
 
   it('menolak dunia yang sudah diarsipkan (AC-04)', async () => {
-    const response = await app.inject({
+    const response = await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: body('arsip', 'w_arsip-lama'),
@@ -491,7 +528,7 @@ describe('pembuatan perjalanan', () => {
   });
 
   it('menolak persona yang tidak sah', async () => {
-    const response = await app.inject({
+    const response = await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: { ...body('bad'), persona: { name: '', age: 5 } },
@@ -503,7 +540,7 @@ describe('pembuatan perjalanan', () => {
 
 describe('sesi bermain', () => {
   async function createJourney(worldId = 'w_bosku-mantan'): Promise<string> {
-    const response = await app.inject({
+    const response = await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: {
@@ -519,7 +556,7 @@ describe('sesi bermain', () => {
   it('mengirim baseline hubungan, bukan keadaan kanonik (anti bocor R-04)', async () => {
     const journeyId = await createJourney();
 
-    const response = await app.inject({ method: 'GET', url: `/v1/journeys/${journeyId}/session` });
+    const response = await inject({ method: 'GET', url: `/v1/journeys/${journeyId}/session` });
     expect(response.statusCode).toBe(200);
 
     const session = response.json() as {
@@ -536,10 +573,18 @@ describe('sesi bermain', () => {
   it('mengembalikan 404 untuk perjalanan milik akun lain', async () => {
     const journeyId = await createJourney();
 
-    const response = await app.inject({
+    /*
+     * Akun KEDUA yang benar-benar terdaftar. Sebelumnya pengujian ini cukup
+     * mengirim header `x-account-id: acc_orang-lain` — dan itulah kelemahannya:
+     * identitas hanya berupa klaim, sehingga siapa pun bisa menjadi siapa pun.
+     * Sekarang pemisahan akun harus dibuktikan dengan token yang berbeda.
+     */
+    const akunLain = await createTestAccount(app, ctx.db, { email: 'orang-lain@contoh.test' });
+
+    const response = await inject({
       method: 'GET',
       url: `/v1/journeys/${journeyId}/session`,
-      headers: { 'x-account-id': 'acc_orang-lain' },
+      headers: bearer(akunLain.token),
     });
 
     // Sengaja NOT_FOUND, bukan FORBIDDEN: keberadaan perjalanan akun lain tidak
@@ -550,7 +595,7 @@ describe('sesi bermain', () => {
 
 describe('giliran dan hubungan', () => {
   async function playToDecision(): Promise<{ journeyId: string; decisionId: string }> {
-    const created = await app.inject({
+    const created = await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: {
@@ -575,7 +620,7 @@ describe('giliran dan hubungan', () => {
   it('menghasilkan teguran dan Waspada untuk aksi yang melewati batas (FR-16, AC-11)', async () => {
     const { journeyId, decisionId } = await playToDecision();
 
-    const response = await app.inject({
+    const response = await inject({
       method: 'POST',
       url: `/v1/journeys/${journeyId}/turns`,
       payload: {
@@ -604,7 +649,7 @@ describe('giliran dan hubungan', () => {
   it('menyebut label opsi yang dipilih, bukan kutipan kosong', async () => {
     const { journeyId, decisionId } = await playToDecision();
 
-    const response = await app.inject({
+    const response = await inject({
       method: 'POST',
       url: `/v1/journeys/${journeyId}/turns`,
       payload: {
@@ -626,7 +671,7 @@ describe('giliran dan hubungan', () => {
   it('menolak keputusan yang sudah dijawab', async () => {
     const { journeyId, decisionId } = await playToDecision();
 
-    await app.inject({
+    await inject({
       method: 'POST',
       url: `/v1/journeys/${journeyId}/turns`,
       payload: {
@@ -637,7 +682,7 @@ describe('giliran dan hubungan', () => {
       },
     });
 
-    const again = await app.inject({
+    const again = await inject({
       method: 'POST',
       url: `/v1/journeys/${journeyId}/turns`,
       payload: {
@@ -654,7 +699,7 @@ describe('giliran dan hubungan', () => {
   it('menolak pengiriman dengan pilihan dan teks sekaligus', async () => {
     const { journeyId, decisionId } = await playToDecision();
 
-    const response = await app.inject({
+    const response = await inject({
       method: 'POST',
       url: `/v1/journeys/${journeyId}/turns`,
       payload: {
@@ -672,7 +717,7 @@ describe('giliran dan hubungan', () => {
   it('mencatat hubungan kanonik setelah beat ter-commit (AC-12)', async () => {
     const { journeyId, decisionId } = await playToDecision();
 
-    await app.inject({
+    await inject({
       method: 'POST',
       url: `/v1/journeys/${journeyId}/turns`,
       payload: {
@@ -683,7 +728,7 @@ describe('giliran dan hubungan', () => {
       },
     });
 
-    const detail = await app.inject({ method: 'GET', url: `/v1/journeys/${journeyId}` });
+    const detail = await inject({ method: 'GET', url: `/v1/journeys/${journeyId}` });
     const body = detail.json() as { relations: { npcId: string; status: string }[] };
 
     expect(body.relations.find((entry) => entry.npcId === 'npc_elysia')?.status).toBe('waspada');
@@ -692,7 +737,7 @@ describe('giliran dan hubungan', () => {
 
 describe('daftar dan penghapusan perjalanan', () => {
   it('mengurutkan yang terakhir dimainkan lebih dahulu', async () => {
-    const first = await app.inject({
+    const first = await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: {
@@ -704,7 +749,7 @@ describe('daftar dan penghapusan perjalanan', () => {
     });
     const firstId = (first.json() as { journeyId: string }).journeyId;
 
-    await app.inject({
+    await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: {
@@ -715,19 +760,19 @@ describe('daftar dan penghapusan perjalanan', () => {
       },
     });
 
-    await app.inject({
+    await inject({
       method: 'PUT',
       url: `/v1/journeys/${firstId}/progress`,
       payload: { lastReadSequence: 5, lastReadBeatId: 'b', decisionCount: 1, hasUnreadBeats: false },
     });
 
-    const list = await app.inject({ method: 'GET', url: '/v1/journeys' });
+    const list = await inject({ method: 'GET', url: '/v1/journeys' });
     const body = list.json() as { items: { journeyId: string }[] };
     expect(body.items[0]?.journeyId).toBe(firstId);
   });
 
   it('menghapus perjalanan dan mengosongkan daftar', async () => {
-    const created = await app.inject({
+    const created = await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: {
@@ -739,17 +784,17 @@ describe('daftar dan penghapusan perjalanan', () => {
     });
     const journeyId = (created.json() as { journeyId: string }).journeyId;
 
-    const deleted = await app.inject({ method: 'DELETE', url: `/v1/journeys/${journeyId}` });
+    const deleted = await inject({ method: 'DELETE', url: `/v1/journeys/${journeyId}` });
     expect(deleted.statusCode).toBe(204);
 
-    const list = await app.inject({ method: 'GET', url: '/v1/journeys' });
+    const list = await inject({ method: 'GET', url: '/v1/journeys' });
     expect((list.json() as { items: unknown[] }).items).toHaveLength(0);
   });
 });
 
 describe('kuota', () => {
   it('melaporkan pemakaian sebagai angka pasti dari server', async () => {
-    const response = await app.inject({ method: 'GET', url: '/v1/usage' });
+    const response = await inject({ method: 'GET', url: '/v1/usage' });
     expect(response.statusCode).toBe(200);
 
     const usage = response.json() as {
@@ -770,10 +815,10 @@ describe('kuota', () => {
   });
 
   it('menaikkan pemakaian setelah giliran berhasil', async () => {
-    const before = await app.inject({ method: 'GET', url: '/v1/usage' });
+    const before = await inject({ method: 'GET', url: '/v1/usage' });
     const beforeSpent = (before.json() as { spent: number }).spent;
 
-    const created = await app.inject({
+    const created = await inject({
       method: 'POST',
       url: '/v1/journeys',
       payload: {
@@ -785,17 +830,19 @@ describe('kuota', () => {
     });
     expect(created.statusCode).toBe(201);
 
-    const after = await app.inject({ method: 'GET', url: '/v1/usage' });
+    const after = await inject({ method: 'GET', url: '/v1/usage' });
     expect((after.json() as { spent: number }).spent).toBeGreaterThan(beforeSpent);
   });
 
   it('menolak giliran ketika kuota tidak mencukupi', async () => {
     // Kuota sangat kecil sehingga giliran pertama pun tidak muat.
     const tightApp = await buildTestApp(testConfig({ FREE_DAILY_TOKENS: '10' }));
+    const tightAuth = await createTestAccount(tightApp, ctx.db, { email: 'sempit@contoh.test' });
 
     const response = await tightApp.inject({
       method: 'POST',
       url: '/v1/journeys',
+      headers: bearer(tightAuth.token),
       payload: {
         clientOperationId: operationId('sempit'),
         worldId: 'w_bosku-mantan',
@@ -813,7 +860,7 @@ describe('kuota', () => {
 
 describe('laporan', () => {
   it('menyimpan laporan dan menandainya tersimpan di server', async () => {
-    const response = await app.inject({
+    const response = await inject({
       method: 'POST',
       url: '/v1/reports',
       payload: {
@@ -828,7 +875,7 @@ describe('laporan', () => {
   });
 
   it('menolak kategori yang tidak dikenal', async () => {
-    const response = await app.inject({
+    const response = await inject({
       method: 'POST',
       url: '/v1/reports',
       payload: {
@@ -843,7 +890,7 @@ describe('laporan', () => {
 
 describe('bentuk kesalahan', () => {
   it('memakai bentuk yang sama untuk kesalahan dan rate limit', async () => {
-    const notFoundResponse = await app.inject({ method: 'GET', url: '/v1/tidak-ada' });
+    const notFoundResponse = await inject({ method: 'GET', url: '/v1/tidak-ada' });
     expect(notFoundResponse.statusCode).toBe(404);
     expect(notFoundResponse.json()).toMatchObject({ code: 'NOT_FOUND', retryable: false });
   });
@@ -854,7 +901,15 @@ describe('bentuk kesalahan', () => {
       throw new Error('detail rahasia: tabel accounts, kredensial abc123');
     });
 
-    const response = await brokenApp.inject({ method: 'GET', url: '/v1/rusak' });
+    // Akunnya dibuat pada aplikasi ini, karena token hanya berlaku di basis data
+    // yang sama dengan yang dipakai aplikasi itu.
+    const brokenAuth = await createTestAccount(brokenApp, ctx.db, { email: 'rusak@contoh.test' });
+
+    const response = await brokenApp.inject({
+      method: 'GET',
+      url: '/v1/rusak',
+      headers: bearer(brokenAuth.token),
+    });
     expect(response.statusCode).toBe(500);
 
     const body = response.body;
