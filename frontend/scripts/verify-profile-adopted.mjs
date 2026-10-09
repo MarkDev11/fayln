@@ -165,6 +165,61 @@ async function main() {
   })()`;
 
   /*
+   * Menekan TAB di bilah bawah, bukan teks apa pun yang kebetulan sama.
+   *
+   * Versi sebelumnya memakai `clkText('Pengaturan')` — mencari elemen mana pun
+   * yang teksnya persis "Pengaturan". Itu DUA kali menyesatkan:
+   *
+   *   1. Label tab berasal dari kamus (`tabs.settings`). Bila teksnya berubah,
+   *      pencarian gagal tanpa galat dan pemeriksaan "membuka halaman
+   *      Pengaturan" cukup dilaporkan MISS — padahal aplikasinya baik.
+   *   2. Halaman Pengaturan punya JUDUL "Pengaturan" juga. Setelah muat ulang,
+   *      elemen yang lebih dulu ditemukan bisa jadi judul halaman, bukan tab,
+   *      sehingga tekanan tidak berpindah ke mana-mana.
+   *
+   * Karena itu tab dicari SECARA STRUKTURAL: `react-navigation` selalu membungkus
+   * setiap tab dengan `role="tab"` plus `aria-label`. Label itu sendiri diambil
+   * dari `tabBarAccessibilityLabel` di `app/(tabs)/_layout.tsx`, jadi mengandalkan
+   * `aria-label` tetap benar walau teks tampilannya berubah.
+   *
+   * `data-testid` sengaja TIDAK dipakai: menambahnya berarti menambah kode uji ke
+   * dalam komponen produksi (dan `Tabs.Screen` tidak meneruskan `testID` ke bilah
+   * bawah dengan andal). `aria-label` sudah menjadi kontrak aksesibilitas yang
+   * memang dimiliki tab, jadi alat ukur cukup membacanya.
+   */
+  const clkTab = (label) => `(() => {
+    const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+    let hit = tabs.find((n) => n.getAttribute('aria-label') === ${JSON.stringify(label)});
+    if (!hit) {
+      hit = tabs.find((n) => (n.innerText || '').trim() === ${JSON.stringify(label)});
+    }
+    if (!hit) {
+      return 'TAB-TIDAK-ADA(ada ' + tabs.length + ' tab: ' +
+        tabs.map((n) => n.getAttribute('aria-label') || (n.innerText || '').trim()).join(' | ') + ')';
+    }
+    const r = hit.getBoundingClientRect();
+    const o = { bubbles: true, cancelable: true, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
+    for (const [T, t] of [[PointerEvent, 'pointerdown'], [MouseEvent, 'mousedown'], [PointerEvent, 'pointerup'], [MouseEvent, 'mouseup'], [MouseEvent, 'click']]) hit.dispatchEvent(new T(t, o));
+    return 'OK';
+  })()`;
+
+  /*
+   * Menunggu halaman Pengaturan benar-benar terbuka, dengan jeda dan percobaan
+   * ulang tekanan. Satu tekanan bisa mendarat sebelum bilah tab selesai
+   * terpasang setelah muat ulang; mencoba lagi lebih jujur daripada langsung
+   * melaporkan kegagalan.
+   */
+  const bukaTab = async (label) => {
+    for (let i = 0; i < 12; i += 1) {
+      const hasil = await evaluate(clkTab(label));
+      if (i === 0) console.log(`  ..   tekan tab ${label}: ${hasil}`);
+      if (await waitFor(`document.body.innerText.includes('Profil')`, 2500)) return true;
+      await sleep(600);
+    }
+    return false;
+  };
+
+  /*
    * Menekan tombol yang SUNGGUH menangani tekanannya.
    *
    * Struktur `StickyActionBar` adalah
@@ -218,8 +273,7 @@ async function main() {
     check(await waitFor(`document.body.innerText.includes('Semua Cerita')`), 'masuk sampai Beranda');
 
     // Buka tab Pengaturan lewat bilah bawah.
-    await evaluate(clkText('Pengaturan'));
-    const atSettings = await waitFor(`document.body.innerText.includes('Profil')`);
+    const atSettings = await bukaTab('Pengaturan');
     check(atSettings, 'membuka halaman Pengaturan');
     await waitFor(`(() => {
       const n = document.querySelectorAll('input');
@@ -246,7 +300,7 @@ async function main() {
     );
 
     // Kembali ke Beranda, buka dunia, dan mulai cerita.
-    await evaluate(clkText('Beranda'));
+    await evaluate(clkTab('Beranda'));
     await waitFor(`document.body.innerText.includes('Semua Cerita')`);
     await evaluate(`(() => {
       const c = document.querySelector('[data-testid^="story-card-"]');
@@ -265,8 +319,8 @@ async function main() {
      */
     await send('Page.reload', { ignoreCache: false });
     await waitFor(`document.body.innerText.includes('Semua Cerita')`, 45000);
-    await evaluate(clkText('Pengaturan'));
-    await waitFor(`document.body.innerText.includes('Profil')`);
+    const atSettings2 = await bukaTab('Pengaturan');
+    check(atSettings2, 'membuka halaman Pengaturan setelah muat ulang');
     /*
      * Tunggu kolomnya benar-benar terisi. Profil dibaca dari penyimpanan secara
      * asinkron; membaca terlalu cepat akan melihat keadaan kosong sementara dan
@@ -286,7 +340,7 @@ async function main() {
       `profil BERTAHAN setelah muat ulang (Nama: ${JSON.stringify(afterReload[1] ?? '')})`,
     );
 
-    await evaluate(clkText('Beranda'));
+    await evaluate(clkTab('Beranda'));
     await waitFor(`document.body.innerText.includes('Semua Cerita')`);
     await evaluate(`(() => {
       const c = document.querySelector('[data-testid^="story-card-"]');
