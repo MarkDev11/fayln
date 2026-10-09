@@ -20,7 +20,7 @@ import { ReportRepository } from '../src/repositories/reportRepository';
 import { UsageRepository } from '../src/repositories/usageRepository';
 import { buildApp } from '../src/server';
 import { JourneyService } from '../src/services/journeyService';
-import { DeterministicStoryEngine } from '../src/services/storyEngine';
+import { DeterministicStoryEngine, type StoryEngine } from '../src/services/storyEngine';
 
 import { createTestDatabase, type TestDatabase } from './helpers/testDb';
 import { bearer, createTestAccount } from './helpers/auth';
@@ -66,7 +66,10 @@ function testConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfig {
   } as NodeJS.ProcessEnv);
 }
 
-async function buildTestApp(config: AppConfig = testConfig()): Promise<FastifyInstance> {
+async function buildTestApp(
+  config: AppConfig = testConfig(),
+  engine: StoryEngine = new DeterministicStoryEngine(),
+): Promise<FastifyInstance> {
   const usage = new UsageRepository(ctx.db, config.plan);
   const catalog = new CatalogRepository(ctx.db);
   const journeys = new JourneyRepository(ctx.db);
@@ -78,7 +81,7 @@ async function buildTestApp(config: AppConfig = testConfig()): Promise<FastifyIn
     journeys,
     operations,
     usage,
-    engine: new DeterministicStoryEngine(),
+    engine,
     newId: () => `id_${Math.random().toString(36).slice(2, 12)}`,
     now: () => new Date(),
   });
@@ -568,6 +571,71 @@ describe('sesi bermain', () => {
     expect(session.world.worldId).toBe('w_bosku-mantan');
     expect(session.relationsBaseline.map((entry) => entry.status)).toEqual(['normal', 'normal']);
     expect(session.beats.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * Regresi produksi: `GET /v1/journeys/:id/session` MENGKLAIM simulator.
+   *
+   * Bugnya bukan sekadar label yang salah. Yang dilaporkan pemain adalah "masih
+   * terasa seperti templat" — dan sebagian sebabnya ada di sini: layar pemain
+   * diberi tahu bahwa cerita di bawahnya berasal dari contoh bawaan, padahal
+   * mesin AI sungguhan yang menulisnya. Klaim palsu itu datang dari satu kata
+   * yang ditulis mati di repositori (`simulator: true`), lalu diteruskan apa
+   * adanya oleh lapisan layanan ke perangkat.
+   *
+   * Bukti produksi saat perbaikan (9 Okt 2026):
+   *
+   *   CREATE  -> opening.simulator = false | modelId = ai-story
+   *   SESSION -> simulator = true            <-- inilah yang bertentangan
+   *
+   * Pengujian ini memasang MESIN yang mengaku simulator, lalu memeriksa bahwa
+   * jawabannya di kedua pintu masuk — giliran pembuka DAN sesi — sama. Sebelum
+   * perbaikan, pintu pertama menjawab `true` dan pintu kedua menjawab `false`:
+   * dua jawaban untuk satu pertanyaan yang sama.
+   */
+  it('menyatakan simulator dari MESIN, bukan dari konstanta (pembuka = sesi)', async () => {
+    /*
+     * Mesin palsu yang mengaku simulator. Yang diuji bukan apakah dirinya benar,
+     * melainkan apakah pengakuannya SAMPAI ke klien lewat kedua rute. Dengan
+     * mesin sungguhan keduanya kebetulan sama-sama `false`, sehingga nilai yang
+     * ditulis mati pun akan lulus — karena itu mesinnya harus dibalik.
+     *
+     * Memakai SUBKELAS, bukan `{ ...new DeterministicStoryEngine() }`: mesin ini
+     * menyimpan metodenya di prototipe, sehingga spread hanya menyalin bidang
+     * (`isSimulator`, `estimatedTurnCost`) dan membuang `generateOpening` —
+     * yang muncul sebagai HTTP 500, bukan sebagai kegagalan yang terbaca.
+     */
+    class MesinYangMengakuSimulator extends DeterministicStoryEngine {
+      override readonly isSimulator = true;
+    }
+    app = await buildTestApp(testConfig(), new MesinYangMengakuSimulator());
+
+    const created = await inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('mengaku'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+
+    const { journeyId, opening } = created.json() as {
+      journeyId: string;
+      opening: { simulator: boolean };
+    };
+    expect(opening.simulator).toBe(true);
+
+    const sessionResponse = await inject({
+      method: 'GET',
+      url: `/v1/journeys/${journeyId}/session`,
+    });
+    expect(sessionResponse.statusCode).toBe(200);
+
+    const session = sessionResponse.json() as { simulator: boolean };
+    expect(session.simulator).toBe(true);
   });
 
   it('mengembalikan 404 untuk perjalanan milik akun lain', async () => {

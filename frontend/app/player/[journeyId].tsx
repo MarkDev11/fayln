@@ -10,7 +10,6 @@ import { Button } from '@/components/Button';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Icon } from '@/components/Icon';
 import { Screen } from '@/components/Screen';
-import { SimulatorBadge } from '@/components/SimulatorBadge';
 import { StateView } from '@/components/StateView';
 import { Text } from '@/components/Text';
 
@@ -30,7 +29,7 @@ import type { SceneNotice } from '@/features/player/types';
 import { useI18n } from '@/i18n';
 import { telemetry } from '@/telemetry/analytics';
 import { useTheme } from '@/theme/ThemeProvider';
-import { radius, space } from '@/theme/tokens';
+import { space } from '@/theme/tokens';
 
 const NOTICE_TIMEOUT_MS = 7000;
 
@@ -325,31 +324,61 @@ function PlayerView({ session }: { session: JourneySession }) {
             accessibilityRole="button"
             accessibilityLabel={t('player.back')}
             hitSlop={8}
-            style={[
-              styles.hudButton,
-              { backgroundColor: colors.bgSurface, borderColor: colors.line },
-            ]}
+            style={styles.hudButton}
             testID="player-back"
           >
-            <Icon name="chevronLeft" size={20} color={colors.inkPrimary} />
+            <Icon name="chevronLeft" size={22} color={colors.inkPrimary} />
           </Pressable>
-          <SimulatorBadge />
         </View>
-        {!engine.isPersistent ? (
-          /*
-           * Papan di belakang teks, bukan teks langsung di atas gambar.
-           *
-           * Tanpa latar, teks peringatan ini duduk di atas latar adegan — yang
-           * bisa terang, gelap, atau ramai — dan kontrasnya habis. Warnanya
-           * "warning" membuatnya tampak kuning pucat yang menghilang di atas
-           * ilustrasi apa pun.
-           */
-          <View style={[styles.storagePlate, { backgroundColor: colors.bgSurface }]}>
-            <Text variant="caption" tone="warning" numberOfLines={2}>
-              {t('storage.memoryOnly')}
-            </Text>
-          </View>
-        ) : null}
+
+        {/*
+         * Kendali cerita ada di PALING ATAS, bukan di panel bawah — dan tanpa
+         * bingkai sama sekali.
+         *
+         * Di bawah, empat tombol itu duduk di kotak bergaris di atas kotak
+         * bergaris lain (kotak dialog). Dua lapis bingkai itulah bagian yang
+         * paling menonjol di layar, padahal yang penting adalah ceritanya —
+         * dan itulah yang membuat pemilik produk menyebut layarnya "masih
+         * templat". Di sini yang tersisa hanya teks tebal dengan pemisah tipis.
+         *
+         * Diletakkan di barisnya SENDIRI, bukan di sebelah tombol kembali:
+         * `hudRow` memakai `justifyContent: 'space-between'`, sehingga satu baris
+         * akan mendorong kendali ke tepi kanan dan menjauhkannya dari tempat
+         * mata membacanya.
+         */}
+        <View style={styles.controlsRow}>
+          <PlayerControls
+            testID="player-controls"
+            items={[
+              {
+                id: 'auto',
+                icon: state.auto ? 'pause' : 'play',
+                label: state.auto ? t('player.autoOn') : t('player.auto'),
+                active: state.auto,
+                disabled: isSubmitting,
+                onPress: engine.toggleAuto,
+              },
+              {
+                id: 'log',
+                icon: 'book',
+                label: t('player.log'),
+                onPress: openLog,
+              },
+              {
+                id: 'npc',
+                icon: 'journey',
+                label: t('player.characters'),
+                onPress: () => setInspectorVisible(true),
+              },
+              {
+                id: 'hide',
+                icon: 'eyeOff',
+                label: t('player.hideUi'),
+                onPress: () => setUiHidden(true),
+              },
+            ]}
+          />
+        </View>
       </View>
 
       <View
@@ -366,38 +395,6 @@ function PlayerView({ session }: { session: JourneySession }) {
             testID="relation-notice"
           />
         ) : null}
-
-        <PlayerControls
-          testID="player-controls"
-          items={[
-            {
-              id: 'auto',
-              icon: state.auto ? 'pause' : 'play',
-              label: state.auto ? t('player.autoOn') : t('player.auto'),
-              active: state.auto,
-              disabled: isSubmitting,
-              onPress: engine.toggleAuto,
-            },
-            {
-              id: 'log',
-              icon: 'book',
-              label: t('player.log'),
-              onPress: openLog,
-            },
-            {
-              id: 'npc',
-              icon: 'journey',
-              label: t('player.characters'),
-              onPress: () => setInspectorVisible(true),
-            },
-            {
-              id: 'hide',
-              icon: 'eyeOff',
-              label: t('player.hideUi'),
-              onPress: () => setUiHidden(true),
-            },
-          ]}
-        />
 
         {state.decision ? (
           <View style={styles.decisionBlock}>
@@ -426,11 +423,13 @@ function PlayerView({ session }: { session: JourneySession }) {
               testID="player-dialogue"
             />
             {isSubmitting ? (
-              <View
-                accessible
-                accessibilityRole="alert"
-                style={[styles.waiting, { borderColor: colors.line, backgroundColor: colors.bgMuted }]}
-              >
+              /*
+               * Keadaan "AI sedang menulis" — tanpa bingkai, senada dengan sisa
+               * layar. Bentuk lamanya kotak bergaris berlatar; di layar yang
+               * sudah dibersihkan dari bingkai, satu kotak tersisa justru
+               * menarik perhatian paling besar.
+               */
+              <View accessible accessibilityRole="alert" style={styles.waiting}>
                 <Text variant="small" tone="secondary">
                   {t('player.waiting')}
                 </Text>
@@ -535,14 +534,23 @@ const styles = StyleSheet.create({
   hudRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
     alignSelf: 'stretch',
   },
+  controlsRow: {
+    alignSelf: 'stretch',
+    paddingTop: space.xs,
+  },
+  /**
+   * Tombol kembali tanpa bingkai.
+   *
+   * Sebelumnya ia kotak 40×40 bergaris dengan latar. Di sudut layar, di atas
+   * ilustrasi, kotak itu adalah elemen berbingkai pertama yang dilihat mata —
+   * sebelum adegan dan sebelum kalimatnya. Yang tersisa sekarang hanya ikon,
+   * dengan `hitSlop` menjaga area sentuhnya tetap lapang.
+   */
   hudButton: {
-    width: 40,
-    height: 40,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
+    width: 36,
+    height: 36,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -566,14 +574,6 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     opacity: 0.9,
   },
-  /** Papan di belakang peringatan penyimpanan, agar terbaca di atas latar apa pun. */
-  storagePlate: {
-    maxWidth: 280,
-    paddingHorizontal: space.sm,
-    paddingVertical: space.xs,
-    borderRadius: radius.chip,
-    alignSelf: 'flex-start',
-  },
   bottom: {
     paddingHorizontal: space.lg,
     paddingTop: space.md,
@@ -583,9 +583,6 @@ const styles = StyleSheet.create({
     gap: space.lg,
   },
   waiting: {
-    padding: space.md,
-    borderRadius: 12,
-    borderWidth: StyleSheet.hairlineWidth,
     gap: 2,
   },
   waitingAction: {

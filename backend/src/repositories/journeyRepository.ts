@@ -281,12 +281,18 @@ export class JourneyRepository {
   }
 
   /**
-   * Data sesi tanpa `world`.
+   * Data sesi tanpa `world` dan tanpa `simulator`.
    *
    * Dunia sengaja TIDAK diambil di sini: repository ini tidak mengimpor repository
    * lain. Penyusunan akhir dilakukan lapisan layanan.
+   *
+   * `simulator` juga TIDAK di sini, dan itu disengaja: lapisan inilah satu-satunya
+   * yang tidak dapat menjawabnya dengan jujur. Dulu nilainya ditulis mati `true`
+   * di sini — akibatnya setiap pemain diberi tahu bahwa mesin simulator yang
+   * menulis ceritanya, padahal yang bekerja adalah AI sungguhan. Yang berhak
+   * menjawab adalah pemegang mesin: layanan cerita (lihat `openSession`).
    */
-  async sessionData(journeyId: string): Promise<Omit<JourneySessionDTO, 'world'> | null> {
+  async sessionData(journeyId: string): Promise<Omit<JourneySessionDTO, 'world' | 'simulator'> | null> {
     const journey = await this.findById(journeyId);
     if (!journey) {
       return null;
@@ -300,7 +306,6 @@ export class JourneyRepository {
       relationsBaseline: await this.baselineRelations(journeyId),
       memory: await this.memorySnapshot(journeyId),
       committedCursor: beats.length,
-      simulator: true,
     };
   }
 

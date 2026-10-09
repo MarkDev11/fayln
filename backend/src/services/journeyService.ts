@@ -360,7 +360,13 @@ export class JourneyService {
       throw worldRetired();
     }
 
-    return { ...session, world: world satisfies WorldDetailDTO };
+    // `simulator` disebut DI SINI, dari mesin yang benar-benar terpasang — bukan
+    // dari repository, yang hanya bisa menebak. Pola yang sama dengan `buildEnvelope`.
+    return {
+      ...session,
+      simulator: this.deps.engine.isSimulator,
+      world: world satisfies WorldDetailDTO,
+    };
   }
 
   async syncReadProgress(

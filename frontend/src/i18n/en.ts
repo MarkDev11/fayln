@@ -360,6 +360,11 @@ export const en: Dictionary = {
   'persona.creating': 'Composing your story…',
   'persona.creatingHint': 'This usually takes 20 seconds. Stay on this page.',
 
+  /* See the Indonesian dictionary for why this screen names the AI outright. */
+  'world.forgeTitle': 'AI IS BUILDING A WORLD',
+  'world.forgeHint':
+    'Your opening scene is written from scratch — the place, the people, and the words. Usually 30 to 90 seconds.',
+
   'storage.persistent': 'Your reading position is saved on this device.',
   'storage.memoryOnly':
     'Your reading position only lasts while the app is open. Permanent storage comes in a later stage.',

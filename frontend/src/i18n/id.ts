@@ -380,6 +380,23 @@ export const id = {
   'persona.creating': 'Menyusun cerita…',
   'persona.creatingHint': 'Ini biasanya 20 detik. Tetap di halaman ini, ya.',
 
+  /*
+   * Layar "AI sedang membuat dunia".
+   *
+   * Kalimatnya sengaja menyebut AI secara terbuka, bukan "memuat…" atau
+   * "menyiapkan…": yang benar-benar terjadi memang penyusunan oleh model bahasa,
+   * dan pemain berhak tahu apa yang sedang menulis ceritanya. Menyembunyikannya
+   * di balik kata "memuat" justru membuat hasilnya terasa seperti templat yang
+   * kebetulan sudah ada.
+   *
+   * `forgeTitle` memakai huruf besar semua dan terasa seperti judul bab, karena
+   * itulah yang sedang terjadi: sebuah dunia sedang dibentuk, bukan data sedang
+   * diambil.
+   */
+  'world.forgeTitle': 'AI SEDANG MEMBUAT DUNIA',
+  'world.forgeHint':
+    'Adegan pembuka disusun dari nol untukmu — latar, tokoh, dan kalimatnya. Biasanya 30 sampai 90 detik.',
+
   'storage.persistent': 'Posisi baca tersimpan di perangkat ini.',
   'storage.memoryOnly':
     'Posisi baca hanya tersimpan selama aplikasi terbuka. Penyimpanan permanen menyusul di tahap berikutnya.',

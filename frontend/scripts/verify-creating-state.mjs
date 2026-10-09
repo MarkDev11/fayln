@@ -328,28 +328,40 @@ async function main() {
 
     /*
      * Pemantauan ini inti skripnya. Yang dicari BUKAN "teksnya ada di bundel",
-     * melainkan "teksnya benar-benar tampil di DOM saat pekerjaan berjalan".
-     * Polling 400 ms pada pekerjaan 19-24 detik pasti menangkap jendelanya.
+     * melainkan "layar pembuatan dunia benar-benar tampil di DOM saat pekerjaan
+     * berjalan".
+     *
+     * Sejak perubahan ini, seluruh halaman dunia DIGANTIKAN oleh layar penuh
+     * beranimasi gelombang. Karena itu yang diperiksa bukan lagi label tombol,
+     * melainkan bahwa (a) pesan pembuatannya tampil, dan (b) sisa halaman dunia
+     * SUDAH TIDAK ADA — kalau keduanya terlihat sekaligus, layarnya hanya
+     * ditumpuk, bukan digantikan.
      */
-    let sawSheetState = false;
-    let sawButtonLabel = false;
-    let sawHint = false;
+    let sawForgeTitle = false;
+    let sawForgeHint = false;
+    let halamanLamaTersisa = false;
     const started = Date.now();
-    while (Date.now() - started < 40000) {
+    while (Date.now() - started < 60000) {
       const text = String(await evaluate(cdp, 'document.body.innerText'));
-      if (text.includes('Menyusun cerita…')) sawSheetState = true;
-      if (text.includes('Ini biasanya 20 detik')) sawHint = true;
-      if (text.includes('Menyusun cerita…') && text.includes('Mulai Perjalanan') === false) {
-        sawButtonLabel = true;
+      if (text.includes('AI SEDANG MEMBUAT DUNIA')) {
+        sawForgeTitle = true;
+        // Selama layar pembuatan tampil, judul bagian halaman dunia tidak boleh
+        // ikut terlihat.
+        if (text.includes('Sinopsis') || text.includes('Tokoh') === true) {
+          halamanLamaTersisa = true;
+        }
       }
+      if (text.includes('Adegan pembuka disusun dari nol')) sawForgeHint = true;
       // Selesai: sudah pindah ke pemain.
-      if (text.includes('Kembali') === false && /Adegan|Bab|Pilihan/.test(text)) break;
+      if (/Adegan|Bab|Pilihan/.test(text) && !text.includes('AI SEDANG MEMBUAT DUNIA')) break;
       await sleep(400);
     }
     const elapsed = Math.round((Date.now() - started) / 1000);
 
-    check(sawSheetState, `keadaan "Menyusun cerita…" terlihat di layar (dalam ${elapsed}s)`);
-    check(sawHint, 'keterangan lamanya terlihat');
+    check(sawForgeTitle, `layar "AI SEDANG MEMBUAT DUNIA" terlihat (dalam ${elapsed}s)`);
+    check(sawForgeHint, 'keterangan prosesnya terlihat');
+    check(!halamanLamaTersisa, 'halaman dunia benar-benar digantikan, bukan ditumpuk');
+    check(elapsed >= 20, `jendela pembuatan cukup lebar untuk terlihat (${elapsed}s)`);
 
     if (opts.shot) {
       const shot = await cdp.send('Page.captureScreenshot', { format: 'png' });
@@ -362,7 +374,7 @@ async function main() {
       console.log('Cuplikan DOM:\n' + String(await evaluate(cdp, 'document.body.innerText')).slice(0, 800));
       process.exitCode = 1;
     } else {
-      console.log('\nHASIL: OK — keadaan menyusun cerita terbukti muncul di layar.');
+      console.log('\nHASIL: OK — layar pembuatan dunia terbukti muncul di layar.');
     }
   } finally {
     if (cdp) cdp.close();

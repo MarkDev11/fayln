@@ -21,6 +21,7 @@ import { contentRatingLabelKey, worldStatusLabelKey } from '@/domain/labels';
 import { MEDIA_ASPECT } from '@/domain/media';
 import type { NPCPublicDTO, WorldDetailDTO } from '@/domain/types';
 import { StartJourneySheet, type PersonaDraft } from '@/features/catalog/StartJourneySheet';
+import { WorldForgeScreen } from '@/features/player/components/WorldForgeScreen';
 import { useProfile } from '@/features/profile/ProfileProvider';
 import { useGenreLabel } from '@/hooks/useGenreLabel';
 import { useI18n } from '@/i18n';
@@ -73,7 +74,16 @@ export default function WorldDetailScreen() {
           persona: { name: persona.name, age: persona.age },
           responseLocale: persona.responseLocale,
         });
-        telemetry.track('journey_start_result', { simulator: true });
+        /*
+         * `simulator` dibaca dari JAWABAN, bukan ditulis mati.
+         *
+         * Sebelumnya di sini tertulis `{ simulator: true }`. Akibatnya setiap
+         * kejadian tercatat sebagai simulator, sehingga angka analitiknya tidak
+         * dapat dipakai untuk menjawab pertanyaan yang justru paling penting:
+         * berapa banyak pemain yang sungguh dilayani AI. Nilai yang benar sudah
+         * tersedia di `opening.simulator` — tinggal dipakai.
+         */
+        telemetry.track('journey_start_result', { simulator: created.opening.simulator });
         setSheetVisible(false);
         // Bentuk objek dipakai agar tidak bergantung pada dukungan template literal
         // di rute bertipe.
@@ -87,7 +97,7 @@ export default function WorldDetailScreen() {
         // Bila jalur profil lengkap gagal, buka lembar persona agar pemain punya
         // jalan keluar alih-alih tombol yang tampak tidak bereaksi.
         setSheetVisible(true);
-        telemetry.track('journey_start_result', { errorCode: 'failed', simulator: true });
+        telemetry.track('journey_start_result', { errorCode: 'failed' });
       } finally {
         setCreating(false);
       }
@@ -104,7 +114,6 @@ export default function WorldDetailScreen() {
   }, [router]);
 
   const onStartJourney = useCallback(() => {
-    telemetry.track('journey_start_requested', { simulator: true });
     setCreateError(null);
 
     // Profil lengkap berarti pemain sudah mengisi nama dan usia di Pengaturan,
@@ -170,6 +179,24 @@ export default function WorldDetailScreen() {
 
   const data = world.data;
   const isPlayable = data.status === 'published';
+
+  /*
+   * Selama perjalanan dibuat, seluruh halaman digantikan layar "AI sedang membuat
+   * dunia" — BUKAN hanya tombol yang berubah label.
+   *
+   * Pembuatannya 27–89 detik. Selama itu pemain tidak punya apa pun untuk
+   * dikerjakan di halaman ini, dan halaman yang tampak diam terbaca sebagai
+   * aplikasi yang rusak. Menggantinya dengan layar penuh yang bergerak
+   * menyatakan dua hal sekaligus: ada yang sedang dikerjakan, dan hasilnya akan
+   * berupa adegan yang disusun, bukan templat.
+   *
+   * Diletakkan SEBELUM `return` utama dan mengembalikan pohon yang berbeda, bukan
+   * sebagai lapisan di atas halaman: dengan begitu tidak ada gulir halaman yang
+   * masih dapat disentuh di belakangnya.
+   */
+  if (creating) {
+    return <WorldForgeScreen worldTitle={data.title} testID="world-forge" />;
+  }
 
   return (
     <View style={[styles.root, { backgroundColor: colors.bgApp, paddingTop: insets.top }]}>

@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
 import { ChoiceSheet } from '@/features/player/components/ChoiceSheet';
 import { Composer, MAX_CUSTOM_ACTION_CHARS } from '@/features/player/components/Composer';
@@ -79,6 +80,47 @@ describe('DialogueBox', () => {
     await fireEvent.press(screen.getByText('Teks pendek.'));
 
     expect(onAdvance).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Kotak dialog: TANPA bingkai, latar HITAM, teks PUTIH.
+   *
+   * Bentuk lamanya memakai `colors.bgSurface` + `colors.line`, sehingga ia
+   * berubah warna mengikuti tema — padahal ia duduk di atas GAMBAR adegan yang
+   * tidak ikut berubah. Akibatnya kotak itu bisa "benar" di satu tema dan hilang
+   * kontras di tema lain.
+   *
+   * Pengujian ini memeriksa warnanya sebagai NILAI, bukan sebagai token: kalau
+   * seseorang mengembalikannya ke `colors.bgSurface`, nilainya berubah dan uji
+   * ini memerah. Itulah yang diinginkan — keputusannya adalah mematok warna.
+   */
+  it('berlatar hitam berteks putih tanpa bingkai', async () => {
+    await render(
+      <TestProviders>
+        <DialogueBox
+          line={{ beatId: 'b4', kind: 'say', speakerNpcId: 'npc_elysia', text: 'Kamu telat.' }}
+          speakerName="Elysia"
+          onRevealed={() => {}}
+          onAdvance={() => {}}
+          instant
+        />
+      </TestProviders>,
+    );
+
+    /*
+     * Simpul terluar adalah Pressable. `getByLabelText` menemukannya lewat label
+     * aksesibilitas yang memang dibentuk komponen ini.
+     */
+    const kotak = screen.getByLabelText(/Elysia: Kamu telat\./);
+    const gaya = StyleSheet.flatten(kotak.props.style);
+
+    expect(gaya.backgroundColor).toBe('#000000');
+    expect(gaya.borderWidth ?? 0).toBe(0);
+    expect(gaya.borderColor).toBeUndefined();
+    expect(gaya.borderRadius ?? 0).toBe(0);
+
+    // Teks isi dialog harus putih, apa pun temanya.
+    expect(StyleSheet.flatten(screen.getByText('Kamu telat.').props.style).color).toBe('#FFFFFF');
   });
 });
 
@@ -246,6 +288,73 @@ describe('PlayerControls', () => {
 
     await fireEvent.press(auto);
     expect(onPress).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Regresi "masih templat": kontrol pemutar harus TANPA bingkai.
+   *
+   * Pemilik produk melihat empat chip bergaris di layar pemain dan menyebutnya
+   * templat. Perbaikannya adalah membuang bingkainya — dan itulah yang dijaga
+   * di sini.
+   *
+   * Yang diperiksa BUKAN tangkapan layar, melainkan gaya yang benar-benar
+   * terpasang pada simpul Pressable. Cara ini menangkap bingkai yang kembali
+   * lewat `borderWidth`, `borderRadius`, atau `backgroundColor` per item —
+   * ketiganya sama-sama membentuk kotak, jadi ketiganya harus kosong.
+   */
+  it('TIDAK memberi bingkai pada kontrolnya', async () => {
+    await render(
+      <TestProviders>
+        <PlayerControls
+          items={[
+            { id: 'auto', icon: 'pause', label: 'Auto', active: true, onPress: () => {} },
+            { id: 'log', icon: 'book', label: 'Riwayat', onPress: () => {} },
+          ]}
+        />
+      </TestProviders>,
+    );
+
+    for (const label of ['Auto', 'Riwayat']) {
+      const node = screen.getByLabelText(label);
+      const gaya = StyleSheet.flatten(node.props.style);
+
+      // Bingkai: tidak boleh ada, dalam bentuk apa pun.
+      expect(gaya.borderWidth ?? 0).toBe(0);
+      expect(gaya.borderColor).toBeUndefined();
+      expect(gaya.borderRadius ?? 0).toBe(0);
+
+      /*
+       * Latar per item. Mode aktif DULU memakai `colors.bgMuted`, dan itulah
+       * yang membuatnya tampak seperti chip. `transparent` (atau tidak diisi
+       * sama sekali) berarti tidak ada kotak yang terbentuk.
+       */
+      const latar = gaya.backgroundColor;
+      expect(latar === undefined || latar === 'transparent').toBe(true);
+    }
+  });
+
+  /** Mode aktif tetap terbaca — tanpa bingkai, penandanya harus tetap ada. */
+  it('tetap menandai mode aktif walau tanpa bingkai', async () => {
+    await render(
+      <TestProviders>
+        <PlayerControls
+          items={[
+            { id: 'auto', icon: 'pause', label: 'Auto', active: true, onPress: () => {} },
+            { id: 'log', icon: 'book', label: 'Riwayat', onPress: () => {} },
+          ]}
+        />
+      </TestProviders>,
+    );
+
+    // Penanda mode aktif TIDAK boleh lagi bergantung pada warna teks saja:
+    // warna aksen dipakai ulang untuk keadaan lain, sedangkan `selected`
+    // adalah satu-satunya penanda yang dapat dibaca pembaca layar.
+    expect(screen.getByLabelText('Auto').props.accessibilityState?.selected).toBe(true);
+    expect(screen.getByLabelText('Riwayat').props.accessibilityState?.selected).toBe(false);
+
+    // Label tetap berupa TEKS tebal, bukan ikon saja.
+    const teks = StyleSheet.flatten(screen.getByText('Auto').props.style);
+    expect(String(teks.fontWeight)).toBe('700');
   });
 });
 
