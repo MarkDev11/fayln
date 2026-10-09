@@ -111,9 +111,34 @@ export default function LoginScreen() {
     }
   }, [age, email, mode, name, password, router, signIn, signUp]);
 
-  // Sudah masuk: jangan tampilkan formulir lagi.
+  /*
+   * DI SINI DULU ADA PEMANGGILAN `router.replace('/(tabs)')` DI DALAM RENDER:
+   *
+   *     if (isAuthenticated) {
+   *       router.replace('/(tabs)');
+   *       return null;
+   *     }
+   *
+   * Itu melanggar aturan React dan memunculkan peringatan
+   * "Cannot update a component (ForwardRef(NavigationContainerInner)) while
+   * rendering a different component (LoginScreen)". `router.replace` memicu
+   * pembaruan keadaan pada NavigationContainer, dan render harus murni — tidak
+   * boleh menulis ke luar dirinya.
+   *
+   * Blok itu juga BERLEBIH: `useSessionGuard` sudah memindahkan pemain yang
+   * sudah masuk dari layar ini ke Beranda, dan ia melakukannya di dalam
+   * `useEffect` — tempat yang benar untuk efek samping. Dua tempat yang
+   * mengalihkan berarti satu di antaranya pasti berjalan di waktu yang salah.
+   *
+   * Akibat nyata bila dibiarkan bukan sekadar peringatan di konsol: pengalihan
+   * saat render dapat dibuang atau diulang oleh React, sehingga navigasinya
+   * tidak dapat diandalkan. Sebab itu blok ini dibuang, bukan dipindahkan.
+   *
+   * Selama menunggu gerbang memindahkan kita, layar ini hanya perlu menahan
+   * sebentar formulirnya supaya tidak berkedip. Tidak ada state yang perlu
+   * disetel untuk itu.
+   */
   if (isAuthenticated) {
-    router.replace('/(tabs)');
     return null;
   }
 
