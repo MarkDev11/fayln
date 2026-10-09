@@ -208,6 +208,26 @@ try {
   const shot = await send('Page.captureScreenshot', { format: 'png' });
   fs.writeFileSync(outPath, Buffer.from(shot.data, 'base64'));
   console.log('shot:', outPath);
+
+  /*
+   * Bila diminta, tunggu sampai adegan pertama siap lalu tangkap layar pemain.
+   *
+   * Pembuatannya 27-89 detik, jadi batasnya jauh lebih longgar daripada langkah
+   * lain di skrip ini.
+   */
+  if (process.argv[4]) {
+    const kePemain = await waitFor(
+      `document.body.innerText.includes('Ketuk untuk lanjut') ||
+       document.body.innerText.includes('Auto')`,
+      120000,
+    );
+    console.log('PLAYER_VISIBLE =', kePemain);
+    // Beri waktu potret dan latar selesai dimuat.
+    await sleep(2500);
+    const shot2 = await send('Page.captureScreenshot', { format: 'png' });
+    fs.writeFileSync(process.argv[4], Buffer.from(shot2.data, 'base64'));
+    console.log('shot pemain:', process.argv[4]);
+  }
 } finally {
   if (cdp) cdp.close();
   chrome.kill();

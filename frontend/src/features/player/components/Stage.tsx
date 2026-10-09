@@ -82,9 +82,10 @@ export function Stage({
    * Saat tidak ada karakter, latar dibiarkan tajam: pada adegan pembuka ruangan
    * kosong itulah yang justru ingin dilihat pemain.
    *
-   * Angkanya 12 dipilih pemilik produk. Terlalu kecil tidak terasa, terlalu
-   * besar membuat ruangan jadi noda warna dan kehilangan fungsinya sebagai
-   * penunjuk tempat.
+   * Kekuatan blurnya ada di BACKGROUND_BLUR_RADIUS; angkanya TIDAK diulang di
+   * sini. Dulu kalimat ini berbunyi "angkanya 12" sementara konstantanya 4 —
+   * komentar yang menyebut angka dua kali akan menyimpang begitu salah satunya
+   * diubah, dan pembaca berikutnya mempercayai yang salah. Satu tempat saja.
    */
   const backgroundBlur = hasPortrait ? BACKGROUND_BLUR_RADIUS : 0;
 
