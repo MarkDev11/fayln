@@ -186,6 +186,19 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
     bagian.push('adegan yang sama, sebelum keputusan penutup. Adegan yang berhenti');
     bagian.push('di tengah perjalanan meninggalkan pemain di latar lama, dan');
     bagian.push('gambarnya tidak akan pernah menyusul ceritanya.');
+    bagian.push('');
+    /*
+     * Tujuan harus PUNYA latar.
+     *
+     * Terukur di produksi: model menawarkan "Ikuti dia ke ruang rapat" pada
+     * putaran pertama, tetapi daftar latar dunia itu tidak memuat ruang rapat
+     * sama sekali. Karena tidak ada latar yang cocok, `setBackground` ke tujuan
+     * tidak mungkin keluar — dan latar pun tidak pernah berpindah sepanjang
+     * enam putaran. Model menjanjikan tempat yang tidak dapat ditampilkan.
+     */
+    bagian.push('Jangan menawarkan atau menulis perpindahan ke tempat yang TIDAK');
+    bagian.push('ADA latarnya di daftar di atas. Sebut nama tempat hanya bila salah');
+    bagian.push('satu label di daftar itu memang tempat tersebut.');
   } else {
     bagian.push('Tulis ADEGAN PEMBUKA.');
     bagian.push('Mulai dari situasinya, perkenalkan siapa yang ada di sana, lalu akhiri');

@@ -321,3 +321,24 @@ describe('perpindahan tempat diselesaikan', () => {
     expect(pesan).toMatch(/jangan meloncat/i);
   });
 });
+
+/**
+ * Jangan menjanjikan tempat yang tidak punya latar.
+ *
+ * Terukur di produksi: model menawarkan "Ikuti dia ke ruang rapat", tetapi
+ * daftar latar dunia itu tidak memuat ruang rapat sama sekali. Karena tidak ada
+ * latar yang cocok, `setBackground` ke tujuan tidak mungkin keluar — latar pun
+ * tidak berpindah sepanjang enam putaran.
+ *
+ * BUKTI MERAH: hapus blok "Jangan menawarkan atau menulis perpindahan ke tempat
+ * yang TIDAK ADA latarnya", lalu uji ini memerah.
+ */
+describe('tujuan harus punya latar', () => {
+  it('melarang menyebut tempat yang tidak ada latarnya', () => {
+    const pesan = buildStoryUserPrompt({ ...MASUKAN, playerAction: 'Ikuti dia ke ruang rapat' });
+
+    // Perhatikan: teks prompt dipotong baris, jadi spasi tidak dapat diandalkan.
+    expect(pesan).toMatch(/ADA latarnya di daftar/i);
+    expect(pesan).toMatch(/satu label di daftar itu/i);
+  });
+});
