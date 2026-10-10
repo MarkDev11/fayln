@@ -303,14 +303,28 @@ async function main() {
     check(atWorld, 'layar dunia siap dengan tombol Mulai Perjalanan');
     if (!atWorld) throw new Error('layar dunia tidak siap');
 
-    // 5. Isi lembar persona bila muncul, lalu tekan mulai.
+    // 5. Tekan mulai, LALU isi lembar persona bila muncul.
     /*
-     * Lembar persona hanya muncul bila profil belum lengkap — akun yang baru
-     * dibuat selalu begitu. Tanpa mengisinya, `Buat & mulai` ditolak oleh
-     * validasi dan permintaannya TIDAK PERNAH berangkat, sehingga keadaan
-     * "menyusun cerita" wajar-wajar saja tidak muncul. Itu pelajaran dari
-     * percobaan pertama: yang gagal bukan umpan baliknya, melainkan jalannya.
+     * URUTANNYA PENTING: tekan dulu, baru periksa lembar.
+     *
+     * `onStartJourney` di layar dunia membuka lembar persona HANYA SETELAH
+     * tombolnya ditekan — bukan saat halaman dimuat:
+     *
+     *     if (profile.isComplete && profile.profile.age !== null) { createJourney(); return; }
+     *     setSheetVisible(true);
+     *
+     * Versi sebelumnya memeriksa lembar SEBELUM menekan, jadi hasilnya selalu
+     * "profil sudah lengkap" — padahal profilnya justru belum lengkap. Lembar
+     * lalu terbuka tanpa diisi, `Buat & mulai` tidak pernah ditekan, permintaan
+     * tidak pernah berangkat, dan skrip melaporkan layar pembuatan dunia TIDAK
+     * MUNCUL. Itu tuduhan palsu terhadap aplikasi yang sebenarnya baik-baik saja.
+     *
+     * Profil tersimpan di KV lokal (localStorage), dan profil Chrome dihapus di
+     * awal setiap jalannya — jadi akun baru SELALU membuka lembar ini. Jangan
+     * kembali memeriksa lembar sebelum menekan tombol.
      */
+    await evaluate(cdp, CLICK_BY_TEXT('Mulai Perjalanan'));
+
     const sheetUp = await waitFor(cdp, `document.body.innerText.includes('Mulai perjalanan')`, {
       timeoutMs: 8000,
       every: 300,
@@ -323,7 +337,6 @@ async function main() {
       await evaluate(cdp, CLICK_BY_TEXT('Buat & mulai'));
     } else {
       console.log('  OK   profil sudah lengkap — lembar persona dilewati');
-      await evaluate(cdp, CLICK_BY_TEXT('Mulai Perjalanan'));
     }
 
     /*
