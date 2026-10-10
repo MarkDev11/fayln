@@ -34,6 +34,54 @@ import {
   type StoryEngine,
 } from './storyEngine';
 
+/**
+ * Beberapa beat terakhir, dirender menjadi baris teks pendek.
+ *
+ * Dipakai mengisi `StoryContext.recentBeats`. Tanpa ini prompt tidak punya
+ * kesinambungan sama sekali: model tidak tahu apa yang baru saja terjadi, dan
+ * satu-satunya penanda pilihan pemain (`playerAction`) juga kosong — sehingga
+ * prompt jatuh ke cabang "Tulis ADEGAN PEMBUKA" dan menulis ulang pembuka.
+ * Itulah "looping" yang dilihat pemain.
+ *
+ * Sengaja hanya ekor riwayat: konteks yang tumbuh tanpa batas akan jebol di
+ * tengah cerita.
+ */
+function ringkasBeatTerakhir(beats: Beat[], jumlah = 12): string[] {
+  const baris: string[] = [];
+  for (const b of beats.slice(-jumlah)) {
+    const e = b.event;
+    switch (e.type) {
+      case 'narrate':
+        baris.push(e.text);
+        break;
+      case 'say':
+        baris.push(`${e.npcId}: ${e.text}`);
+        break;
+      case 'setBackground':
+        baris.push(`[latar berpindah ke ${e.assetId}]`);
+        break;
+      case 'showCharacter':
+        baris.push(`[${e.npcId} tampil, ekspresi ${e.expression}]`);
+        break;
+      case 'hideCharacter':
+        baris.push(`[${e.npcId} pergi]`);
+        break;
+      case 'presentChoices':
+        baris.push(`[pemain dihadapkan pada pilihan: ${e.prompt}]`);
+        break;
+      case 'relationshipDelta':
+        baris.push(`[hubungan dengan ${e.npcId} menjadi ${e.status}]`);
+        break;
+      case 'endArc':
+        baris.push(`[bab berakhir: ${e.reasonPublic}]`);
+        break;
+      default:
+        break;
+    }
+  }
+  return baris;
+}
+
 export type JourneyServiceDeps = {
   catalog: CatalogRepository;
   journeys: JourneyRepository;
@@ -464,6 +512,31 @@ export class JourneyService {
         throw conflict('Keputusan ini sudah dijawab atau tidak lagi berlaku.');
       }
 
+      /*
+       * LABEL opsi yang dipilih, bukan hanya id-nya.
+       *
+       * `aksiPemain()` di mesin cerita membaca `context.optionLabel` dan
+       * `context.customText` — ia TIDAK melihat `optionId`. Sebelum ini yang
+       * dikirim hanya `optionId`, sehingga `aksiPemain()` selalu mengembalikan
+       * null. Akibatnya prompt jatuh ke cabang "Tulis ADEGAN PEMBUKA" dan model
+       * menulis ulang pembuka setiap giliran: pertanyaan, latar, dan kalimatnya
+       * berulang persis. Pilihan pemain tidak pernah sampai ke model.
+       */
+      const opsiTerpilih =
+        pending.event.type === 'presentChoices'
+          ? pending.event.options.find((opsi) => opsi.optionId === command.optionId)
+          : undefined;
+
+      /*
+       * Ringkasan terakhir yang ditulis mesin sendiri (`memoryWrite`).
+       *
+       * Prompt punya bagian "RINGKASAN CERITA SEJAUH INI" yang selama ini selalu
+       * kosong. Datanya sudah ada di beat — tidak perlu memanggil model lagi.
+       */
+      const ringkasanTerakhir = [...existingBeats]
+        .reverse()
+        .find((beat) => beat.event.type === 'memoryWrite');
+
       const turnId = `t_${randomUUID()}`;
 
       const context: StoryContext = {
@@ -476,6 +549,13 @@ export class JourneyService {
         // Awalan unik: tanpa ini, giliran pertama setiap perjalanan menghasilkan
         // beat_id yang sama dan penyimpanan gagal pada kunci utama.
         beatIdPrefix: turnId,
+        // Kesinambungan: ringkasan, ekor riwayat, dan pilihan pemain.
+        storySoFar:
+          ringkasanTerakhir && ringkasanTerakhir.event.type === 'memoryWrite'
+            ? ringkasanTerakhir.event.summary
+            : null,
+        recentBeats: ringkasBeatTerakhir(existingBeats),
+        ...(opsiTerpilih ? { optionLabel: opsiTerpilih.label } : null),
         ...(command.customText !== undefined ? { customText: command.customText } : null),
         ...(command.optionId !== undefined ? { optionId: command.optionId } : null),
       };

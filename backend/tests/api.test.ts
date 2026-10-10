@@ -20,7 +20,11 @@ import { ReportRepository } from '../src/repositories/reportRepository';
 import { UsageRepository } from '../src/repositories/usageRepository';
 import { buildApp } from '../src/server';
 import { JourneyService } from '../src/services/journeyService';
-import { DeterministicStoryEngine, type StoryEngine } from '../src/services/storyEngine';
+import {
+  DeterministicStoryEngine,
+  type StoryContext,
+  type StoryEngine,
+} from '../src/services/storyEngine';
 
 import { createTestDatabase, type TestDatabase } from './helpers/testDb';
 import { bearer, createTestAccount } from './helpers/auth';
@@ -555,6 +559,148 @@ describe('pembuatan perjalanan', () => {
  * placeholder — daftar Perjalanan tampak "tidak punya gambar" TANPA galat apa
  * pun. Katalog dunia sudah benar sejak awal; perjalanan tertinggal.
  */
+/**
+ * Regresi: PILIHAN PEMAIN tidak pernah sampai ke mesin cerita.
+ *
+ * Gejala yang dilaporkan pemilik produk: "aku melakukan pilihan malah looping
+ * ke narasi awal" — pertanyaan, latar, dan kalimatnya berulang persis.
+ *
+ * Akarnya satu kata. Mesin cerita menentukan apakah prompt berbunyi
+ * "Lanjutkan cerita dari tindakan itu" atau "Tulis ADEGAN PEMBUKA" dari
+ * `aksiPemain(context)`:
+ *
+ *     if (context.customText)  return context.customText;
+ *     if (context.optionLabel) return context.optionLabel;   // <-- dibaca
+ *     return null;                                            // <-- selalu ini
+ *
+ * `submitTurn` hanya mengirim `optionId`, sedangkan yang dibaca `optionLabel`.
+ * Jadi pemain yang MEMILIH OPSI selalu menghasilkan `null`, prompt jatuh ke
+ * cabang "Tulis ADEGAN PEMBUKA", dan model menulis ulang pembuka setiap giliran.
+ * Pilihan pemain tidak pernah diketahui model.
+ *
+ * BUKTI MERAH: hapus baris `...(opsiTerpilih ? { optionLabel: ... })` di
+ * `journeyService.ts`, lalu kedua uji ini memerah — `optionLabel` menjadi
+ * `undefined` dan `recentBeats` menjadi `[]`.
+ *
+ * Mengapa mesin deterministik tidak menangkapnya: ia memakai `optionId` lewat
+ * fungsi lokalnya sendiri (`optionLabel(context.optionId)`), sehingga perilakunya
+ * benar meski konteksnya cacat. Hanya mesin berbasis model yang membaca
+ * `context.optionLabel`. Karena itu yang diperiksa di sini adalah KONTEKS yang
+ * dikirim, bukan keluaran ceritanya.
+ */
+describe('pilihan pemain sampai ke mesin cerita', () => {
+  /** Mesin yang merekam setiap konteks yang diterimanya. */
+  class MesinPerekam extends DeterministicStoryEngine {
+    readonly konteks: StoryContext[] = [];
+
+    override async generateTurn(context: StoryContext) {
+      this.konteks.push(context);
+      return super.generateTurn(context);
+    }
+  }
+
+  let mesin: MesinPerekam;
+
+  beforeEach(async () => {
+    await app.close();
+    mesin = new MesinPerekam();
+    app = await buildTestApp(testConfig(), mesin);
+    auth = await createTestAccount(app, ctx.db);
+  });
+
+  /** Membuat perjalanan dan mengembalikan keputusan pembukanya. */
+  async function playToDecision() {
+    const created = await inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('konteks'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'id-ID',
+      },
+    });
+
+    const hasil = created.json() as {
+      journeyId: string;
+      opening: {
+        beats: {
+          event: {
+            type: string;
+            decisionId?: string;
+            prompt?: string;
+            options?: { optionId: string; label: string }[];
+          };
+        }[];
+      };
+    };
+
+    const beat = hasil.opening.beats.find((b) => b.event.type === 'presentChoices');
+    return { journeyId: hasil.journeyId, keputusan: beat?.event };
+  }
+
+  it('mengirim LABEL opsi yang dipilih, bukan hanya id-nya', async () => {
+    const { journeyId, keputusan } = await playToDecision();
+    const opsi = keputusan?.options?.[0];
+    expect(opsi?.label).toBeTruthy();
+
+    const response = await inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('label'),
+        decisionId: keputusan?.decisionId,
+        selection: { optionId: opsi?.optionId },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(response.statusCode).toBe(201);
+
+    expect(mesin.konteks).toHaveLength(1);
+    expect(mesin.konteks[0]?.optionLabel).toBe(opsi?.label);
+    // Tanpa label, mesin menganggap ini adegan pembuka dan menulis ulang pembuka.
+    expect(mesin.konteks[0]?.optionLabel).not.toBeUndefined();
+  });
+
+  it('mengirim recentBeats supaya cerita punya kesinambungan', async () => {
+    const { journeyId, keputusan } = await playToDecision();
+
+    await inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('riwayat'),
+        decisionId: keputusan?.decisionId,
+        selection: { optionId: keputusan?.options?.[1]?.optionId },
+        responseLocale: 'id-ID',
+      },
+    });
+
+    const konteks = mesin.konteks[0];
+    expect(konteks?.recentBeats).toBeDefined();
+    expect((konteks?.recentBeats ?? []).length).toBeGreaterThan(0);
+    // Isinya kalimat nyata, bukan daftar kosong.
+    expect((konteks?.recentBeats ?? []).join(' ').length).toBeGreaterThan(20);
+  });
+
+  it('aksi teks bebas tetap memakai customText, bukan label', async () => {
+    const { journeyId, keputusan } = await playToDecision();
+
+    await inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('bebas'),
+        decisionId: keputusan?.decisionId,
+        customText: 'aku duduk diam dan memperhatikan',
+        responseLocale: 'id-ID',
+      },
+    });
+
+    expect(mesin.konteks[0]?.customText).toBe('aku duduk diam dan memperhatikan');
+  });
+});
+
 describe('sampul pada perjalanan', () => {
   const BASE = 'https://contoh.test';
 
