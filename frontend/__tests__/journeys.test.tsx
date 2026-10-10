@@ -14,6 +14,7 @@ const summary: JourneySummary = {
   worldId: 'w_bosku-mantan',
   worldTitle: 'Bosku Adalah Mantan Pacarku di Kampus Dulu',
   coverAssetId: 'a_cover_kantor',
+  coverUri: 'https://contoh.test/assets/cover/a_cover_kantor.png',
   worldVersion: 7,
   personaName: 'Arfan',
   lastReadBeatId: 't001-b004',
@@ -203,6 +204,37 @@ describe('JourneyCard', () => {
     expect(view.getByText(summary.worldTitle)).toBeTruthy();
     expect(view.getByText('Tokoh: Arfan')).toBeTruthy();
     expect(view.getByText('Belum selesai dibaca')).toBeTruthy();
+  });
+
+  /*
+   * BUKTI MERAH: kembalikan `uri={assetUri(journey.coverAssetId)}` di
+   * `JourneyCard.tsx`, lalu uji ini memerah pada baris pertama —
+   * `getAllByLabelText` tidak menemukan simpul apa pun, karena `AssetImage`
+   * menampilkan PLACEHOLDER berlabel "<judul>. Gambar belum tersedia." dan
+   * tidak merender gambar sama sekali. Itulah yang terjadi di halaman
+   * "Perjalanan": kartu tampil tanpa sampul, tanpa galat apa pun.
+   *
+   * Yang diperiksa `source`, bukan `uri`: `AssetImage` menyerahkan alamat ke
+   * `expo-image` lewat prop `source`, dan bentuknya ARRAY `[{ uri }]` —
+   * membaca `source.uri` menghasilkan `undefined` dan uji akan memerah
+   * padahal gambarnya benar. Terukur, bukan ditebak.
+   */
+  it('memuat sampul dari coverUri, bukan dari ID aset', async () => {
+    const view = await render(
+      <TestProviders>
+        <JourneyCard journey={summary} onPress={() => {}} />
+      </TestProviders>,
+    );
+
+    const gambar = view.getAllByLabelText(summary.worldTitle)[0];
+    expect(gambar).toBeTruthy();
+
+    const sumber = gambar?.props.source as { uri?: string }[] | undefined;
+    const alamat = Array.isArray(sumber) ? sumber[0]?.uri : undefined;
+
+    expect(alamat).toBe(summary.coverUri);
+    // Awalan internal berarti gambar tidak akan pernah termuat.
+    expect(String(alamat).startsWith('asset://')).toBe(false);
   });
 
   it('menyembunyikan penanda ketika semua sudah dibaca', async () => {

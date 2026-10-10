@@ -17,6 +17,7 @@ import { Text } from '@/components/Text';
 import { useDeleteJourney, useJourneyDetail, useWorldDetail } from '@/data/queries';
 import { useGateway } from '@/data/GatewayProvider';
 import { LogDrawer } from '@/features/player/components/LogDrawer';
+import { assetUri } from '@/domain/assets';
 import { MEDIA_ASPECT } from '@/domain/media';
 import type { Beat } from '@/domain/types';
 import { formatRelativeDay, useI18n } from '@/i18n';
@@ -165,7 +166,15 @@ export default function JourneyDetailScreen() {
         testID="journey-detail"
       >
         <AssetImage
-          uri={`asset://${data.coverAssetId}`}
+          /*
+           * Awalan `asset://` DULU DITULIS MATI di sini:
+           * `uri={`asset://${data.coverAssetId}`}`. Akibatnya alamat sampul yang
+           * sudah lengkap dari server pun akan tetap dianggap aset internal —
+           * halaman detail perjalanan selalu tampil tanpa gambar.
+           * `assetUri()` yang memutuskan, karena hanya ia yang tahu apakah
+           * nilainya sudah berupa URL absolut.
+           */
+          uri={assetUri(data.coverUri || data.coverAssetId)}
           accessibilityLabel={data.worldTitle}
           aspectRatio={MEDIA_ASPECT.landscape}
         />

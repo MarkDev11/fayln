@@ -117,10 +117,18 @@ async function main(): Promise<void> {
    * `PUBLIC_BASE_URL`; bila kosong, jalur dikirim apa adanya dan klien akan
    * memakai placeholder-nya.
    */
-  const catalog = new CatalogRepository(db, (path) =>
-    config.publicBaseUrl ? `${config.publicBaseUrl}${path}` : path,
-  );
-  const journeys = new JourneyRepository(db);
+  /*
+   * Satu resolver, dipakai bersama katalog DAN perjalanan.
+   *
+   * Perjalanan sempat tertinggal: DTO-nya hanya mengirim `coverAssetId`, sehingga
+   * daftar Perjalanan dan halaman detailnya tampil tanpa gambar. Alasannya sama
+   * dengan katalog — jalur relatif tidak dapat dimuat klien.
+   */
+  const resolveAssetUri = (path: string) =>
+    config.publicBaseUrl ? `${config.publicBaseUrl}${path}` : path;
+
+  const catalog = new CatalogRepository(db, resolveAssetUri);
+  const journeys = new JourneyRepository(db, resolveAssetUri);
   const operations = new OperationRepository(db);
   const reports = new ReportRepository(db);
 

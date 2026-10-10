@@ -874,6 +874,8 @@ export class MockStoryGateway implements StoryGateway {
       worldId: world.worldId,
       worldTitle: world.title,
       coverAssetId: world.coverAssetId,
+      // Diteruskan apa adanya, seperti gateway HTTP: inilah yang dapat dimuat.
+      coverUri: world.coverUri,
       worldVersion: world.worldVersion,
       personaName: input.persona.name,
       lastReadBeatId: '',

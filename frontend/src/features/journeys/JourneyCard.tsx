@@ -90,7 +90,15 @@ export function JourneyCard({
       ]}
     >
       <AssetImage
-        uri={assetUri(journey.coverAssetId)}
+        /*
+         * `coverUri` DIUTAMAKAN, `coverAssetId` hanya cadangan.
+         *
+         * `coverAssetId` adalah ID internal (`a_cover_kantor`); `assetUri()`
+         * menempelkan `asset://` padanya sehingga gambar TIDAK PERNAH termuat —
+         * kartunya tampil sebagai placeholder tanpa galat apa pun. `StoryCard`
+         * sudah lebih dulu memakai pola yang benar ini; di sini tertinggal.
+         */
+        uri={assetUri(journey.coverUri || journey.coverAssetId)}
         accessibilityLabel={journey.worldTitle}
         aspectRatio={MEDIA_ASPECT.portrait}
         contentFit="cover"

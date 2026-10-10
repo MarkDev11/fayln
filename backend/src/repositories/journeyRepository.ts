@@ -63,7 +63,17 @@ export type ReadProgressInput = {
 };
 
 export class JourneyRepository {
-  constructor(private readonly db: Database) {}
+  /**
+   * @param resolveAssetUri Mengubah jalur aset tersimpan menjadi URL yang dapat
+   *   dimuat klien. Database menyimpan jalur relatif (`/assets/cover/x.png`)
+   *   supaya satu baris data dapat dipakai di lokal maupun produksi tanpa
+   *   menyimpan nama host. Klien tidak dapat memuat jalur relatif maupun ID
+   *   aset mentah — lihat catatan di `JourneySummary.coverUri`.
+   */
+  constructor(
+    private readonly db: Database,
+    private readonly resolveAssetUri: (path: string) => string = (path) => path,
+  ) {}
 
   async findById(journeyId: string): Promise<JourneyRow | null> {
     const { rows } = await this.db.query<JourneyRow>(
@@ -123,14 +133,19 @@ export class JourneyRepository {
   }
 
   async listByAccount(accountId: string): Promise<JourneySummary[]> {
-    const { rows } = await this.db.query<JourneyRow & { world_title: string; cover_asset_id: string }>(
+    const { rows } = await this.db.query<
+      JourneyRow & { world_title: string; cover_asset_id: string; cover_uri: string | null }
+    >(
       `SELECT j.journey_id, j.account_id, j.world_id, j.world_version, j.persona_name,
               j.persona_age, j.response_locale, j.last_read_beat_id, j.last_read_sequence,
               j.decision_count, j.has_unread_beats, j.created_at, j.updated_at,
-              wv.title AS world_title, wv.cover_asset_id
+              wv.title AS world_title, wv.cover_asset_id, wa.uri AS cover_uri
        FROM journeys j
        JOIN world_versions wv
          ON wv.world_id = j.world_id AND wv.world_version = j.world_version
+       LEFT JOIN world_assets wa
+         ON wa.world_id = wv.world_id AND wa.world_version = wv.world_version
+        AND wa.asset_id = wv.cover_asset_id AND wa.kind = 'cover'
        WHERE j.account_id = $1
        ORDER BY j.updated_at DESC, j.journey_id DESC`,
       [accountId],
@@ -141,6 +156,7 @@ export class JourneyRepository {
       worldId: row.world_id,
       worldTitle: row.world_title,
       coverAssetId: row.cover_asset_id,
+      coverUri: row.cover_uri ? this.resolveAssetUri(row.cover_uri) : '',
       worldVersion: row.world_version,
       personaName: row.persona_name,
       lastReadBeatId: row.last_read_beat_id,
@@ -160,9 +176,14 @@ export class JourneyRepository {
     const { rows } = await this.db.query<{
       world_title: string;
       cover_asset_id: string;
+      cover_uri: string | null;
     }>(
-      `SELECT title AS world_title, cover_asset_id
-       FROM world_versions WHERE world_id = $1 AND world_version = $2`,
+      `SELECT wv.title AS world_title, wv.cover_asset_id, wa.uri AS cover_uri
+       FROM world_versions wv
+       LEFT JOIN world_assets wa
+         ON wa.world_id = wv.world_id AND wa.world_version = wv.world_version
+        AND wa.asset_id = wv.cover_asset_id AND wa.kind = 'cover'
+       WHERE wv.world_id = $1 AND wv.world_version = $2`,
       [journey.world_id, journey.world_version],
     );
 
@@ -173,6 +194,7 @@ export class JourneyRepository {
       worldId: journey.world_id,
       worldTitle: summary?.world_title ?? '',
       coverAssetId: summary?.cover_asset_id ?? '',
+      coverUri: summary?.cover_uri ? this.resolveAssetUri(summary.cover_uri) : '',
       worldVersion: journey.world_version,
       personaName: journey.persona_name,
       lastReadBeatId: journey.last_read_beat_id,

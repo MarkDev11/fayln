@@ -45,6 +45,7 @@ const journeyInRetiredWorld: JourneySummary = {
   worldId: worldDiarsipkan.worldId,
   worldTitle: worldDiarsipkan.title,
   coverAssetId: worldDiarsipkan.coverAssetId,
+  coverUri: worldDiarsipkan.coverUri,
   worldVersion: worldDiarsipkan.worldVersion,
   personaName: 'Arfan',
   lastReadBeatId: 'b_001',

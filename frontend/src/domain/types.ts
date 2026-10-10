@@ -284,6 +284,14 @@ export type JourneySummary = {
   worldId: string;
   worldTitle: string;
   coverAssetId: string;
+  /**
+   * URL sampul yang SIAP DIMUAT, mis. `https://host/assets/cover/x.png`.
+   *
+   * WAJIB diutamakan atas `coverAssetId`. Yang terakhir hanyalah ID internal
+   * (`a_cover_kantor`): `assetUri()` menempelkan awalan `asset://` padanya dan
+   * gambarnya tidak akan pernah termuat — placeholder, tanpa galat apa pun.
+   */
+  coverUri: string;
   worldVersion: number;
   personaName: string;
   lastReadBeatId: string;

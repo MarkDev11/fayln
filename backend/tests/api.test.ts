@@ -69,10 +69,11 @@ function testConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfig {
 async function buildTestApp(
   config: AppConfig = testConfig(),
   engine: StoryEngine = new DeterministicStoryEngine(),
+  resolveAssetUri: (path: string) => string = (path) => path,
 ): Promise<FastifyInstance> {
   const usage = new UsageRepository(ctx.db, config.plan);
-  const catalog = new CatalogRepository(ctx.db);
-  const journeys = new JourneyRepository(ctx.db);
+  const catalog = new CatalogRepository(ctx.db, resolveAssetUri);
+  const journeys = new JourneyRepository(ctx.db, resolveAssetUri);
   const operations = new OperationRepository(ctx.db);
   const reports = new ReportRepository(ctx.db);
 
@@ -538,6 +539,66 @@ describe('pembuatan perjalanan', () => {
     });
     expect(response.statusCode).toBe(400);
     expect(response.json()).toMatchObject({ code: 'VALIDATION' });
+  });
+});
+
+/**
+ * Sampul pada DTO perjalanan.
+ *
+ * BUKTI MERAH: sebelum `coverUri` ditambahkan, `/v1/journeys` dan
+ * `/v1/journeys/:id` hanya mengirim `coverAssetId` (`a_cover_kantor`). Hapus
+ * kedua baris `coverUri:` di `journeyRepository.ts`, lalu kedua uji di bawah
+ * memerah dengan `expected undefined to be ...`.
+ *
+ * Mengapa ini penting sampai diuji: `assetUri()` di frontend hanya memuat URL
+ * absolut. Nilai `a_cover_kantor` diberi awalan `asset://` dan menjadi
+ * placeholder — daftar Perjalanan tampak "tidak punya gambar" TANPA galat apa
+ * pun. Katalog dunia sudah benar sejak awal; perjalanan tertinggal.
+ */
+describe('sampul pada perjalanan', () => {
+  const BASE = 'https://contoh.test';
+
+  /*
+   * Aplikasi dibangun ulang dengan resolver yang menghasilkan alamat lengkap,
+   * supaya hasilnya dapat ditegaskan persis — bukan sekadar "ada isinya".
+   */
+  beforeEach(async () => {
+    await app.close();
+    app = await buildTestApp(testConfig(), new DeterministicStoryEngine(), (p) => `${BASE}${p}`);
+    auth = await createTestAccount(app, ctx.db);
+  });
+
+  const buat = () =>
+    inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('cover'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'id-ID',
+      },
+    });
+
+  it('daftar Perjalanan mengirim coverUri yang SIAP DIMUAT', async () => {
+    await buat();
+    const response = await inject({ method: 'GET', url: '/v1/journeys' });
+
+    const item = (response.json() as { items: { coverAssetId: string; coverUri: string }[] }).items[0];
+    expect(item.coverAssetId).toBe('a_cover_kantor');
+    // Inti perbaikannya: bukan ID mentah, melainkan alamat lengkap.
+    expect(item.coverUri).toBe(`${BASE}/assets/cover/a_cover_kantor.png`);
+  });
+
+  it('detail perjalanan juga mengirim coverUri yang SIAP DIMUAT', async () => {
+    const created = await buat();
+    const journeyId = (created.json() as { journeyId: string }).journeyId;
+
+    const response = await inject({ method: 'GET', url: `/v1/journeys/${journeyId}` });
+    const detail = response.json() as { coverAssetId: string; coverUri: string };
+
+    expect(detail.coverAssetId).toBe('a_cover_kantor');
+    expect(detail.coverUri).toBe(`${BASE}/assets/cover/a_cover_kantor.png`);
   });
 });
 

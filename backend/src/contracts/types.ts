@@ -264,7 +264,23 @@ export type JourneySummary = {
   journeyId: string;
   worldId: string;
   worldTitle: string;
+  /**
+   * ID aset sampul, apa adanya dari database.
+   *
+   * Tidak dapat dimuat klien — hanya berguna sebagai kunci. Yang dapat dimuat
+   * adalah `coverUri`.
+   */
   coverAssetId: string;
+  /**
+   * URL sampul yang SIAP DIMUAT, mis. `https://host/assets/cover/x.png`.
+   *
+   * WAJIB ada di sini. Tanpa ini klien hanya menerima `coverAssetId`
+   * (`a_cover_kantor`) dan `assetUri()` di frontend menempelkan awalan
+   * `asset://` — hasilnya placeholder, tanpa galat apa pun. Daftar Perjalanan
+   * dan halaman detail perjalanan tampak "tidak punya gambar" karenanya.
+   * Katalog dunia sudah lebih dulu mengirim ini; perjalanan tertinggal.
+   */
+  coverUri: string;
   worldVersion: number;
   personaName: string;
   lastReadBeatId: string;
