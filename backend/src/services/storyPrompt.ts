@@ -121,9 +121,28 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
         bagian.push(`    latar: ${orang.publicBackstory}`);
       }
       bagian.push(`    potret bawaan: ${orang.defaultPortraitAssetId}`);
-      bagian.push(
-        `    ekspresi yang sah: ${orang.expressions.length > 0 ? orang.expressions.join(', ') : '(tidak ada)'}`,
-      );
+      /*
+       * Setiap ekspresi ditulis di BARISNYA SENDIRI dan dikutip.
+       *
+       * Sebelumnya daftarnya digabung dengan koma:
+       *   `ekspresi yang sah: ${expressions.join(', ')}`
+       * Itu tidak dapat dibaca ketika nama ekspresinya SENDIRI mengandung koma,
+       * dan itulah bentuk yang dihasilkan panel admin — misalnya
+       * "senyum, pakaian kantor, mengangkat tangan". Model tidak punya cara
+       * mengetahui di mana satu ekspresi berakhir dan yang berikutnya dimulai,
+       * sehingga ia menulis bentuk pendek ("senyum"). Validator menuntut
+       * kecocokan PERSIS, adegan pun ditolak, dan seluruh giliran jatuh ke
+       * simulator — yang keluarannya sama terus. Gejalanya di layar: cerita
+       * seperti berulang.
+       */
+      if (orang.expressions.length > 0) {
+        bagian.push('    ekspresi yang sah — SALIN PERSIS salah satu baris berikut, apa adanya:');
+        for (const ekspresi of orang.expressions) {
+          bagian.push(`      "${ekspresi}"`);
+        }
+      } else {
+        bagian.push('    ekspresi yang sah: (tidak ada)');
+      }
     }
   }
   bagian.push('');

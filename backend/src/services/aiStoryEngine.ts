@@ -167,6 +167,34 @@ export type PeriksaHasil =
  * Diekspor supaya dapat diuji tanpa memanggil model — dan supaya aturannya
  * terlihat sebagai daftar, bukan tersembunyi di dalam alur.
  */
+/**
+ * Mencocokkan ekspresi yang diminta model dengan daftar yang sah.
+ *
+ * Kecocokan PERSIS diutamakan. Bila gagal, dicoba kecocokan berdasarkan
+ * SEGMEN PERTAMA: nama ekspresi di panel admin berbentuk frasa berkoma
+ * ("senyum, pakaian kantor, mengangkat tangan"), dan model wajar menuliskan
+ * bentuk pendeknya saja ("senyum").
+ *
+ * Mengapa toleransi ini perlu: satu ekspresi yang tidak dikenali membuat
+ * SELURUH adegan ditolak (`periksaAdegan` berhenti pada kegagalan pertama),
+ * lalu seluruh giliran jatuh ke simulator. Akibatnya bukan sekadar potret yang
+ * salah — ceritanya berhenti maju, dan pemain melihatnya sebagai "loop".
+ *
+ * Yang dikembalikan selalu salah satu nilai dari `daftar`, sehingga nilai yang
+ * tersimpan tetap sah dan tidak ada ekspresi karangan yang lolos.
+ */
+export function cocokkanEkspresi(daftar: string[], diminta: string): string | undefined {
+  if (daftar.includes(diminta)) {
+    return diminta;
+  }
+  const segmenPertama = (nilai: string) => nilai.split(',')[0]?.trim().toLowerCase() ?? '';
+  const kunci = segmenPertama(diminta);
+  if (kunci.length === 0) {
+    return undefined;
+  }
+  return daftar.find((sah) => segmenPertama(sah) === kunci);
+}
+
 export function periksaAdegan(
   mentah: unknown,
   manifest: AssetManifest,
@@ -223,7 +251,11 @@ export function periksaAdegan(
         if (!npc) {
           return { ok: false, reason: 'npc-tidak-dikenal' };
         }
-        if (typeof peristiwa.expression !== 'string' || !npc.expressions.includes(peristiwa.expression)) {
+        const ekspresi =
+          typeof peristiwa.expression === 'string'
+            ? cocokkanEkspresi(npc.expressions, peristiwa.expression)
+            : undefined;
+        if (!ekspresi) {
           return { ok: false, reason: 'ekspresi-tidak-dikenal' };
         }
         if (
@@ -235,7 +267,8 @@ export function periksaAdegan(
         events.push({
           type: 'showCharacter',
           npcId: npc.npcId,
-          expression: peristiwa.expression,
+          // Nilai dari DAFTAR, bukan dari model — tidak ada ekspresi karangan.
+          expression: ekspresi,
           assetId: peristiwa.assetId,
         });
         break;

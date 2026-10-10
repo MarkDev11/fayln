@@ -11,6 +11,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   aksiPemain,
   AiStoryEngine,
+  cocokkanEkspresi,
   periksaAdegan,
 } from '../src/services/aiStoryEngine';
 import { DeterministicStoryEngine } from '../src/services/storyEngine';
@@ -273,5 +274,96 @@ describe('AiStoryEngine', () => {
 
     expect(hasil.beats.length).toBeGreaterThan(0);
     expect(gagal).toHaveBeenCalledWith(expect.stringContaining('asset-tidak-dikenal'));
+  });
+});
+
+/**
+ * Ekspresi bernama frasa berkoma.
+ *
+ * Panel admin menghasilkan nama ekspresi seperti
+ * "senyum, pakaian kantor, mengangkat tangan". Model wajar menuliskan bentuk
+ * pendeknya ("senyum"). Dengan pencocokan PERSIS, satu ekspresi yang tidak
+ * dikenali membuat SELURUH adegan ditolak, lalu seluruh giliran jatuh ke
+ * simulator — dan pemain melihatnya sebagai cerita yang berulang.
+ *
+ * BUKTI MERAH: kembalikan `npc.expressions.includes(peristiwa.expression)` di
+ * `aiStoryEngine.ts` (ganti `cocokkanEkspresi`), lalu uji "menerima bentuk
+ * pendek" di bawah memerah dengan `ekspresi-tidak-dikenal`.
+ */
+describe('cocokkanEkspresi', () => {
+  const DAFTAR = [
+    'senyum, pakaian kantor, mengangkat tangan',
+    'terkejut, pakaian kantor, menutup mulut',
+    'serius, jaket dan celana, bersedekap',
+  ];
+
+  it('menerima kecocokan persis', () => {
+    expect(cocokkanEkspresi(DAFTAR, 'terkejut, pakaian kantor, menutup mulut')).toBe(
+      'terkejut, pakaian kantor, menutup mulut',
+    );
+  });
+
+  it('menerima bentuk pendek lewat segmen pertama', () => {
+    expect(cocokkanEkspresi(DAFTAR, 'senyum')).toBe('senyum, pakaian kantor, mengangkat tangan');
+    expect(cocokkanEkspresi(DAFTAR, 'serius')).toBe('serius, jaket dan celana, bersedekap');
+  });
+
+  it('mengabaikan besar-kecil huruf dan spasi berlebih', () => {
+    expect(cocokkanEkspresi(DAFTAR, '  SENYUM  ')).toBe('senyum, pakaian kantor, mengangkat tangan');
+  });
+
+  it('menolak yang benar-benar tidak ada', () => {
+    expect(cocokkanEkspresi(DAFTAR, 'marah')).toBeUndefined();
+    expect(cocokkanEkspresi(DAFTAR, '')).toBeUndefined();
+  });
+
+  it('selalu mengembalikan nilai DARI DAFTAR, bukan karangan model', () => {
+    const hasil = cocokkanEkspresi(DAFTAR, 'senyum');
+    expect(DAFTAR).toContain(hasil);
+  });
+
+  it('adegan dengan ekspresi berkoma tetap DITERIMA, bukan jatuh ke simulator', () => {
+    const karakterBerkoma = [
+      {
+        ...KARAKTER[0],
+        expressions: ['senyum, pakaian kantor, mengangkat tangan'],
+        defaultPortraitAssetId: 'p_rina_senyum',
+      },
+    ] as unknown as NPCPublicDTO[];
+
+    const hasil = periksaAdegan(
+      {
+        beats: [
+          { type: 'setBackground', assetId: 'bg_kantor' },
+          {
+            type: 'showCharacter',
+            npcId: 'npc_rina',
+            // Model menulis bentuk pendeknya saja.
+            expression: 'senyum',
+            assetId: 'p_rina_senyum',
+          },
+          { type: 'narrate', text: 'Rina menatapmu.' },
+        ],
+        decision: {
+          prompt: 'Apa yang kamu lakukan?',
+          options: [
+            { optionId: 'opt1', label: 'Menyapa', description: 'Menyapa balik.' },
+            { optionId: 'opt2', label: 'Diam', description: 'Diam saja.' },
+            { optionId: 'opt3', label: 'Pergi', description: 'Berjalan pergi.' },
+          ],
+        },
+      },
+      MANIFEST,
+      karakterBerkoma,
+    );
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      const tampil = hasil.events.find((e) => e.type === 'showCharacter');
+      // Yang tersimpan adalah nilai SAH dari daftar, bukan "senyum" mentah.
+      expect(tampil?.type === 'showCharacter' ? tampil.expression : null).toBe(
+        'senyum, pakaian kantor, mengangkat tangan',
+      );
+    }
   });
 });

@@ -176,7 +176,15 @@ describe('pesan pengguna', () => {
     expect(pesan).toContain('npc_rina');
     expect(pesan).toContain('Keras di permukaan');
     expect(pesan).toContain('p_npc_rina_0_senyum');
-    expect(pesan).toContain('senyum, kesal');
+    /*
+     * Dikutip satu per satu, BUKAN digabung dengan koma.
+     *
+     * `'senyum, kesal'` adalah bentuk lama yang ambigu begitu nama ekspresinya
+     * sendiri mengandung koma — dan begitulah bentuk yang dihasilkan panel
+     * admin. Lihat describe 'daftar ekspresi tidak ambigu' di bawah.
+     */
+    expect(pesan).toContain('"senyum"');
+    expect(pesan).toContain('"kesal"');
   });
 
   it('meminta ADEGAN PEMBUKA saat belum ada aksi pemain', () => {
@@ -219,5 +227,60 @@ describe('pesan pengguna', () => {
 
     expect(pesan).toContain(`maksimum ${String(MAX_SCENE_BEATS)} beat`);
     expect(pesan).toContain(`di bawah ${String(MAX_BEAT_WORDS)} kata`);
+  });
+});
+
+/**
+ * Daftar ekspresi harus TIDAK AMBIGU.
+ *
+ * Panel admin menghasilkan nama ekspresi berupa frasa berkoma, misalnya
+ * "senyum, pakaian kantor, mengangkat tangan". Bila daftarnya digabung dengan
+ * koma juga (`expressions.join(', ')`), model tidak punya cara mengetahui di
+ * mana satu ekspresi berakhir — ia menulis bentuk pendek, validator menolak
+ * dengan `ekspresi-tidak-dikenal`, dan SELURUH giliran jatuh ke simulator.
+ * Di layar itu terlihat sebagai cerita yang berulang.
+ *
+ * BUKTI MERAH: kembalikan `orang.expressions.join(', ')` di `storyPrompt.ts`,
+ * lalu uji ini memerah pada pemeriksaan kutip per baris.
+ */
+describe('daftar ekspresi tidak ambigu', () => {
+  const DENGAN_KOMA = {
+    ...MASUKAN,
+    characters: [
+      {
+        ...MASUKAN.characters[0]!,
+        expressions: [
+          'senyum, pakaian kantor, mengangkat tangan',
+          'terkejut, pakaian kantor, menutup mulut',
+        ],
+      },
+    ],
+  };
+
+  it('menulis setiap ekspresi di barisnya sendiri, dalam kutip', () => {
+    const prompt = buildStoryUserPrompt(DENGAN_KOMA);
+
+    expect(prompt).toContain('"senyum, pakaian kantor, mengangkat tangan"');
+    expect(prompt).toContain('"terkejut, pakaian kantor, menutup mulut"');
+
+    // Masing-masing berdiri sendiri, bukan menyatu di satu baris.
+    const barisEkspresi = prompt
+      .split('\n')
+      .filter((baris) => baris.trim().startsWith('"'));
+    expect(barisEkspresi).toHaveLength(2);
+  });
+
+  it('TIDAK menggabungkan ekspresi dengan koma', () => {
+    const prompt = buildStoryUserPrompt(DENGAN_KOMA);
+
+    // Bentuk lama yang ambigu: dua ekspresi berdampingan dipisah koma.
+    expect(prompt).not.toContain(
+      'senyum, pakaian kantor, mengangkat tangan, terkejut, pakaian kantor, menutup mulut',
+    );
+  });
+
+  it('meminta model menyalin apa adanya', () => {
+    const prompt = buildStoryUserPrompt(DENGAN_KOMA);
+    expect(prompt).toMatch(/SALIN PERSIS/i);
   });
 });
