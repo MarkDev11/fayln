@@ -170,6 +170,22 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
     bagian.push('Bila ya, jangan langsung mengganti latar. Tulis niatnya, tulis');
     bagian.push('perjalanannya sebagai satu beat tersendiri, baru kemudian tiba.');
     bagian.push('Perjalanan itu bagian dari cerita — bukan pengisi waktu.');
+    bagian.push('');
+    /*
+     * Kedatangan WAJIB, bukan pilihan.
+     *
+     * Tanpa aturan ini model menulis niat dan perjalanannya, lalu menutup adegan
+     * sebelum tiba. Narasinya sudah berpindah ("mengikuti ke ruang rapat",
+     * "lorong kantor sunyi") tetapi `setBackground` ke tujuan tidak pernah
+     * keluar, sehingga gambar tetap di latar lama. Terukur di produksi: enam
+     * putaran berturut-turut seluruhnya di satu latar, meski pemain memilih
+     * "Ikuti dia ke ruang rapat" pada putaran pertama.
+     */
+    bagian.push('WAJIB: adegan ini harus SELESAI SAMPAI TUJUAN. Bila pemain');
+    bagian.push('berpindah tempat, keluarkan `setBackground` ke latar TUJUAN di');
+    bagian.push('adegan yang sama, sebelum keputusan penutup. Adegan yang berhenti');
+    bagian.push('di tengah perjalanan meninggalkan pemain di latar lama, dan');
+    bagian.push('gambarnya tidak akan pernah menyusul ceritanya.');
   } else {
     bagian.push('Tulis ADEGAN PEMBUKA.');
     bagian.push('Mulai dari situasinya, perkenalkan siapa yang ada di sana, lalu akhiri');

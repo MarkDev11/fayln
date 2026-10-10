@@ -284,3 +284,40 @@ describe('daftar ekspresi tidak ambigu', () => {
     expect(prompt).toMatch(/SALIN PERSIS/i);
   });
 });
+
+/**
+ * Perpindahan tempat harus SELESAI di adegan yang sama.
+ *
+ * Aturan lama hanya menyuruh "tulis niatnya, tulis perjalanannya, baru kemudian
+ * tiba" — tanpa mewajibkan tibanya. Terukur di produksi: model menulis
+ * "mengikuti ke ruang rapat" dan "lorong kantor sunyi", tetapi `setBackground`
+ * ke tujuan tidak pernah keluar. Enam putaran berturut-turut seluruhnya di satu
+ * latar, meski pemain memilih opsi perpindahan pada putaran pertama.
+ *
+ * BUKTI MERAH: hapus blok "WAJIB: adegan ini harus SELESAI SAMPAI TUJUAN" di
+ * `storyPrompt.ts`, lalu uji ini memerah.
+ */
+describe('perpindahan tempat diselesaikan', () => {
+  it('mewajibkan setBackground ke tujuan di adegan yang sama', () => {
+    const pesan = buildStoryUserPrompt({ ...MASUKAN, playerAction: 'Ikuti dia ke ruang rapat' });
+
+    expect(pesan).toContain('SELESAI SAMPAI TUJUAN');
+    expect(pesan).toMatch(/setBackground/);
+    expect(pesan).toMatch(/sebelum keputusan penutup/i);
+  });
+
+  it('tetap melarang meloncat tanpa menjembatani', () => {
+    /*
+     * Larangan meloncat hanya muncul bila sudah ada riwayat — itu memang
+     * disengaja: pada adegan pembuka belum ada apa pun untuk diulang.
+     */
+    const pesan = buildStoryUserPrompt({
+      ...MASUKAN,
+      playerAction: 'Ikuti dia ke ruang rapat',
+      recentBeats: ['Rina: Ikut saya ke ruang rapat.'],
+    });
+
+    expect(pesan).toMatch(/jangan langsung mengganti latar/i);
+    expect(pesan).toMatch(/jangan meloncat/i);
+  });
+});
