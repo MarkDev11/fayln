@@ -699,6 +699,68 @@ describe('pilihan pemain sampai ke mesin cerita', () => {
 
     expect(mesin.konteks[0]?.customText).toBe('aku duduk diam dan memperhatikan');
   });
+
+  /*
+   * Bahasa pilihan pemain harus sampai ke mesin cerita.
+   *
+   * Sebelumnya bahasa DIPATOK di system prompt ("Write in Indonesian") dan tidak
+   * ada jalur yang membawa pilihan pemain ke sana — opsi "English" di lembar
+   * persona dan di Pengaturan tidak berpengaruh apa pun.
+   *
+   * BUKTI MERAH: hapus `responseLocale` di konteks `submitTurn`
+   * (`journeyService.ts`), lalu uji pertama memerah.
+   */
+  it('meneruskan bahasa PERJALANAN ke mesin cerita', async () => {
+    const created = await inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('locale'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'en-US',
+      },
+    });
+
+    const hasil = created.json() as {
+      journeyId: string;
+      opening: { beats: { event: { type: string; decisionId?: string } }[] };
+    };
+    const beat = hasil.opening.beats.find((b) => b.event.type === 'presentChoices');
+
+    await inject({
+      method: 'POST',
+      url: `/v1/journeys/${hasil.journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('locale-turn'),
+        decisionId: beat?.event.decisionId,
+        selection: { optionId: 'opt1' },
+        // Klien boleh mengirim apa pun; yang dipakai adalah nilai PERJALANAN.
+        responseLocale: 'id-ID',
+      },
+    });
+
+    expect(mesin.konteks[0]?.responseLocale).toBe('en-US');
+  });
+
+  it('sesi membawa bahasa perjalanan', async () => {
+    const created = await inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('locale-session'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'en-US',
+      },
+    });
+    const journeyId = (created.json() as { journeyId: string }).journeyId;
+
+    const sesi = await inject({ method: 'GET', url: `/v1/journeys/${journeyId}/session` });
+
+    expect(sesi.statusCode).toBe(200);
+    expect((sesi.json() as { responseLocale: string }).responseLocale).toBe('en-US');
+  });
 });
 
 describe('sampul pada perjalanan', () => {

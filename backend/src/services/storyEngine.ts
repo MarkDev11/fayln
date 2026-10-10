@@ -14,7 +14,14 @@
  * - Mengarang aset yang tidak ada di manifest dunia.
  */
 
-import type { AssetManifest, Beat, ChoiceOption, NPCPublicDTO, StoryEvent } from '../contracts/types';
+import type {
+  AssetManifest,
+  Beat,
+  ChoiceOption,
+  NPCPublicDTO,
+  ResponseLocale,
+  StoryEvent,
+} from '../contracts/types';
 
 export type StoryContext = {
   worldTitle: string;
@@ -54,6 +61,13 @@ export type StoryContext = {
   recentBeats?: string[];
   /** Opsi yang dipilih, bila giliran ini berasal dari pilihan. */
   optionId?: string;
+  /**
+   * Bahasa narasi dan dialog yang dipilih pemain.
+   *
+   * Dibawa sampai ke prompt. Tanpa ini pilihan bahasa di lembar persona dan di
+   * Pengaturan hanya menjadi kontrol yang tidak berpengaruh apa pun.
+   */
+  responseLocale?: ResponseLocale;
   /** Nomor turn, dipakai membuat ID yang stabil. */
   turnOrdinal: number;
   /**

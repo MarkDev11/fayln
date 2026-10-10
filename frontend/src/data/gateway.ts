@@ -111,6 +111,15 @@ export type JourneySession = {
   /** Perkiraan posisi baca menurut server; frontend tetap memakai autosave lokal. */
   committedCursor: number;
   simulator: boolean;
+  /**
+   * Bahasa narasi yang dikunci perjalanan ini.
+   *
+   * Dikirim server supaya permintaan giliran memakai nilai yang SAMA dengan yang
+   * dipakai server saat menyusun cerita. Sebelumnya nilai ini ditulis mati
+   * `'id-ID'` di `usePlayerEngine`, sehingga pemain yang memilih English tetap
+   * mengirim permintaan berbahasa Indonesia.
+   */
+  responseLocale: 'id-ID' | 'en-US';
 };
 
 export type ReadProgressInput = {
@@ -153,14 +162,9 @@ export type ReportResult = {
   localOnly: boolean;
 };
 
-export type OperationStatus = {
-  operationId: string;
-  state: 'running' | 'succeeded' | 'failed';
-  result: TurnResultEnvelope | null;
-  errorCode: string | null;
-};
-
-/** Skenario gangguan yang dapat dipicu manual saat pengembangan dan pengujian. */
+/**
+ * Skenario gangguan yang dapat dipicu manual saat pengembangan dan pengujian.
+ */
 export type FaultMode =
   | 'none'
   | 'slow'
@@ -227,7 +231,6 @@ export interface StoryGateway {
 
   submitChoice(input: SubmitChoiceInput): Promise<TurnResultEnvelope>;
   submitCustom(input: SubmitCustomInput): Promise<TurnResultEnvelope>;
-  fetchOperation(operationId: string): Promise<OperationStatus>;
 
   fetchUsage(): Promise<UsageDTO>;
 

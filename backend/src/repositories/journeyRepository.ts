@@ -303,7 +303,7 @@ export class JourneyRepository {
   }
 
   /**
-   * Data sesi tanpa `world` dan tanpa `simulator`.
+   * Data sesi tanpa `world`, `simulator`, dan `responseLocale`.
    *
    * Dunia sengaja TIDAK diambil di sini: repository ini tidak mengimpor repository
    * lain. Penyusunan akhir dilakukan lapisan layanan.
@@ -313,8 +313,14 @@ export class JourneyRepository {
    * di sini — akibatnya setiap pemain diberi tahu bahwa mesin simulator yang
    * menulis ceritanya, padahal yang bekerja adalah AI sungguhan. Yang berhak
    * menjawab adalah pemegang mesin: layanan cerita (lihat `openSession`).
+   *
+   * `responseLocale` mengikuti pola yang sama: nilainya disusun lapisan layanan
+   * dari baris perjalanan, supaya hanya ada SATU tempat yang menerjemahkan
+   * `response_locale` menjadi locale yang sah.
    */
-  async sessionData(journeyId: string): Promise<Omit<JourneySessionDTO, 'world' | 'simulator'> | null> {
+  async sessionData(
+    journeyId: string,
+  ): Promise<Omit<JourneySessionDTO, 'world' | 'simulator' | 'responseLocale'> | null> {
     const journey = await this.findById(journeyId);
     if (!journey) {
       return null;

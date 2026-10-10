@@ -35,8 +35,16 @@
  * jalan ikut membangun dunia, bukan hanya latar yang berganti nama.
  */
 
+import type { ResponseLocale } from '../contracts/types';
+
 /** Batas beat dalam satu adegan. Diputuskan pemilik produk: 10. */
 export const MAX_SCENE_BEATS = 10;
+
+/** Nama bahasa yang ditulis ke prompt, per locale respons. */
+const NAMA_BAHASA: Record<ResponseLocale, string> = {
+  'id-ID': 'Bahasa Indonesia',
+  'en-US': 'English',
+};
 
 /** Satu karakter yang boleh dipakai model, beserta ekspresinya. */
 export type PromptCharacter = {
@@ -70,6 +78,15 @@ export type StoryPromptInput = {
   recentBeats: string[];
   /** Yang dilakukan pemain pada giliran sebelumnya, bila ada. */
   playerAction: string | null;
+  /**
+   * Bahasa narasi dan dialog yang dipilih pemain.
+   *
+   * Sebelumnya bahasa DIPATOK di system prompt ("Write in Indonesian"), dan
+   * tidak ada satu pun jalur yang membawa pilihan pemain ke sini. Akibatnya
+   * opsi "English" di lembar persona dan di Pengaturan tidak berpengaruh
+   * apa pun — kontrol mati.
+   */
+  responseLocale: ResponseLocale;
 };
 
 /**
@@ -93,6 +110,19 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
   bagian.push('');
   bagian.push(`PEMAIN: ${input.persona.name}, ${String(input.persona.age)} tahun.`);
   bagian.push('');
+  /*
+   * Bahasa ditulis di USER prompt, bukan hanya di system prompt.
+   *
+   * Aturan 32 di system prompt dulu berbunyi mati "Write in Indonesian",
+   * sehingga pilihan pemain tidak mungkin berpengaruh. Sekarang keduanya
+   * mengikuti `responseLocale`; baris ini yang membuatnya tegas per permintaan.
+   */
+  bagian.push(`BAHASA CERITA: ${NAMA_BAHASA[input.responseLocale]}.`);
+  bagian.push(
+    'Tulis SELURUH narasi dan dialog dalam bahasa itu. Kunci JSON dan nama field',
+  );
+  bagian.push('tetap bahasa Inggris — hanya ISI ceritanya yang memakai bahasa itu.');
+  bagian.push('');
 
   bagian.push('LATAR YANG TERSEDIA — hanya assetId ini yang sah:');
   if (input.backgrounds.length === 0) {
@@ -102,6 +132,22 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
       bagian.push(`  ${item.assetId} — ${item.label}`);
     }
   }
+  /*
+   * Larangan menyebut TEMPAT yang tidak ada latarnya, diletakkan tepat di
+   * sebelah daftarnya.
+   *
+   * Terukur di produksi: model menawarkan "Ikuti dia ke ruang rapat" padahal
+   * daftar 22 latar dunia itu tidak memuat ruang rapat sama sekali. Karena tidak
+   * ada latar yang cocok, `setBackground` ke tujuan tidak mungkin keluar dan
+   * latar tidak pernah berpindah — model menjanjikan tempat yang tidak dapat
+   * ditampilkan. Aturan serupa di bagian TUGAS tidak cukup; yang ini menempel
+   * langsung pada datanya.
+   */
+  bagian.push('');
+  bagian.push('PENTING: hanya tempat di daftar itu yang BENAR-BENAR ADA. Jangan');
+  bagian.push('menyebut ruangan atau tempat lain — termasuk di dalam label opsi');
+  bagian.push('pilihan. Bila ceritanya terasa butuh tempat yang tidak ada di daftar,');
+  bagian.push('tetap di tempat sekarang dan tulis kejadiannya di situ.');
   bagian.push('');
 
   bagian.push('KARAKTER — hanya npcId ini yang sah:');
@@ -396,3 +442,21 @@ export const STORY_SYSTEM_PROMPT = [
   '- Never change the background in the beat right after the player chose to go',
   '  somewhere. There must be a bridge beat first.',
 ].join('\n');
+
+/**
+ * System prompt dengan BAHASA yang mengikuti pilihan pemain.
+ *
+ * Aturan 32 semula berbunyi mati "Write in Indonesian". Karena itu pilihan
+ * "English" di lembar persona dan di Pengaturan tidak pernah berpengaruh: model
+ * selalu disuruh menulis bahasa Indonesia, seberapa pun `responseLocale`
+ * disalurkan ke lapisan lain. Di sini aturan itu diganti sesuai locale.
+ *
+ * Yang berubah hanya aturan bahasanya. Seluruh aturan bentuk keluaran tetap
+ * sama, karena kunci JSON dan nama field memang harus tetap bahasa Inggris.
+ */
+export function storySystemPrompt(locale: ResponseLocale): string {
+  return STORY_SYSTEM_PROMPT.replace(
+    /^32\. Write in .*$/m,
+    `32. Write in ${NAMA_BAHASA[locale]}, second person, addressing the player as @user.`,
+  );
+}

@@ -14,6 +14,7 @@ import {
   MAX_BEAT_WORDS,
   MAX_SCENE_BEATS,
   STORY_SYSTEM_PROMPT,
+  storySystemPrompt,
 } from '../src/services/storyPrompt';
 import type { StoryPromptInput } from '../src/services/storyPrompt';
 
@@ -40,6 +41,7 @@ const MASUKAN: StoryPromptInput = {
   storySoFar: null,
   recentBeats: [],
   playerAction: null,
+  responseLocale: 'id-ID',
 };
 
 describe('prompt sistem', () => {
@@ -340,5 +342,100 @@ describe('tujuan harus punya latar', () => {
     // Perhatikan: teks prompt dipotong baris, jadi spasi tidak dapat diandalkan.
     expect(pesan).toMatch(/ADA latarnya di daftar/i);
     expect(pesan).toMatch(/satu label di daftar itu/i);
+  });
+});
+
+/**
+ * Bahasa mengikuti PILIHAN PEMAIN, bukan dipatok.
+ *
+ * Aturan 32 di system prompt semula berbunyi mati "Write in Indonesian",
+ * sehingga opsi "English" di lembar persona dan di Pengaturan tidak berpengaruh
+ * apa pun — kontrol mati. Uji ini menjaga kedua sisi: system prompt DAN user
+ * prompt harus mengikuti `responseLocale`.
+ *
+ * BUKTI MERAH: kembalikan `STORY_SYSTEM_PROMPT` (konstanta) di
+ * `aiStoryEngine.ts`, atau hapus baris "BAHASA CERITA" di `storyPrompt.ts`,
+ * lalu uji-uji ini memerah.
+ */
+describe('bahasa mengikuti pilihan pemain', () => {
+  it('system prompt menyebut English saat locale en-US', () => {
+    const sistem = storySystemPrompt('en-US');
+
+    expect(sistem).toContain('Write in English');
+    expect(sistem).not.toContain('Write in Bahasa Indonesia');
+  });
+
+  it('system prompt menyebut Bahasa Indonesia saat locale id-ID', () => {
+    const sistem = storySystemPrompt('id-ID');
+
+    expect(sistem).toContain('Write in Bahasa Indonesia');
+    expect(sistem).not.toContain('Write in English');
+  });
+
+  it('aturan bentuk keluaran TIDAK ikut berubah', () => {
+    // Yang boleh berubah hanya aturan bahasanya. Kunci JSON tetap bahasa Inggris.
+    const id = storySystemPrompt('id-ID');
+    const en = storySystemPrompt('en-US');
+
+    expect(id.replace(/^32\. Write in .*$/m, '')).toBe(
+      en.replace(/^32\. Write in .*$/m, ''),
+    );
+  });
+
+  it('user prompt menyebut bahasa yang dipilih', () => {
+    expect(buildStoryUserPrompt({ ...MASUKAN, responseLocale: 'en-US' })).toContain(
+      'BAHASA CERITA: English',
+    );
+    expect(buildStoryUserPrompt({ ...MASUKAN, responseLocale: 'id-ID' })).toContain(
+      'BAHASA CERITA: Bahasa Indonesia',
+    );
+  });
+
+  it('TIDAK PERNAH menulis "undefined" sebagai bahasa', () => {
+    /*
+     * Penjaga khusus: `tests/` DIKECUALIKAN dari `tsc`, sehingga fixture yang
+     * kurang bidang ini tidak ketahuan saat kompilasi — promptnya hanya berbunyi
+     * "BAHASA CERITA: undefined." dan model menebak sendiri.
+     */
+    for (const locale of ['id-ID', 'en-US'] as const) {
+      expect(buildStoryUserPrompt({ ...MASUKAN, responseLocale: locale })).not.toContain(
+        'undefined',
+      );
+    }
+  });
+});
+
+/**
+ * Larangan menyebut tempat yang tidak ada latarnya, MENEMPEL pada daftarnya.
+ *
+ * Terukur di produksi: setelah aturan di bagian TUGAS ditambahkan, model masih
+ * menawarkan "Ikuti ke rapat" — padahal daftar 22 latar dunia itu tidak memuat
+ * ruang rapat. Aturan yang jauh dari datanya mudah terlewat; yang ini diletakkan
+ * tepat di sebelah daftar latar.
+ *
+ * BUKTI MERAH: hapus blok "PENTING: hanya tempat di daftar itu" di
+ * `storyPrompt.ts`, lalu uji ini memerah.
+ */
+describe('tempat yang disebut harus ada latarnya', () => {
+  it('menempel tepat setelah daftar latar', () => {
+    const pesan = buildStoryUserPrompt(MASUKAN);
+
+    const akhirDaftar = pesan.indexOf('bg_kantin');
+    const larangan = pesan.indexOf('hanya tempat di daftar itu yang BENAR-BENAR ADA');
+
+    expect(akhirDaftar).toBeGreaterThan(-1);
+    expect(larangan).toBeGreaterThan(akhirDaftar);
+    // Tidak boleh terpisah jauh — harus bagian dari blok latar.
+    expect(larangan - akhirDaftar).toBeLessThan(200);
+  });
+
+  it('melarang menyebut tempat lain di dalam label opsi', () => {
+    const pesan = buildStoryUserPrompt(MASUKAN);
+    expect(pesan).toMatch(/termasuk di dalam label opsi/i);
+  });
+
+  it('menyuruh tetap di tempat bila tempatnya tidak ada', () => {
+    const pesan = buildStoryUserPrompt(MASUKAN);
+    expect(pesan).toMatch(/tetap di tempat sekarang/i);
   });
 });

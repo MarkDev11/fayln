@@ -117,6 +117,8 @@ function PlayerView({ session }: { session: JourneySession }) {
     initialRelations: session.relationsBaseline,
     memory: session.memory,
     simulator: session.simulator,
+    // Bahasa dari SESI — nilai yang sama dengan yang dipakai server.
+    responseLocale: session.responseLocale,
   });
 
   const [logVisible, setLogVisible] = useState(false);

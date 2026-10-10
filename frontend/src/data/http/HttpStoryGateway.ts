@@ -33,7 +33,6 @@ import {
   type CreateJourneyInput,
   type CreateJourneyResult,
   type JourneySession,
-  type OperationStatus,
   type ReadProgressInput,
   type ReportInput,
   type ReportResult,
@@ -70,13 +69,18 @@ type MetaResponse = { storyEngine?: { simulator?: boolean } };
 /**
  * Anggaran waktu untuk rute yang menyusun adegan lewat model cerita.
  *
- * Terukur 9 Oktober 2026 terhadap API produksi: membuat perjalanan butuh
- * 19,1–24,0 detik (tiga kali pengukuran). Batas bawaan 20 detik karena itu
- * memutus permintaan yang sebenarnya akan berhasil — pengguna melihat
- * "Perjalanan gagal dibuat" padahal server mengembalikan 201.
+ * Batas bawaan 20 detik memutus permintaan yang sebenarnya akan berhasil —
+ * pengguna melihat "Perjalanan gagal dibuat" padahal server mengembalikan 201.
+ * Karena itu rute ini memakai batas sendiri.
  *
- * 90 detik memberi ruang bagi model yang sedang lambat tanpa membiarkan
- * antarmuka menggantung selamanya. Rute baca tetap memakai batas bawaan.
+ * Angka terukurnya BERUBAH-UBUH, dan itulah alasan batasnya dibuat lapang —
+ * bukan angka tertentu yang ditulis di sini. Terukur 9 Oktober 2026: pembuatan
+ * perjalanan 19–24 detik. Terukur 10 Oktober 2026: pembuatan 24–35 detik dan
+ * giliran 21–35 detik, hampir dua kali lipat dalam sehari. Batas 90 detik masih
+ * jauh di atasnya, tetapi marginnya menyempit: bila suatu saat satu giliran
+ * menembus 90 detik, yang perlu ditinjau adalah batas ini.
+ *
+ * Rute baca tetap memakai batas bawaan.
  */
 const STORY_GENERATION_TIMEOUT_MS = 90_000;
 
@@ -279,12 +283,6 @@ export class HttpStoryGateway implements StoryGateway {
         },
       },
     );
-  }
-
-  async fetchOperation(operationId: string): Promise<OperationStatus> {
-    return this.request<OperationStatus>(`/v1/operations/${encodeURIComponent(operationId)}`, {
-      method: 'GET',
-    });
   }
 
   /* ---------------------------------------------------------------- */

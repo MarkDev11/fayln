@@ -35,7 +35,7 @@ import {
   buildStoryUserPrompt,
   MAX_BEAT_WORDS,
   MAX_SCENE_BEATS,
-  STORY_SYSTEM_PROMPT,
+  storySystemPrompt,
 } from './storyPrompt';
 
 /** Hasil pemanggilan model, apa adanya. */
@@ -113,9 +113,20 @@ export class AiStoryEngine implements StoryEngine {
       storySoFar: context.storySoFar ?? null,
       recentBeats: context.recentBeats ?? [],
       playerAction,
+      // Bahasa pilihan pemain dibawa sampai ke prompt.
+      responseLocale: context.responseLocale ?? 'id-ID',
     });
 
-    const panggilan = await this.deps.call(STORY_SYSTEM_PROMPT, userPrompt);
+    /*
+     * System prompt dibangun per permintaan, bukan konstanta.
+     *
+     * Aturan bahasanya harus mengikuti pilihan pemain; konstanta statis membuat
+     * opsi "English" tidak berpengaruh apa pun.
+     */
+    const panggilan = await this.deps.call(
+      storySystemPrompt(context.responseLocale ?? 'id-ID'),
+      userPrompt,
+    );
     if (!panggilan.ok) {
       return this.serahkanKeSimulator(context, playerAction, `panggilan gagal: ${panggilan.detail}`);
     }

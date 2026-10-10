@@ -5,7 +5,13 @@ import { playerReducer } from './reducer';
 import { createEmptyPlaybackState, type PlaybackState } from './types';
 
 import { useGateway } from '@/data/GatewayProvider';
-import type { GatewayError as GatewayErrorShape, Beat, MemorySnapshot, RelationEntry } from '@/domain/types';
+import type {
+  GatewayError as GatewayErrorShape,
+  Beat,
+  MemorySnapshot,
+  RelationEntry,
+  ResponseLocale,
+} from '@/domain/types';
 import { StoryGatewayError } from '@/data/gateway';
 import { createPlaybackStore, type PlaybackStore } from '@/storage/playbackStore';
 import { telemetry } from '@/telemetry/analytics';
@@ -19,6 +25,14 @@ export type PlayerEngineOptions = {
   initialRelations: RelationEntry[];
   memory: MemorySnapshot;
   simulator: boolean;
+  /**
+   * Bahasa narasi perjalanan ini, dari SESI.
+   *
+   * Bukan dari profil lokal: profil bisa berubah setelah perjalanan dibuat,
+   * sedangkan bahasa perjalanan dikunci sekali dan tidak boleh berganti di
+   * tengah cerita.
+   */
+  responseLocale: ResponseLocale;
   /** Disuntikkan pengujian; default memakai penyimpanan yang tersedia. */
   store?: PlaybackStore;
   /** Mematikan timer Auto pada pengujian. */
@@ -193,14 +207,21 @@ export function usePlayerEngine(options: PlayerEngineOptions): PlayerEngine {
                 journeyId: state.journeyId,
                 decisionId: decision.decisionId,
                 optionId: intent.optionId,
-                responseLocale: 'id-ID',
+                /*
+                 * Bahasa dari SESI, bukan ditulis mati.
+                 *
+                 * Dulu di sini tertulis `'id-ID'`. Akibatnya pemain yang memilih
+                 * English di lembar persona tetap mengirim permintaan berbahasa
+                 * Indonesia — pilihannya tidak berpengaruh apa pun.
+                 */
+                responseLocale: options.responseLocale,
               })
             : await gateway.submitCustom({
                 clientOperationId: operationId,
                 journeyId: state.journeyId,
                 decisionId: decision.decisionId,
                 customText: intent.text,
-                responseLocale: 'id-ID',
+                responseLocale: options.responseLocale,
               });
 
         dispatch({ type: 'TURN_COMMITTED', envelope });
@@ -212,7 +233,7 @@ export function usePlayerEngine(options: PlayerEngineOptions): PlayerEngine {
         });
       }
     },
-    [gateway, state.decision, state.journeyId],
+    [gateway, state.decision, state.journeyId, options.responseLocale],
   );
 
   const submitChoice = useCallback(

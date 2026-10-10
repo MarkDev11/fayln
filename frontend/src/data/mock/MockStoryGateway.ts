@@ -25,7 +25,6 @@ import {
   type CreateJourneyResult,
   type FaultMode,
   type JourneySession,
-  type OperationStatus,
   type ReadProgressInput,
   type ReportInput,
   type ReportResult,
@@ -477,7 +476,14 @@ export type MockStoryGatewayOptions = {
 };
 
 export class MockStoryGateway implements StoryGateway {
-  readonly isSimulator = true;
+  /*
+   * Bertipe `boolean`, bukan literal `true`.
+   *
+   * Tanpa anotasi ini TypeScript menyimpulkan tipe literal `true`, sehingga
+   * mesin tiruan yang mengaku BUKAN simulator tidak dapat dibuat — dan justru
+   * itulah yang perlu diuji: apakah penanda mengikuti mesinnya.
+   */
+  readonly isSimulator: boolean = true;
   readonly seed = FIXTURE_SEED;
 
   private faultMode: FaultMode;
@@ -495,6 +501,14 @@ export class MockStoryGateway implements StoryGateway {
   private readonly journeyBeats = new Map<string, Beat[]>();
   /** Hubungan SEBELUM beat mana pun; dasar penurunan state yang boleh dilihat. */
   private readonly journeyBaseline = new Map<string, RelationEntry[]>();
+
+  /**
+   * Bahasa yang dikunci tiap perjalanan, seperti di server.
+   *
+   * Dipisah dari `JourneyDetailDTO` karena locale bukan bagian dari ringkasan
+   * perjalanan — ia hanya dibawa di SESI.
+   */
+  private readonly journeyLocales = new Map<string, 'id-ID' | 'en-US'>();
   private journeyCounter = 0;
   private turnCounter = 0;
   /**
@@ -774,6 +788,7 @@ export class MockStoryGateway implements StoryGateway {
       memory: journey.memory,
       committedCursor: beats.length,
       simulator: true,
+      responseLocale: this.journeyLocales.get(journeyId) ?? 'id-ID',
     };
   }
 
@@ -890,6 +905,7 @@ export class MockStoryGateway implements StoryGateway {
     this.journeys.set(journeyId, journey);
     this.journeyBeats.set(journeyId, [...envelope.beats]);
     this.journeyBaseline.set(journeyId, relations);
+    this.journeyLocales.set(journeyId, input.responseLocale);
 
     return { journeyId, worldVersion: world.worldVersion, opening: envelope };
   }
@@ -945,14 +961,6 @@ export class MockStoryGateway implements StoryGateway {
     return this.runTurn(input.clientOperationId, input.journeyId, () =>
       buildCustomBeats('t', input.customText),
     );
-  }
-
-  async fetchOperation(operationId: string): Promise<OperationStatus> {
-    const result = this.operations.get(operationId);
-    if (result) {
-      return { operationId, state: 'succeeded', result, errorCode: null };
-    }
-    return { operationId, state: 'running', result: null, errorCode: null };
   }
 
   /* ---------------- Kuota ---------------- */

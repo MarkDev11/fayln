@@ -261,6 +261,10 @@ export class JourneyService {
         characters: detail.characters,
         manifest: detail.assetManifest,
         personaName: command.persona.name,
+        personaAge: command.persona.age,
+        synopsis: detail.synopsis,
+        // Bahasa pilihan pemain, dibawa sampai ke prompt.
+        responseLocale: command.responseLocale,
         turnOrdinal: 1,
         beatIdPrefix: turnId,
       };
@@ -413,6 +417,9 @@ export class JourneyService {
     return {
       ...session,
       simulator: this.deps.engine.isSimulator,
+      // Bahasa dari PERJALANAN, bukan dari klien — nilai yang sama dengan yang
+      // dipakai `submitTurn` saat menyusun cerita.
+      responseLocale: journey.response_locale === 'en-US' ? 'en-US' : 'id-ID',
       world: world satisfies WorldDetailDTO,
     };
   }
@@ -545,6 +552,16 @@ export class JourneyService {
         characters: world.characters,
         manifest: world.assetManifest,
         personaName: journey.persona_name,
+        personaAge: journey.persona_age,
+        synopsis: world.synopsis,
+        /*
+         * Bahasa diambil dari PERJALANAN, bukan dari permintaan giliran.
+         *
+         * Nilainya ditetapkan sekali saat perjalanan dibuat, dan tidak boleh
+         * berubah di tengah cerita — kalau bahasa bisa berganti per giliran,
+         * satu perjalanan dapat bercampur dua bahasa.
+         */
+        responseLocale: journey.response_locale === 'en-US' ? 'en-US' : 'id-ID',
         turnOrdinal: countTurns(existingBeats) + 1,
         // Awalan unik: tanpa ini, giliran pertama setiap perjalanan menghasilkan
         // beat_id yang sama dan penyimpanan gagal pada kunci utama.

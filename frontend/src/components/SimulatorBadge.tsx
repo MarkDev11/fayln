@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { Text } from './Text';
 
+import { useGateway } from '@/data/GatewayProvider';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/theme/ThemeProvider';
 import { radius, space } from '@/theme/tokens';
@@ -12,10 +13,28 @@ import { radius, space } from '@/theme/tokens';
  *
  * Wajib tampil selama frontend belum terhubung ke backend nyata, agar tidak ada
  * pihak yang menyangka cerita contoh berasal dari AI produksi (NFR-16, R-16).
+ *
+ * KAPAN TAMPIL ditentukan oleh MESIN, bukan oleh pemanggil.
+ *
+ * Sebelumnya komponen ini selalu merender labelnya, dan tiga layar
+ * memanggilnya tanpa syarat apa pun (`world/[worldId]`, `journey/[journeyId]`,
+ * `settings/plan`). Di produksi mesinnya AI sungguhan (`simulator: false`,
+ * `modelId: "ai-story"`), sehingga aplikasi memberi tahu setiap pemain bahwa
+ * ceritanya berasal dari contoh bawaan — persis kebalikan dari yang
+ * dikehendaki NFR-16, dan satu kelas dengan bug `simulator: true` yang dulu
+ * diperbaiki di layar pemain.
+ *
+ * Gerbangnya diletakkan DI SINI, bukan di tiap pemanggil: dengan begitu tidak
+ * ada layar yang dapat lupa memeriksanya, termasuk layar yang ditulis nanti.
  */
 export function SimulatorBadge() {
+  const gateway = useGateway();
   const { colors } = useTheme();
   const { t } = useI18n();
+
+  if (!gateway.isSimulator) {
+    return null;
+  }
 
   return (
     <View
@@ -30,9 +49,15 @@ export function SimulatorBadge() {
   );
 }
 
+/** Seperti `SimulatorBadge`: hanya tampil saat mesinnya memang simulator. */
 export function SimulatorNotice() {
+  const gateway = useGateway();
   const { colors } = useTheme();
   const { t } = useI18n();
+
+  if (!gateway.isSimulator) {
+    return null;
+  }
 
   return (
     <View

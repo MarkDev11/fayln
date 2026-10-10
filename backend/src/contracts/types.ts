@@ -304,6 +304,15 @@ export type JourneySessionDTO = {
   memory: MemorySnapshot;
   committedCursor: number;
   simulator: boolean;
+  /**
+   * Bahasa narasi yang dikunci perjalanan ini.
+   *
+   * Dibawa di sesi supaya klien mengirim nilai yang SAMA dengan yang dipakai
+   * server saat menyusun cerita. Nilainya ditetapkan saat perjalanan dibuat dan
+   * tidak berubah — kalau klien menebak sendiri, satu perjalanan dapat meminta
+   * dua bahasa berbeda.
+   */
+  responseLocale: ResponseLocale;
 };
 
 /* ------------------------------------------------------------------ */
