@@ -518,3 +518,108 @@ describe('cadanganPertanyaan', () => {
     }
   });
 });
+
+/**
+ * Penanda PEMAIN (`@user`) tidak menjatuhkan seluruh adegan.
+ *
+ * Prompt menyapa pemain sebagai `@user` di seluruh aturannya, jadi model kadang
+ * memakai penanda itu sebagai PELAKU sebuah peristiwa. Pemain tidak punya
+ * `NPCPublicDTO` — tidak ada potret maupun relasi — sehingga id itu tidak akan
+ * pernah cocok. Sebelum ini, SATU peristiwa seperti itu menjatuhkan seluruh
+ * adegan, dan seluruh giliran jatuh ke simulator.
+ *
+ * Ditemukan dari log produksi SETELAH penolakan mulai mencatat nilainya:
+ * `"adegan ditolak: npc-tidak-dikenal (@user)"`. Sebelum itu, penyebabnya
+ * mustahil diketahui — log hanya berbunyi "npc-tidak-dikenal".
+ *
+ * BUKTI MERAH: hapus cabang `adalahPemain(...)` di `aiStoryEngine.ts`, lalu uji
+ * "adegan tetap DITERIMA" memerah dengan `npc-tidak-dikenal`.
+ */
+describe('penanda pemain @user', () => {
+  const adeganDenganPemain = (): unknown => ({
+    beats: [
+      { type: 'setBackground', assetId: 'bg_kantor' },
+      { type: 'showCharacter', npcId: '@user', expression: 'senyum', assetId: 'p_rina_senyum' },
+      { type: 'say', npcId: '@user', text: 'Aku tidak akan tinggal diam.' },
+      { type: 'narrate', text: 'Rina mengalihkan pandangan.' },
+    ],
+    decision: {
+      prompt: 'Apa yang kamu lakukan?',
+      options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }],
+    },
+  });
+
+  it('adegan tetap DITERIMA, bukan jatuh ke simulator', () => {
+    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER);
+
+    expect(hasil.ok).toBe(true);
+  });
+
+  it('peristiwa pemain DIBUANG dan dilaporkan, tidak disembunyikan', () => {
+    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER);
+
+    if (!hasil.ok) throw new Error('seharusnya diterima');
+    expect(hasil.skipped).toHaveLength(2);
+    expect(hasil.skipped.join(' ')).toContain('@user');
+  });
+
+  it('kalimat pemain TETAP dipakai, sebagai narasi — bukan dihilangkan', () => {
+    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER);
+
+    if (!hasil.ok) throw new Error('seharusnya diterima');
+    const teks = hasil.events
+      .filter((e) => e.type === 'narrate')
+      .map((e) => (e.type === 'narrate' ? e.text : ''));
+    // Yang ditulis model tidak hilang; hanya bentuknya berubah.
+    expect(teks).toContain('Aku tidak akan tinggal diam.');
+  });
+
+  it('id yang benar-benar asing TETAP ditolak', () => {
+    const hasil = periksaAdegan(
+      {
+        beats: [
+          { type: 'setBackground', assetId: 'bg_kantor' },
+          { type: 'showCharacter', npcId: 'npc_khayalan', expression: 'senyum', assetId: 'p_rina_senyum' },
+          { type: 'narrate', text: 'Halo.' },
+        ],
+        decision: { prompt: 'Apa?', options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }] },
+      },
+      MANIFEST,
+      KARAKTER,
+    );
+
+    expect(hasil.ok).toBe(false);
+  });
+
+  it('adegan yang SELURUH isinya milik pemain tetap ditolak', () => {
+    // Tidak menyisakan apa pun untuk ditampilkan — layar akan kosong.
+    const hasil = periksaAdegan(
+      {
+        beats: [{ type: 'showCharacter', npcId: '@user', expression: 'senyum', assetId: 'p_rina_senyum' }],
+        decision: { prompt: 'Apa?', options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }] },
+      },
+      MANIFEST,
+      KARAKTER,
+    );
+
+    expect(hasil.ok).toBe(false);
+  });
+
+  it('mengenali penanda pemain dalam beberapa ejaan', () => {
+    for (const penanda of ['@user', 'user', 'PEMAIN', 'Player']) {
+      const hasil = periksaAdegan(
+        {
+          beats: [
+            { type: 'setBackground', assetId: 'bg_kantor' },
+            { type: 'showCharacter', npcId: penanda, expression: 'senyum', assetId: 'p_rina_senyum' },
+            { type: 'narrate', text: 'Halo.' },
+          ],
+          decision: { prompt: 'Apa?', options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }] },
+        },
+        MANIFEST,
+        KARAKTER,
+      );
+      expect(hasil.ok, `penanda ${penanda}`).toBe(true);
+    }
+  });
+});

@@ -214,6 +214,10 @@ async function main(): Promise<void> {
     onFailure: (sebab) => {
       app.log.warn({ sebab }, 'Mesin cerita menyerahkan giliran ke simulator.');
     },
+    // Bukan kegagalan: giliran tetap jalan, tetapi sebagian isi model dibuang.
+    onSkipped: (rinci) => {
+      app.log.warn({ dibuang: rinci }, 'Sebagian peristiwa adegan dibuang.');
+    },
   });
 
   const journeyService = new JourneyService({

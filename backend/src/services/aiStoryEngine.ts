@@ -53,6 +53,14 @@ export type AiStoryEngineDeps = {
   /** Perkiraan biaya satu giliran, untuk anggaran. */
   estimatedTurnCost?: number;
   onFailure?: (sebab: string) => void;
+  /**
+   * Peristiwa yang dibuang dari adegan yang tetap diterima.
+   *
+   * Dipisahkan dari `onFailure` dengan sengaja: giliran ini BERHASIL, jadi tidak
+   * boleh dihitung sebagai kegagalan — tetapi isinya berkurang, dan itu perlu
+   * terlihat di log.
+   */
+  onSkipped?: (rinci: string) => void;
 };
 
 /** Alasan sebuah adegan ditolak. Dipakai untuk log dan pengujian. */
@@ -149,6 +157,16 @@ export class AiStoryEngine implements StoryEngine {
       );
     }
 
+    /*
+     * Peristiwa yang dibuang tetap DILAPORKAN, meski giliran tetap jalan.
+     * Tanpa laporan, "adegan diterima" akan menyembunyikan bahwa sebagian isi
+     * model hilang — dan itu tidak akan pernah ketahuan sampai ada yang
+     * menyadari satu adegan terasa lebih pendek dari seharusnya.
+     */
+    if (diperiksa.skipped.length > 0) {
+      this.deps.onSkipped?.(diperiksa.skipped.join(', '));
+    }
+
     return bungkusJadiHasil(diperiksa.events, context, this.estimatedTurnCost);
   }
 
@@ -189,7 +207,7 @@ export function aksiPemain(context: StoryContext): string | null {
  * harus ditebak. Sekali sudah terjadi, dan menebak memakan satu putaran deploy.
  */
 export type PeriksaHasil =
-  | { ok: true; events: StoryEvent[] }
+  | { ok: true; events: StoryEvent[]; skipped: string[] }
   | { ok: false; reason: RejectReason; detail?: string };
 
 /**
@@ -271,6 +289,25 @@ function rujukNpc(nilai: unknown, npcSah: Map<string, NPCPublicDTO>): string | u
   return cocokkanNpc([...npcSah.keys()], nilai);
 }
 
+/**
+ * Apakah model menuliskan PEMAIN sebagai npcId.
+ *
+ * Prompt menyapa pemain sebagai `@user` di seluruh aturan, jadi model kadang
+ * memakai penanda itu sebagai pelaku sebuah peristiwa. Pemain tidak punya
+ * `NPCPublicDTO` — tidak ada potret maupun relasi — sehingga id itu tidak akan
+ * pernah cocok, dan satu peristiwa seperti itu menjatuhkan SELURUH adegan.
+ *
+ * Terukur di produksi 11 Okt 2026, dan baru dapat diketahui setelah penolakan
+ * mulai mencatat nilainya: `"adegan ditolak: npc-tidak-dikenal (@user)"`.
+ */
+function adalahPemain(nilai: unknown): boolean {
+  if (typeof nilai !== 'string') {
+    return false;
+  }
+  const normal = nilai.toLowerCase().replace(/[^a-z]/g, '');
+  return normal === 'user' || normal === 'pemain' || normal === 'player';
+}
+
 export function periksaAdegan(
   mentah: unknown,
   manifest: AssetManifest,
@@ -300,6 +337,17 @@ export function periksaAdegan(
 
   const events: StoryEvent[] = [];
 
+  /*
+   * Peristiwa yang DIBUANG, bukan yang menjatuhkan adegan.
+   *
+   * Hanya berlaku untuk satu hal: model memakai penanda pemain (`@user`) sebagai
+   * pelaku. Pemain tidak punya potret maupun relasi, jadi peristiwanya memang
+   * tidak dapat ditampilkan — tetapi membuang SATU peristiwa jauh lebih baik
+   * daripada membuang seluruh giliran lalu menyerahkannya ke simulator.
+   * Id yang benar-benar asing tetap ditolak seperti sebelumnya.
+   */
+  const dibuang: string[] = [];
+
   for (const item of beats) {
     if (!item || typeof item !== 'object' || Array.isArray(item)) {
       return { ok: false, reason: 'event-tidak-dikenal' };
@@ -324,6 +372,11 @@ export function periksaAdegan(
       }
 
       case 'showCharacter': {
+        // Pemain tidak punya potret: tidak ada yang dapat ditampilkan.
+        if (adalahPemain(peristiwa.npcId)) {
+          dibuang.push('showCharacter @user');
+          break;
+        }
         const npcIdSah = rujukNpc(peristiwa.npcId, npcSah);
         const npc = npcIdSah !== undefined ? npcSah.get(npcIdSah) : undefined;
         if (!npc) {
@@ -357,6 +410,10 @@ export function periksaAdegan(
       }
 
       case 'hideCharacter': {
+        if (adalahPemain(peristiwa.npcId)) {
+          dibuang.push('hideCharacter @user');
+          break;
+        }
         const idSah = rujukNpc(peristiwa.npcId, npcSah);
         if (!idSah) {
           return { ok: false, reason: 'npc-tidak-dikenal', detail: String(peristiwa.npcId) };
@@ -366,18 +423,33 @@ export function periksaAdegan(
       }
 
       case 'say': {
+        if (typeof peristiwa.text !== 'string') {
+          return { ok: false, reason: 'event-tidak-dikenal' };
+        }
+        /*
+         * Pemain berbicara: tidak ada potret yang dapat ditampilkan, dan pemain
+         * tidak punya nama yang dapat diatribusikan. Kalimatnya TETAP dipakai —
+         * dibuang sebagai narasi, bukan dihilangkan. Yang ditulis model tidak
+         * hilang; hanya bentuknya berubah.
+         */
+        if (adalahPemain(peristiwa.npcId)) {
+          dibuang.push('say @user -> narrate');
+          events.push({ type: 'narrate', text: peristiwa.text.trim() });
+          break;
+        }
         const idSah = rujukNpc(peristiwa.npcId, npcSah);
         if (!idSah) {
           return { ok: false, reason: 'npc-tidak-dikenal', detail: String(peristiwa.npcId) };
-        }
-        if (typeof peristiwa.text !== 'string') {
-          return { ok: false, reason: 'event-tidak-dikenal' };
         }
         events.push({ type: 'say', npcId: idSah, text: peristiwa.text.trim() });
         break;
       }
 
       case 'relationshipDelta': {
+        if (adalahPemain(peristiwa.npcId)) {
+          dibuang.push('relationshipDelta @user');
+          break;
+        }
         const idSah = rujukNpc(peristiwa.npcId, npcSah);
         if (!idSah) {
           return { ok: false, reason: 'npc-tidak-dikenal', detail: String(peristiwa.npcId) };
@@ -396,6 +468,15 @@ export function periksaAdegan(
         // punya tempatnya sendiri, dan bentuknya diperiksa di bawah.
         return { ok: false, reason: 'event-tidak-dikenal' };
     }
+  }
+
+  /*
+   * Bila SEMUA peristiwa dibuang, adegan ini tidak menyisakan apa pun untuk
+   * ditampilkan — pemain akan melihat layar kosong. Dalam keadaan itu barulah
+   * ditolak, supaya simulator yang mengambil alih.
+   */
+  if (events.length === 0) {
+    return { ok: false, reason: 'npc-tidak-dikenal', detail: dibuang.join(', ') };
   }
 
   const keputusan = rekaman.decision;
@@ -437,7 +518,7 @@ export function periksaAdegan(
     options: [pilihan[0]!, pilihan[1]!, pilihan[2]!],
   });
 
-  return { ok: true, events };
+  return { ok: true, events, skipped: dibuang };
 }
 
 /** Membungkus peristiwa menjadi beat, dengan id yang unik per giliran. */
