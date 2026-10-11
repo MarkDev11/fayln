@@ -439,6 +439,21 @@ function customActionBeats(
   }));
 }
 
+/**
+ * Mesin cadangan deterministik — dipakai HANYA bila mesin berbasis model gagal.
+ *
+ * Seluruh teksnya **tetap Bahasa Indonesia dan tidak mengikuti `responseLocale`**,
+ * dan itu disengaja. Menerjemahkan hanya sebagian (mis. pertanyaan penutupnya)
+ * akan menghasilkan satu giliran yang bercampur dua bahasa — lebih sulit dikenali
+ * sebagai kegagalan daripada giliran yang seluruhnya berbahasa asing. Dibiarkan
+ * utuh, giliran seperti itu terbaca sebagai sinyal jelas bahwa mesin AI jatuh.
+ *
+ * Akibat yang perlu diketahui: bila mesin AI gagal pada perjalanan `en-US`,
+ * satu giliran akan muncul dalam Bahasa Indonesia. Terukur 11 Okt 2026 — sebabnya
+ * `npc-tidak-dikenal`, dan sudah diperbaiki di `cocokkanNpc()`. **Bila giliran
+ * berbahasa Indonesia muncul lagi di perjalanan Inggris, periksa log produksi:
+ * itu tanda mesin AI baru saja gagal, bukan cacat terjemahan.**
+ */
 export class DeterministicStoryEngine implements StoryEngine {
   readonly isSimulator = true;
   readonly estimatedTurnCost = SIM_PROMPT_TOKENS + SIM_COMPLETION_TOKENS;

@@ -28,11 +28,13 @@ import type {
   NPCPublicDTO,
   StoryEvent,
   AssetManifest,
+  ResponseLocale,
 } from '../contracts/types';
 
 import type { StoryEngine, StoryEngineResult, StoryContext } from './storyEngine';
 import {
   buildStoryUserPrompt,
+  cadanganPertanyaan,
   MAX_BEAT_WORDS,
   MAX_SCENE_BEATS,
   storySystemPrompt,
@@ -131,9 +133,20 @@ export class AiStoryEngine implements StoryEngine {
       return this.serahkanKeSimulator(context, playerAction, `panggilan gagal: ${panggilan.detail}`);
     }
 
-    const diperiksa = periksaAdegan(panggilan.scene, context.manifest, context.characters);
+    const diperiksa = periksaAdegan(
+      panggilan.scene,
+      context.manifest,
+      context.characters,
+      context.responseLocale,
+    );
     if (!diperiksa.ok) {
-      return this.serahkanKeSimulator(context, playerAction, `adegan ditolak: ${diperiksa.reason}`);
+      // Nilai yang ditolak ikut dicatat: tanpa itu penyebabnya harus ditebak.
+      const rinci = diperiksa.detail ? ` (${diperiksa.detail})` : '';
+      return this.serahkanKeSimulator(
+        context,
+        playerAction,
+        `adegan ditolak: ${diperiksa.reason}${rinci}`,
+      );
     }
 
     return bungkusJadiHasil(diperiksa.events, context, this.estimatedTurnCost);
@@ -168,9 +181,16 @@ export function aksiPemain(context: StoryContext): string | null {
   return null;
 }
 
+/**
+ * `detail` memuat NILAI yang ditolak, bukan hanya jenis penolakannya.
+ *
+ * Tanpa itu, log produksi hanya berbunyi "adegan ditolak: npc-tidak-dikenal" dan
+ * tidak ada cara mengetahui id apa yang sebenarnya ditulis model — penyebabnya
+ * harus ditebak. Sekali sudah terjadi, dan menebak memakan satu putaran deploy.
+ */
 export type PeriksaHasil =
   | { ok: true; events: StoryEvent[] }
-  | { ok: false; reason: RejectReason };
+  | { ok: false; reason: RejectReason; detail?: string };
 
 /**
  * Memeriksa adegan dari model terhadap daftar aset yang sah.
@@ -206,10 +226,56 @@ export function cocokkanEkspresi(daftar: string[], diminta: string): string | un
   return daftar.find((sah) => segmenPertama(sah) === kunci);
 }
 
+/**
+ * Mencocokkan npcId yang ditulis model dengan daftar karakter yang sah.
+ *
+ * Mengapa toleransi ini perlu: `npcId` dibuat panel admin sebagai
+ * `npc_${slug(randomUUID()).slice(0, 10)}` — mis. `npc_1120343c-5`. Bentuk itu
+ * TERPOTONG di tengah UUID, sehingga mudah disalin keliru: tanpa awalan `npc_`,
+ * tanpa tanda hubung, atau justru dilengkapi kembali menjadi UUID penuh.
+ * Pencocokan PERSIS menolak semua variasi itu, dan satu `showCharacter` yang
+ * ditolak menjatuhkan SELURUH adegan — seluruh giliran lalu jatuh ke simulator,
+ * yang keluarnya sama terus. Di layar itu terlihat sebagai "cerita berulang".
+ *
+ * Bentuk normal: huruf kecil, awalan `npc` dibuang, `-`/`_` dibuang. Cocok bila
+ * sama, atau bila salah satu adalah awalan yang lain (menangani id terpotong vs
+ * UUID penuh). Awalan WAJIB dibuang, karena model sering hanya menulis bagian
+ * UUID-nya — dan tanpa itu perbandingannya tidak pernah sejajar.
+ * Bila ada lebih dari satu kandidat, TIDAK menebak — kembalikan `undefined`.
+ *
+ * Yang dikembalikan selalu salah satu nilai dari `daftar`, sehingga tidak ada
+ * id karangan yang tersimpan.
+ */
+export function cocokkanNpc(daftar: string[], diminta: string): string | undefined {
+  if (daftar.includes(diminta)) {
+    return diminta;
+  }
+  const normal = (nilai: string) => nilai.toLowerCase().replace(/[-_]/g, '').replace(/^npc/, '');
+  const kunci = normal(diminta);
+  // Terlalu pendek berarti hampir pasti bukan id — jangan mengundi.
+  if (kunci.length < 8) {
+    return undefined;
+  }
+  const kandidat = daftar.filter((sah) => {
+    const n = normal(sah);
+    return n === kunci || n.startsWith(kunci) || kunci.startsWith(n);
+  });
+  return kandidat.length === 1 ? kandidat[0] : undefined;
+}
+
+/** npcId sah yang dirujuk sebuah peristiwa, atau `undefined` bila tidak ada. */
+function rujukNpc(nilai: unknown, npcSah: Map<string, NPCPublicDTO>): string | undefined {
+  if (typeof nilai !== 'string') {
+    return undefined;
+  }
+  return cocokkanNpc([...npcSah.keys()], nilai);
+}
+
 export function periksaAdegan(
   mentah: unknown,
   manifest: AssetManifest,
   characters: NPCPublicDTO[],
+  responseLocale?: ResponseLocale,
 ): PeriksaHasil {
   if (!mentah || typeof mentah !== 'object' || Array.isArray(mentah)) {
     return { ok: false, reason: 'bukan-objek' };
@@ -251,29 +317,34 @@ export function periksaAdegan(
 
       case 'setBackground': {
         if (typeof peristiwa.assetId !== 'string' || !latarSah.has(peristiwa.assetId)) {
-          return { ok: false, reason: 'asset-tidak-dikenal' };
+          return { ok: false, reason: 'asset-tidak-dikenal', detail: String(peristiwa.assetId) };
         }
         events.push({ type: 'setBackground', assetId: peristiwa.assetId });
         break;
       }
 
       case 'showCharacter': {
-        const npc = typeof peristiwa.npcId === 'string' ? npcSah.get(peristiwa.npcId) : undefined;
+        const npcIdSah = rujukNpc(peristiwa.npcId, npcSah);
+        const npc = npcIdSah !== undefined ? npcSah.get(npcIdSah) : undefined;
         if (!npc) {
-          return { ok: false, reason: 'npc-tidak-dikenal' };
+          return { ok: false, reason: 'npc-tidak-dikenal', detail: String(peristiwa.npcId) };
         }
         const ekspresi =
           typeof peristiwa.expression === 'string'
             ? cocokkanEkspresi(npc.expressions, peristiwa.expression)
             : undefined;
         if (!ekspresi) {
-          return { ok: false, reason: 'ekspresi-tidak-dikenal' };
+          return {
+            ok: false,
+            reason: 'ekspresi-tidak-dikenal',
+            detail: String(peristiwa.expression),
+          };
         }
         if (
           typeof peristiwa.assetId !== 'string' ||
           !potretSah.has(peristiwa.assetId)
         ) {
-          return { ok: false, reason: 'asset-tidak-dikenal' };
+          return { ok: false, reason: 'asset-tidak-dikenal', detail: String(peristiwa.assetId) };
         }
         events.push({
           type: 'showCharacter',
@@ -286,31 +357,34 @@ export function periksaAdegan(
       }
 
       case 'hideCharacter': {
-        if (typeof peristiwa.npcId !== 'string' || !npcSah.has(peristiwa.npcId)) {
-          return { ok: false, reason: 'npc-tidak-dikenal' };
+        const idSah = rujukNpc(peristiwa.npcId, npcSah);
+        if (!idSah) {
+          return { ok: false, reason: 'npc-tidak-dikenal', detail: String(peristiwa.npcId) };
         }
-        events.push({ type: 'hideCharacter', npcId: peristiwa.npcId });
+        events.push({ type: 'hideCharacter', npcId: idSah });
         break;
       }
 
       case 'say': {
-        if (typeof peristiwa.npcId !== 'string' || !npcSah.has(peristiwa.npcId)) {
-          return { ok: false, reason: 'npc-tidak-dikenal' };
+        const idSah = rujukNpc(peristiwa.npcId, npcSah);
+        if (!idSah) {
+          return { ok: false, reason: 'npc-tidak-dikenal', detail: String(peristiwa.npcId) };
         }
         if (typeof peristiwa.text !== 'string') {
           return { ok: false, reason: 'event-tidak-dikenal' };
         }
-        events.push({ type: 'say', npcId: peristiwa.npcId, text: peristiwa.text.trim() });
+        events.push({ type: 'say', npcId: idSah, text: peristiwa.text.trim() });
         break;
       }
 
       case 'relationshipDelta': {
-        if (typeof peristiwa.npcId !== 'string' || !npcSah.has(peristiwa.npcId)) {
-          return { ok: false, reason: 'npc-tidak-dikenal' };
+        const idSah = rujukNpc(peristiwa.npcId, npcSah);
+        if (!idSah) {
+          return { ok: false, reason: 'npc-tidak-dikenal', detail: String(peristiwa.npcId) };
         }
         events.push({
           type: 'relationshipDelta',
-          npcId: peristiwa.npcId,
+          npcId: idSah,
           status: peristiwa.status as never,
           reasonPublic: typeof peristiwa.reasonPublic === 'string' ? peristiwa.reasonPublic : '',
         });
@@ -356,7 +430,10 @@ export function periksaAdegan(
   events.push({
     type: 'presentChoices',
     decisionId: 'd1',
-    prompt: typeof prompt === 'string' && prompt.trim().length > 0 ? prompt.trim() : 'Apa yang kamu lakukan?',
+    prompt:
+      typeof prompt === 'string' && prompt.trim().length > 0
+        ? prompt.trim()
+        : cadanganPertanyaan(responseLocale),
     options: [pilihan[0]!, pilihan[1]!, pilihan[2]!],
   });
 

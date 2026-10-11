@@ -12,8 +12,10 @@ import {
   aksiPemain,
   AiStoryEngine,
   cocokkanEkspresi,
+  cocokkanNpc,
   periksaAdegan,
 } from '../src/services/aiStoryEngine';
+import { cadanganPertanyaan } from '../src/services/storyPrompt';
 import { DeterministicStoryEngine } from '../src/services/storyEngine';
 import type { StoryContext } from '../src/services/storyEngine';
 import type { AssetManifest, NPCPublicDTO } from '../src/contracts/types';
@@ -364,6 +366,155 @@ describe('cocokkanEkspresi', () => {
       expect(tampil?.type === 'showCharacter' ? tampil.expression : null).toBe(
         'senyum, pakaian kantor, mengangkat tangan',
       );
+    }
+  });
+});
+
+/**
+ * npcId yang ditulis model dengan bentuk sedikit berbeda tetap DITERIMA.
+ *
+ * `npcId` dibuat panel admin sebagai `npc_${slug(randomUUID()).slice(0, 10)}` —
+ * mis. `npc_1120343c-5`. Bentuk itu TERPOTONG di tengah UUID, jadi mudah disalin
+ * keliru: tanpa awalan, tanpa tanda hubung, atau dilengkapi kembali menjadi UUID
+ * penuh. Pencocokan PERSIS menolak semuanya, dan satu `showCharacter` yang
+ * ditolak menjatuhkan SELURUH adegan → seluruh giliran jatuh ke simulator, yang
+ * keluarnya sama terus. Terukur di produksi: `"sebab": "adegan ditolak:
+ * npc-tidak-dikenal"` dua kali, dan dua putaran uji alur itu memang kembar.
+ *
+ * BUKTI MERAH: ganti `rujukNpc(...)` di `aiStoryEngine.ts` kembali menjadi
+ * `npcSah.has(peristiwa.npcId)`, lalu uji "menerima variasi bentuk" memerah.
+ */
+describe('cocokkanNpc', () => {
+  const DAFTAR = ['npc_1120343c-5', 'npc_334e4efe-6'];
+
+  it('menerima kecocokan persis', () => {
+    expect(cocokkanNpc(DAFTAR, 'npc_1120343c-5')).toBe('npc_1120343c-5');
+  });
+
+  it('menerima variasi bentuk yang wajar', () => {
+    // Tanpa awalan, tanpa tanda hubung, huruf besar, atau UUID yang dilengkapi.
+    expect(cocokkanNpc(DAFTAR, '1120343c-5')).toBe('npc_1120343c-5');
+    expect(cocokkanNpc(DAFTAR, 'npc_1120343c5')).toBe('npc_1120343c-5');
+    expect(cocokkanNpc(DAFTAR, 'NPC_1120343C-5')).toBe('npc_1120343c-5');
+    expect(cocokkanNpc(DAFTAR, 'npc_1120343c-5a1b-4c2d-8e3f-000000000000')).toBe(
+      'npc_1120343c-5',
+    );
+  });
+
+  it('TIDAK menebak bila lebih dari satu kandidat cocok', () => {
+    const kembar = ['npc_abcdef12-3', 'npc_abcdef12-9'];
+    expect(cocokkanNpc(kembar, 'npc_abcdef12')).toBeUndefined();
+  });
+
+  it('menolak yang benar-benar tidak ada, dan yang terlalu pendek', () => {
+    expect(cocokkanNpc(DAFTAR, 'npc_99999999-9')).toBeUndefined();
+    expect(cocokkanNpc(DAFTAR, '')).toBeUndefined();
+    expect(cocokkanNpc(DAFTAR, 'npc')).toBeUndefined();
+  });
+
+  it('selalu mengembalikan nilai DARI daftar, bukan karangan model', () => {
+    const hasil = cocokkanNpc(DAFTAR, 'npc_1120343c5');
+    expect(DAFTAR).toContain(hasil);
+  });
+
+  it('adegan dengan npcId bervariasi tetap DITERIMA, bukan jatuh ke simulator', () => {
+    const karakter = [
+      {
+        ...KARAKTER[0],
+        npcId: 'npc_1120343c-5',
+        expressions: ['senyum'],
+        defaultPortraitAssetId: 'p_rina_senyum',
+      },
+    ] as unknown as NPCPublicDTO[];
+
+    const hasil = periksaAdegan(
+      {
+        beats: [
+          { type: 'setBackground', assetId: 'bg_kantor' },
+          // Bentuk terpotong tanpa awalan — yang paling mudah ditulis model.
+          { type: 'showCharacter', npcId: '1120343c-5', expression: 'senyum', assetId: 'p_rina_senyum' },
+          { type: 'narrate', text: 'Rina menatapmu.' },
+        ],
+        decision: {
+          prompt: 'Apa yang kamu lakukan?',
+          options: [
+            { label: 'Menyapa', description: 'Menyapa balik.' },
+            { label: 'Diam', description: 'Diam saja.' },
+            { label: 'Pergi', description: 'Berjalan pergi.' },
+          ],
+        },
+      },
+      MANIFEST,
+      karakter,
+    );
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      const tampil = hasil.events.find((e) => e.type === 'showCharacter');
+      // Yang tersimpan adalah id SAH dari daftar, bukan yang dikarang model.
+      expect(tampil?.type === 'showCharacter' ? tampil.npcId : null).toBe('npc_1120343c-5');
+    }
+  });
+
+  it('penolakan menyebut NILAI yang ditolak, bukan hanya jenisnya', () => {
+    const hasil = periksaAdegan(
+      {
+        beats: [
+          { type: 'setBackground', assetId: 'bg_kantor' },
+          { type: 'showCharacter', npcId: 'npc_khayalan', expression: 'senyum', assetId: 'p_rina_senyum' },
+          { type: 'narrate', text: 'Halo.' },
+        ],
+        decision: {
+          prompt: 'Apa?',
+          options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }],
+        },
+      },
+      MANIFEST,
+      KARAKTER,
+    );
+
+    expect(hasil.ok).toBe(false);
+    if (!hasil.ok) {
+      expect(hasil.reason).toBe('npc-tidak-dikenal');
+      // Tanpa `detail`, log produksi tak dapat menjelaskan apa pun.
+      expect(hasil.detail).toBe('npc_khayalan');
+    }
+  });
+});
+
+/**
+ * Pertanyaan penutup cadangan mengikuti BAHASA perjalanan.
+ *
+ * `decision.prompt` ditulis model; bila ia lupa, backend memakai cadangan.
+ * Cadangan itu dulu ditulis mati dalam bahasa Indonesia, sehingga satu kelalaian
+ * model menyelipkan pertanyaan berbahasa Indonesia di tengah cerita berbahasa
+ * Inggris. Terukur di produksi pada perjalanan `en-US`: "How do you respond?"
+ * lalu "Apa yang kamu lakukan berikutnya?" — dua bahasa dalam satu perjalanan.
+ *
+ * BUKTI MERAH: kembalikan `'Apa yang kamu lakukan?'` sebagai nilai tetap, lalu
+ * uji "mengikuti locale" memerah.
+ */
+describe('cadanganPertanyaan', () => {
+  it('mengikuti locale', () => {
+    expect(cadanganPertanyaan('en-US')).toBe('What do you do?');
+    expect(cadanganPertanyaan('id-ID')).toBe('Apa yang kamu lakukan?');
+  });
+
+  it('memakai Bahasa Indonesia bila locale tidak diketahui', () => {
+    expect(cadanganPertanyaan(undefined)).toBe('Apa yang kamu lakukan?');
+  });
+
+  it('adegan tanpa prompt memakai cadangan sesuai locale perjalanan', () => {
+    const adegan = {
+      beats: [{ type: 'setBackground', assetId: 'bg_kantor' }],
+      decision: { options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }] },
+    };
+
+    const inggris = periksaAdegan(adegan, MANIFEST, KARAKTER, 'en-US');
+    expect(inggris.ok).toBe(true);
+    if (inggris.ok) {
+      const pilihan = inggris.events.find((e) => e.type === 'presentChoices');
+      expect(pilihan?.type === 'presentChoices' ? pilihan.prompt : null).toBe('What do you do?');
     }
   });
 });

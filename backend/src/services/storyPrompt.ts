@@ -46,6 +46,24 @@ const NAMA_BAHASA: Record<ResponseLocale, string> = {
   'en-US': 'English',
 };
 
+/**
+ * Pertanyaan penutup cadangan, bila model lupa menuliskan `decision.prompt`.
+ *
+ * Dulu nilainya ditulis mati dalam bahasa Indonesia, sehingga satu kelalaian
+ * model membuat pertanyaan berbahasa Indonesia menyelip di tengah cerita
+ * berbahasa Inggris. Terukur di produksi: satu perjalanan `en-US` menghasilkan
+ * "How do you respond?" lalu "Apa yang kamu lakukan berikutnya?" — dua bahasa
+ * dalam satu perjalanan.
+ */
+const CADANGAN_PERTANYAAN: Record<ResponseLocale, string> = {
+  'id-ID': 'Apa yang kamu lakukan?',
+  'en-US': 'What do you do?',
+};
+
+export function cadanganPertanyaan(locale?: ResponseLocale): string {
+  return CADANGAN_PERTANYAAN[locale ?? 'id-ID'];
+}
+
 /** Satu karakter yang boleh dipakai model, beserta ekspresinya. */
 export type PromptCharacter = {
   npcId: string;
