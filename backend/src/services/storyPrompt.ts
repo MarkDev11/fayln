@@ -71,7 +71,15 @@ export type PromptCharacter = {
   role: string;
   soul: string;
   publicBackstory: string;
-  /** Aset potret bawaan; dipakai untuk `showCharacter.assetId`. */
+  /**
+   * Aset potret bawaan — hanya untuk memenuhi bentuk keluaran.
+   *
+   * Potret yang DIPAKAI ditentukan sistem dari `expression` (manifes memuat
+   * pasangannya). Dulu komentar ini berbunyi "dipakai untuk
+   * `showCharacter.assetId`", dan model mematuhinya: ia selalu memakai potret
+   * bawaan sehingga gambar tokoh tidak pernah berganti meski ekspresinya
+   * berganti.
+   */
   defaultPortraitAssetId: string;
   /** Nama ekspresi yang sah untuk karakter ini. */
   expressions: string[];
@@ -184,7 +192,14 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
       if (orang.publicBackstory.trim().length > 0) {
         bagian.push(`    latar: ${orang.publicBackstory}`);
       }
-      bagian.push(`    potret bawaan: ${orang.defaultPortraitAssetId}`);
+      /*
+       * Yang ditulis hanya potret BAWAAN, sebagai pengisi bentuk keluaran.
+       * Pasangan ekspresi -> potret TIDAK ditulis ke prompt: pasangan itu sudah
+       * ada di manifes, dan sistem yang memilih. Menuliskan 20 pasangan per
+       * karakter hanya menambah panjang prompt tanpa menambah kemampuan model —
+       * yang perlu ia putuskan adalah MAKNA-nya (ekspresi mana), bukan berkasnya.
+       */
+      bagian.push(`    potret bawaan (pengisi assetId): ${orang.defaultPortraitAssetId}`);
       /*
        * Setiap ekspresi ditulis di BARISNYA SENDIRI dan dikutip.
        *
@@ -355,8 +370,10 @@ export const STORY_SYSTEM_PROMPT = [
   '   character, and never give a character a name of your own.',
   '9. "expression" MUST be one of THAT character\'s expressions. Do not use one',
   '   character\'s expression for another.',
-  '10. "assetId" in showCharacter MUST be the portrait asset id given for that',
-  '    character. Copy it exactly.',
+  '10. For showCharacter, what matters is "expression" — CHOOSE the one that fits',
+  '    what is happening right now; it changes how the character looks. The system',
+  '    picks the matching portrait from that expression, so "assetId" may simply',
+  '    repeat the default portrait given for that character.',
   '11. Reuse the same background while the scene stays in one place. Changing the',
   '    background means the characters MOVED — do not do it casually. If the scene',
   '    does move, you MUST bridge it (see MOVING THROUGH THE WORLD below).',

@@ -345,6 +345,28 @@ export function periksaAdegan(
   const potretSah = new Set(manifest.portraits.map((item) => item.assetId));
   const npcSah = new Map(characters.map((item) => [item.npcId, item]));
 
+  /*
+   * Peta EKSPRESI -> POTRET, dibangun dari manifes.
+   *
+   * Model hanya diberi SATU potret per karakter (yang bawaan) dan daftar nama
+   * ekspresi — tanpa pasangannya. Ia tidak punya cara mengetahui potret mana
+   * yang mewakili "terkejut", sehingga ia memakai satu-satunya yang ia tahu:
+   * potret bawaan. Terukur di produksi 11 Okt 2026: 8 kemunculan karakter,
+   * **3 ekspresi berbeda**, tetapi **1 potret saja** — gambarnya tidak pernah
+   * berganti meski ekspresinya berganti.
+   *
+   * Karena pasangannya sudah ADA di manifes, sistem yang memilihkannya. Yang
+   * ditentukan model adalah MAKNA (ekspresi apa), yang ditentukan sistem adalah
+   * BERKAS (potret mana). Model tidak lagi dapat salah memasangkan.
+   */
+  const potretUntuk = new Map<string, string>();
+  for (const item of manifest.portraits) {
+    const kunci = `${item.npcId}|${item.expression}`;
+    if (!potretUntuk.has(kunci)) {
+      potretUntuk.set(kunci, item.assetId);
+    }
+  }
+
   const events: StoryEvent[] = [];
 
   /*
@@ -403,18 +425,28 @@ export function periksaAdegan(
             detail: String(peristiwa.expression),
           };
         }
-        if (
-          typeof peristiwa.assetId !== 'string' ||
-          !potretSah.has(peristiwa.assetId)
-        ) {
+        /*
+         * Potret dipilih dari EKSPRESI, bukan dari yang dikirim model.
+         *
+         * Yang dikirim model hanya dipakai sebagai cadangan bila manifes tidak
+         * punya potret untuk ekspresi itu — mis. dunia yang ekspresinya belum
+         * diunggah gambarnya.
+         */
+        const potretCocok = potretUntuk.get(`${npc.npcId}|${ekspresi}`);
+        const assetId =
+          potretCocok ??
+          (typeof peristiwa.assetId === 'string' && potretSah.has(peristiwa.assetId)
+            ? peristiwa.assetId
+            : undefined);
+        if (!assetId) {
           return { ok: false, reason: 'asset-tidak-dikenal', detail: String(peristiwa.assetId) };
         }
         events.push({
           type: 'showCharacter',
           npcId: npc.npcId,
-          // Nilai dari DAFTAR, bukan dari model — tidak ada ekspresi karangan.
+          // Keduanya dari DAFTAR, bukan dari model.
           expression: ekspresi,
-          assetId: peristiwa.assetId,
+          assetId,
         });
         break;
       }

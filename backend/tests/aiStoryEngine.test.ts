@@ -674,3 +674,107 @@ describe('penanda pemain @user', () => {
     }
   });
 });
+
+/**
+ * Potret dipilih dari EKSPRESI, bukan dari yang dikirim model.
+ *
+ * Model hanya diberi SATU potret per karakter (yang bawaan) dan daftar nama
+ * ekspresi TANPA pasangannya. Ia tidak punya cara mengetahui potret mana yang
+ * mewakili "terkejut", jadi ia memakai satu-satunya yang ia tahu. Terukur di
+ * produksi 11 Okt 2026: 8 kemunculan karakter, **3 ekspresi berbeda**, tetapi
+ * **1 potret saja** — gambarnya tidak pernah berganti meski ekspresinya
+ * berganti.
+ *
+ * Pasangannya sudah ada di manifes, jadi sistem yang memilihkannya: model
+ * menentukan MAKNA (ekspresi apa), sistem menentukan BERKAS (potret mana).
+ *
+ * BUKTI MERAH: kembalikan `assetId: peristiwa.assetId` di `aiStoryEngine.ts`,
+ * lalu uji "potret mengikuti ekspresi" memerah.
+ */
+describe('potret mengikuti ekspresi', () => {
+  const MANIFEST_DUA = {
+    cover: null,
+    backgrounds: [{ assetId: 'bg_kantor', label: 'Kantor', uri: '' }],
+    portraits: [
+      {
+        assetId: 'p_senyum',
+        label: 'rina — senyum',
+        uri: '',
+        npcId: 'npc_rina',
+        expression: 'senyum',
+      },
+      {
+        assetId: 'p_terkejut',
+        label: 'rina — terkejut',
+        uri: '',
+        npcId: 'npc_rina',
+        expression: 'terkejut',
+      },
+    ],
+  } as unknown as AssetManifest;
+
+  const karakter = () =>
+    [
+      {
+        ...KARAKTER[0],
+        expressions: ['senyum', 'terkejut'],
+        defaultPortraitAssetId: 'p_senyum',
+      },
+    ] as unknown as NPCPublicDTO[];
+
+  const adegan = (expression: string, assetId: string): unknown => ({
+    beats: [
+      { type: 'setBackground', assetId: 'bg_kantor' },
+      { type: 'showCharacter', npcId: 'npc_rina', expression, assetId },
+      { type: 'narrate', text: 'Rina menatapmu.' },
+    ],
+    decision: {
+      prompt: 'Apa?',
+      options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }],
+    },
+  });
+
+  it('potret mengikuti ekspresi, bukan yang dikirim model', () => {
+    // Model memilih ekspresi "terkejut" tetapi mengirim potret BAWAAN.
+    const hasil = periksaAdegan(adegan('terkejut', 'p_senyum'), MANIFEST_DUA, karakter());
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      const tampil = hasil.events.find((e) => e.type === 'showCharacter');
+      expect(tampil?.type === 'showCharacter' ? tampil.expression : null).toBe('terkejut');
+      // Yang dipakai potret untuk "terkejut", BUKAN yang dikirim model.
+      expect(tampil?.type === 'showCharacter' ? tampil.assetId : null).toBe('p_terkejut');
+    }
+  });
+
+  it('ekspresi berbeda menghasilkan potret berbeda', () => {
+    const a = periksaAdegan(adegan('senyum', 'p_senyum'), MANIFEST_DUA, karakter());
+    const b = periksaAdegan(adegan('terkejut', 'p_senyum'), MANIFEST_DUA, karakter());
+
+    const potret = (h: typeof a) => {
+      if (!h.ok) throw new Error('seharusnya diterima');
+      const t = h.events.find((e) => e.type === 'showCharacter');
+      return t?.type === 'showCharacter' ? t.assetId : null;
+    };
+
+    expect(potret(a)).not.toBe(potret(b));
+  });
+
+  it('memakai potret dari model bila manifes tidak punya pasangannya', () => {
+    // Dunia yang ekspresinya belum diunggah gambarnya: jatuh ke potret kiriman.
+    const manifesKosong = {
+      ...MANIFEST_DUA,
+      portraits: [
+        { assetId: 'p_lain', label: 'lain', uri: '', npcId: 'npc_lain', expression: 'lain' },
+      ],
+    } as unknown as AssetManifest;
+
+    const hasil = periksaAdegan(adegan('senyum', 'p_lain'), manifesKosong, karakter());
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      const tampil = hasil.events.find((e) => e.type === 'showCharacter');
+      expect(tampil?.type === 'showCharacter' ? tampil.assetId : null).toBe('p_lain');
+    }
+  });
+});
