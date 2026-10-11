@@ -1257,3 +1257,115 @@ describe('bentuk kesalahan', () => {
     await brokenApp.close();
   });
 });
+
+/**
+ * Penanda nama diganti sistem, di PEMBUKA dan di GILIRAN.
+ *
+ * Model menulis `@user` (pemain) dan `@<nama>` (karakter di dunia itu) — bukan
+ * nama sungguhan, supaya satu teks dunia dapat dipakai beberapa pemain. Yang
+ * menggantinya adalah sistem. Sebelum ini TIDAK ADA yang menggantinya: terukur
+ * di produksi 11 Okt 2026, teks beat berisi `"@user duduk di meja 47"` pada
+ * perjalanan dengan persona bernama "Arfan", sehingga pemain melihat `@user`
+ * di layar padahal namanya sudah diisi.
+ *
+ * Diuji di DUA jalur sekaligus — pembuka dan giliran — karena keduanya memanggil
+ * mesin secara terpisah, dan satu jalur yang lupa mengganti tidak akan terlihat
+ * dari jalur yang lain.
+ *
+ * BUKTI MERAH: buat `siapkan()` di `journeyService.ts` mengembalikan `hasil` apa
+ * adanya, lalu uji ini memerah di kedua jalur.
+ */
+describe('penanda nama diganti sistem', () => {
+  /** Mesin yang menulis PENANDA, seperti model sungguhan. */
+  class MesinBerpenanda extends DeterministicStoryEngine {
+    private tandai(hasil: Awaited<ReturnType<DeterministicStoryEngine['generateOpening']>>) {
+      let sudah = false;
+      return {
+        ...hasil,
+        beats: hasil.beats.map((beat) => {
+          if (sudah || beat.event.type !== 'narrate') return beat;
+          sudah = true;
+          return { ...beat, event: { ...beat.event, text: '@user membuka pintu, @npc_1 menyusul.' } };
+        }),
+      };
+    }
+
+    override async generateOpening(context: StoryContext) {
+      return this.tandai(await super.generateOpening(context));
+    }
+
+    override async generateTurn(context: StoryContext) {
+      return this.tandai(await super.generateTurn(context));
+    }
+  }
+
+  beforeEach(async () => {
+    await app.close();
+    app = await buildTestApp(testConfig(), new MesinBerpenanda());
+    auth = await createTestAccount(app, ctx.db);
+  });
+
+  it('pemain tidak pernah melihat "@user" mentah — pembuka MAUPUN giliran', async () => {
+    const buat = await inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('penanda'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(buat.statusCode).toBe(201);
+
+    const hasil = buat.json() as {
+      journeyId: string;
+      opening: { beats: { event: { type: string; text?: string; prompt?: string } }[] };
+    };
+
+    const teksPembuka = hasil.opening.beats
+      .map((b) => b.event.text ?? '')
+      .join(' ');
+    expect(teksPembuka).toContain('Arfan');
+    expect(teksPembuka).not.toContain('@user');
+
+    /* ---- Giliran: jalur KEDUA, dipanggil terpisah dari pembuka ---- */
+    const keputusan = hasil.opening.beats.find((b) => b.event.type === 'presentChoices');
+    void keputusan;
+
+    const sesi = await inject({
+      method: 'GET',
+      url: `/v1/journeys/${hasil.journeyId}/session`,
+    });
+    const beatsSesi = (sesi.json() as { beats: { event: { type: string; text?: string } }[] }).beats;
+    const pilihan = beatsSesi.find((b) => b.event.type === 'presentChoices');
+    void pilihan;
+
+    // Ambil decisionId dari beat presentChoices yang tersimpan.
+    const lengkap = beatsSesi as unknown as {
+      event: { type: string; decisionId?: string };
+    }[];
+    const dec = lengkap.find((b) => b.event.type === 'presentChoices')?.event.decisionId;
+    expect(dec).toBeDefined();
+
+    const giliran = await inject({
+      method: 'POST',
+      url: `/v1/journeys/${hasil.journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('penanda-turn'),
+        decisionId: dec,
+        selection: { optionId: 'opt1' },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(giliran.statusCode).toBe(201);
+
+    const beatsGiliran = (giliran.json() as { beats: { event: { type: string; text?: string } }[] })
+      .beats;
+    const teksGiliran = beatsGiliran.map((b) => b.event.text ?? '').join(' ');
+
+    // Jalur kedua juga harus sudah bersih.
+    expect(teksGiliran).not.toContain('@user');
+    expect(teksGiliran).toContain('Arfan');
+  });
+});

@@ -576,6 +576,76 @@ export const ALLOWED_EVENT_TYPES: readonly StoryEvent['type'][] = [
 export type BeatValidationIssue = { beatId: string; reason: string };
 
 /**
+ * Mengganti penanda nama di dalam teks beat dengan nama yang sebenarnya.
+ *
+ * Model MENULIS penanda, bukan nama: `@user` untuk pemain, `@rina` untuk karakter
+ * di dunia itu. Itu disengaja — satu teks dunia harus dapat dipakai beberapa
+ * pemain dengan nama berbeda, dan model tidak boleh menebak nama siapa pun.
+ * Yang menggantinya adalah SISTEM, dan sampai sekarang tidak ada yang melakukan
+ * itu: pemain melihat `@user` mentah di layar, padahal namanya sudah diisi di
+ * lembar persona. Terukur di produksi 11 Okt 2026 — teks beat berisi
+ * `"@user duduk di meja 47"` pada perjalanan dengan persona bernama "Arfan".
+ *
+ * Diletakkan di lapisan ini supaya SATU tempat melayani semua mesin (AI maupun
+ * cadangan) dan semua jenis teks — narasi, dialog, pertanyaan, dan label opsi.
+ * Menaruhnya di layar berarti setiap perender baru harus mengingatnya sendiri.
+ *
+ * Token yang tidak dikenal DIBIARKAN apa adanya: aturan penulisan dunia
+ * menyatakan sebuah `@nama` sah walau karakternya belum dibuat, jadi menghapusnya
+ * justru membuang isi.
+ */
+export function gantiPenandaBeats(
+  beats: { beatId: string; sequence: number; event: StoryEvent }[],
+  context: StoryContext,
+): typeof beats {
+  const namaKarakter = new Map(
+    context.characters.map((character) => [character.name.trim().toLowerCase(), character.name.trim()]),
+  );
+
+  const ganti = (teks: string): string =>
+    teks.replace(/@([A-Za-z0-9_-]+)/g, (utuh, token: string) => {
+      const kunci = token.toLowerCase();
+      if (kunci === 'user') {
+        return context.personaName;
+      }
+      return namaKarakter.get(kunci) ?? utuh;
+    });
+
+  return beats.map((beat) => {
+    const event = beat.event;
+
+    if (event.type === 'narrate' || event.type === 'say') {
+      return { ...beat, event: { ...event, text: ganti(event.text) } };
+    }
+
+    if (event.type === 'presentChoices') {
+      /*
+       * `options` bertipe TUPLE tiga elemen, bukan array. `.map()` melebarkannya
+       * menjadi `ChoiceOption[]` dan tipe itu tidak lagi cocok. Karena itu
+       * ketiganya ditulis satu per satu.
+       */
+      const [satu, dua, tiga] = event.options;
+      const ubah = (option: (typeof event.options)[number]) => ({
+        ...option,
+        label: ganti(option.label),
+        description: ganti(option.description),
+      });
+
+      return {
+        ...beat,
+        event: {
+          ...event,
+          prompt: ganti(event.prompt),
+          options: [ubah(satu), ubah(dua), ubah(tiga)],
+        },
+      };
+    }
+
+    return beat;
+  });
+}
+
+/**
  * Memvalidasi keluaran mesin terhadap dunia SEBELUM disimpan.
  *
  * Ini pengaman utama FR-55: model tidak boleh menyebut aset, karakter, atau tipe

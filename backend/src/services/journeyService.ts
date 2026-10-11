@@ -29,9 +29,11 @@ import type { JourneyRepository } from '../repositories/journeyRepository';
 import type { OperationRepository } from '../repositories/operationRepository';
 import type { UsageRepository } from '../repositories/usageRepository';
 import {
+  gantiPenandaBeats,
   validateEngineBeats,
   type StoryContext,
   type StoryEngine,
+  type StoryEngineResult,
 } from './storyEngine';
 
 /**
@@ -269,7 +271,7 @@ export class JourneyService {
         beatIdPrefix: turnId,
       };
 
-      const generated = await this.deps.engine.generateOpening(context);
+      const generated = this.siapkan(await this.deps.engine.generateOpening(context), context);
       const issues = validateEngineBeats(generated.beats, context);
       if (issues.length > 0) {
         throw new AppError({
@@ -577,7 +579,7 @@ export class JourneyService {
         ...(command.optionId !== undefined ? { optionId: command.optionId } : null),
       };
 
-      const generated = await this.deps.engine.generateTurn(context);
+      const generated = this.siapkan(await this.deps.engine.generateTurn(context), context);
       const issues = validateEngineBeats(generated.beats, context);
       if (issues.length > 0) {
         throw new AppError({
@@ -621,6 +623,18 @@ export class JourneyService {
   /* ------------------------------------------------------------------ */
   /* Internal                                                            */
   /* ------------------------------------------------------------------ */
+
+  /**
+   * Menyiapkan keluaran mesin sebelum dipakai lebih jauh.
+   *
+   * Penanda nama (`@user`, `@rina`) diganti di SINI — sekali, untuk SEMUA jalur.
+   * Sebelumnya tidak ada yang menggantinya sama sekali, sehingga pemain melihat
+   * `@user` mentah di layar padahal namanya sudah diisi di lembar persona.
+   * Diletakkan di satu fungsi supaya jalur yang ditulis nanti tidak dapat lupa.
+   */
+  private siapkan(hasil: StoryEngineResult, context: StoryContext): StoryEngineResult {
+    return { ...hasil, beats: gantiPenandaBeats(hasil.beats, context) };
+  }
 
   private async replayIfDone(
     operationId: string,

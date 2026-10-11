@@ -10,7 +10,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { pilihLatar, potongNarasi, DeterministicStoryEngine } from '../src/services/storyEngine';
+import {
+  gantiPenandaBeats,
+  pilihLatar,
+  potongNarasi,
+  DeterministicStoryEngine,
+} from '../src/services/storyEngine';
 import type { StoryContext } from '../src/services/storyEngine';
 import type { AssetManifest } from '../src/contracts/types';
 
@@ -149,5 +154,121 @@ describe('pembukaan', () => {
     const id = hasil.beats.map((b) => b.beatId);
 
     expect(new Set(id).size).toBe(id.length);
+  });
+});
+
+/**
+ * Penanda nama diganti SISTEM, bukan dibiarkan mentah.
+ *
+ * Model menulis `@user` untuk pemain dan `@<nama>` untuk karakter di dunia itu —
+ * disengaja, supaya satu teks dunia dapat dipakai beberapa pemain dengan nama
+ * berbeda. Tetapi TIDAK ADA yang menggantinya: terukur di produksi 11 Okt 2026,
+ * teks beat berisi `"@user duduk di meja 47"` pada perjalanan dengan persona
+ * bernama "Arfan" — jadi pemain melihat `@user` di layar padahal namanya sudah
+ * diisi di lembar persona.
+ *
+ * BUKTI MERAH: kembalikan `beats` apa adanya di `gantiPenandaBeats`, lalu
+ * uji-uji ini memerah.
+ */
+describe('gantiPenandaBeats', () => {
+  const KONTEKS = {
+    personaName: 'Arfan',
+    characters: [
+      { npcId: 'npc_1', name: 'rina' },
+      { npcId: 'npc_2', name: 'Daniel' },
+    ],
+  } as unknown as StoryContext;
+
+  const beat = (event: unknown, i = 1) => ({
+    beatId: `t-b${String(i).padStart(3, '0')}`,
+    sequence: i,
+    event: event as never,
+  });
+
+  it('mengganti @user dengan nama pemain', () => {
+    const hasil = gantiPenandaBeats(
+      [beat({ type: 'narrate', text: '@user duduk di meja 47.' })],
+      KONTEKS,
+    );
+
+    const teks = hasil[0]?.event.type === 'narrate' ? hasil[0].event.text : '';
+    expect(teks).toBe('Arfan duduk di meja 47.');
+    expect(teks).not.toContain('@user');
+  });
+
+  it('mengganti @nama dengan nama karakter di dunia ini', () => {
+    const hasil = gantiPenandaBeats(
+      [beat({ type: 'say', npcId: 'npc_1', text: '@rina menatap @daniel.' })],
+      KONTEKS,
+    );
+
+    const teks = hasil[0]?.event.type === 'say' ? hasil[0].event.text : '';
+    // Nama diambil APA ADANYA dari data dunia — 'rina' tetap huruf kecil,
+    // 'Daniel' tetap huruf besar. Sistem tidak mengubah besar-kecil huruf.
+    expect(teks).toBe('rina menatap Daniel.');
+  });
+
+  it('mengabaikan besar-kecil huruf pada penandanya', () => {
+    const hasil = gantiPenandaBeats(
+      [beat({ type: 'narrate', text: '@RINA dan @USER pergi.' })],
+      KONTEKS,
+    );
+
+    const teks = hasil[0]?.event.type === 'narrate' ? hasil[0].event.text : '';
+    expect(teks).toBe('rina dan Arfan pergi.');
+  });
+
+  it('MEMBIARKAN token yang tidak dikenal', () => {
+    /*
+     * Aturan penulisan dunia menyatakan sebuah `@nama` sah walau karakternya
+     * belum dibuat. Menghapusnya berarti membuang isi yang sengaja ditulis.
+     */
+    const hasil = gantiPenandaBeats(
+      [beat({ type: 'narrate', text: '@user bertemu @hantu.' })],
+      KONTEKS,
+    );
+
+    const teks = hasil[0]?.event.type === 'narrate' ? hasil[0].event.text : '';
+    expect(teks).toBe('Arfan bertemu @hantu.');
+  });
+
+  it('mengganti di pertanyaan dan label opsi juga', () => {
+    const hasil = gantiPenandaBeats(
+      [
+        beat({
+          type: 'presentChoices',
+          decisionId: 'd1',
+          prompt: 'Apa yang @user lakukan?',
+          options: [
+            { optionId: 'opt1', label: 'Sapa @rina', description: 'Menyapa @rina balik.' },
+            { optionId: 'opt2', label: 'Diam', description: 'Diam saja.' },
+            { optionId: 'opt3', label: 'Pergi', description: 'Berjalan pergi.' },
+          ],
+        }),
+      ],
+      KONTEKS,
+    );
+
+    const e = hasil[0]?.event;
+    if (e?.type !== 'presentChoices') throw new Error('tipe berubah');
+    expect(e.prompt).toBe('Apa yang Arfan lakukan?');
+    expect(e.options[0]?.label).toBe('Sapa rina');
+    expect(e.options[0]?.description).toBe('Menyapa rina balik.');
+    // Tetap tiga opsi, dan urutannya tidak berubah.
+    expect(e.options).toHaveLength(3);
+    expect(e.options[1]?.label).toBe('Diam');
+  });
+
+  it('tidak menyentuh peristiwa yang tidak berteks', () => {
+    const hasil = gantiPenandaBeats(
+      [
+        beat({ type: 'setBackground', assetId: 'bg_kantor' }, 1),
+        beat({ type: 'showCharacter', npcId: 'npc_1', expression: 'senyum', assetId: 'p_1' }, 2),
+      ],
+      KONTEKS,
+    );
+
+    expect(hasil[0]?.event).toEqual({ type: 'setBackground', assetId: 'bg_kantor' });
+    expect(hasil[1]?.event.type).toBe('showCharacter');
   });
 });
