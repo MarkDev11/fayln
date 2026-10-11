@@ -327,7 +327,17 @@ export function periksaAdegan(
   if (beats.length === 0) {
     return { ok: false, reason: 'beats-kosong' };
   }
-  if (beats.length > MAX_SCENE_BEATS) {
+  /*
+   * Batas keras untuk keluaran yang benar-benar lepas kendali.
+   *
+   * Antara `MAX_SCENE_BEATS` dan batas ini, adegan TIDAK ditolak — kelebihannya
+   * dipangkas sesudah peristiwa diperiksa (lihat `pangkasAdegan`). Menolak
+   * seluruh adegan hanya karena model menulis satu beat lebih banyak membuat
+   * seluruh giliran jatuh ke simulator, dan itu jauh lebih merugikan daripada
+   * kehilangan satu kalimat. Terukur di produksi 11 Okt 2026:
+   * `"adegan ditolak: terlalu-banyak-beat"`.
+   */
+  if (beats.length > MAX_SCENE_BEATS * 3) {
     return { ok: false, reason: 'terlalu-banyak-beat' };
   }
 
@@ -471,11 +481,21 @@ export function periksaAdegan(
   }
 
   /*
+   * Pangkas kelebihan beat, JANGAN tolak adegannya.
+   *
+   * Model kadang menulis 11–12 beat padahal batasnya 10. Menolak seluruh adegan
+   * hanya karena satu beat lebih membuat seluruh giliran jatuh ke simulator —
+   * jauh lebih merugikan daripada kehilangan satu kalimat.
+   */
+  const pangkas = pangkasAdegan(events, MAX_SCENE_BEATS);
+  dibuang.push(...pangkas.dibuang);
+
+  /*
    * Bila SEMUA peristiwa dibuang, adegan ini tidak menyisakan apa pun untuk
    * ditampilkan — pemain akan melihat layar kosong. Dalam keadaan itu barulah
    * ditolak, supaya simulator yang mengambil alih.
    */
-  if (events.length === 0) {
+  if (pangkas.events.length === 0) {
     return { ok: false, reason: 'npc-tidak-dikenal', detail: dibuang.join(', ') };
   }
 
@@ -508,7 +528,7 @@ export function periksaAdegan(
   }
 
   const prompt = (keputusan as Record<string, unknown>).prompt;
-  events.push({
+  pangkas.events.push({
     type: 'presentChoices',
     decisionId: 'd1',
     prompt:
@@ -518,7 +538,57 @@ export function periksaAdegan(
     options: [pilihan[0]!, pilihan[1]!, pilihan[2]!],
   });
 
-  return { ok: true, events, skipped: dibuang };
+  return { ok: true, events: pangkas.events, skipped: dibuang };
+}
+
+/**
+ * Memangkas adegan yang melebihi batas beat, tanpa membuang yang penting.
+ *
+ * Yang dibuang lebih dulu adalah `narrate` dari TENGAH — bagian yang paling
+ * tidak struktural: pembuka dan penutup sebuah adegan biasanya memuat latar dan
+ * keadaan tokoh, sedangkan kalimat di tengah paling mudah hilang tanpa merusak
+ * alurnya. `setBackground` dan `showCharacter` TIDAK PERNAH dibuang lebih dulu.
+ *
+ * Bila tidak ada lagi yang aman dibuang, adegan dibiarkan sedikit kelebihan —
+ * lebih baik daripada mengembalikan adegan yang pincang.
+ */
+function pangkasAdegan(
+  events: StoryEvent[],
+  batas: number,
+): { events: StoryEvent[]; dibuang: string[] } {
+  if (events.length <= batas) {
+    return { events, dibuang: [] };
+  }
+
+  const hasil = [...events];
+  const dibuang: string[] = [];
+
+  while (hasil.length > batas) {
+    const tengah = Math.floor(hasil.length / 2);
+
+    // `narrate` terdekat dari tengah lebih dulu.
+    let idx = -1;
+    for (let jauh = 0; jauh < hasil.length && idx < 0; jauh += 1) {
+      for (const kandidat of [tengah - jauh, tengah + jauh]) {
+        if (kandidat >= 0 && kandidat < hasil.length && hasil[kandidat]?.type === 'narrate') {
+          idx = kandidat;
+          break;
+        }
+      }
+    }
+    // Selanjutnya `relationshipDelta` — perubahannya masih tercatat di beat lain.
+    if (idx < 0) {
+      idx = hasil.findIndex((e) => e.type === 'relationshipDelta');
+    }
+    if (idx < 0) {
+      break;
+    }
+
+    const [keluar] = hasil.splice(idx, 1);
+    dibuang.push(`pangkas ${keluar?.type ?? '?'}`);
+  }
+
+  return { events: hasil, dibuang };
 }
 
 /** Membungkus peristiwa menjadi beat, dengan id yang unik per giliran. */

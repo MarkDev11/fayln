@@ -15,7 +15,7 @@ import {
   cocokkanNpc,
   periksaAdegan,
 } from '../src/services/aiStoryEngine';
-import { cadanganPertanyaan } from '../src/services/storyPrompt';
+import { cadanganPertanyaan, MAX_SCENE_BEATS } from '../src/services/storyPrompt';
 import { DeterministicStoryEngine } from '../src/services/storyEngine';
 import type { StoryContext } from '../src/services/storyEngine';
 import type { AssetManifest, NPCPublicDTO } from '../src/contracts/types';
@@ -141,9 +141,60 @@ describe('periksaAdegan', () => {
     }
   });
 
-  it('menolak adegan yang beatnya melebihi batas', () => {
+  /*
+   * Kelebihan beat DIPANGKAS, bukan ditolak.
+   *
+   * Terukur di produksi 11 Okt 2026: model menulis satu beat lebih banyak dari
+   * batas, seluruh adegan ditolak, dan seluruh giliran jatuh ke simulator —
+   * padahal adegannya sendiri baik. Kehilangan satu kalimat jauh lebih ringan
+   * daripada kehilangan seluruh giliran.
+   *
+   * BUKTI MERAH: kembalikan `return { ok:false, reason:'terlalu-banyak-beat' }`
+   * untuk setiap kelebihan, lalu uji "memangkas" memerah.
+   */
+  it('memangkas kelebihan beat, bukan menolak adegannya', () => {
     const adegan = adeganSah() as Record<string, unknown>;
-    adegan.beats = Array.from({ length: 11 }, () => ({ type: 'narrate', text: 'Sesuatu.' }));
+    // 11 narasi; adeganSah() sudah punya latar + keputusan sendiri.
+    adegan.beats = Array.from({ length: 11 }, (_, i) => ({
+      type: 'narrate',
+      text: `Kalimat ${i + 1}.`,
+    }));
+
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      // Dipangkas sampai batas, dan pemangkasan itu DILAPORKAN.
+      expect(hasil.events.length).toBeLessThanOrEqual(MAX_SCENE_BEATS + 1);
+      expect(hasil.skipped.join(' ')).toContain('pangkas');
+    }
+  });
+
+  it('TIDAK membuang latar saat memangkas', () => {
+    const adegan = adeganSah() as Record<string, unknown>;
+    const isi = adegan.beats as unknown[];
+    // Latar di awal, lalu banyak narasi — latar harus selamat.
+    adegan.beats = [
+      { type: 'setBackground', assetId: 'bg_kantor' },
+      ...Array.from({ length: 12 }, (_, i) => ({ type: 'narrate', text: `Kalimat ${i + 1}.` })),
+    ];
+    void isi;
+
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+
+    expect(hasil.ok).toBe(true);
+    if (hasil.ok) {
+      const latar = hasil.events.filter((e) => e.type === 'setBackground');
+      expect(latar).toHaveLength(1);
+    }
+  });
+
+  it('tetap menolak keluaran yang benar-benar lepas kendali', () => {
+    const adegan = adeganSah() as Record<string, unknown>;
+    adegan.beats = Array.from({ length: MAX_SCENE_BEATS * 3 + 1 }, () => ({
+      type: 'narrate',
+      text: 'Sesuatu.',
+    }));
 
     const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
 
