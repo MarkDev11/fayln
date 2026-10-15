@@ -13,7 +13,9 @@ import { DEFAULT_RELATION_STATUSES } from '../src/contracts/types';
 
 import {
   buildStoryUserPrompt,
+  jenisAksiPemain,
   MAX_BEAT_WORDS,
+  MIN_BEAT_WORDS,
   MAX_SCENE_BEATS,
   STORY_SYSTEM_PROMPT,
   storySystemPrompt,
@@ -116,9 +118,12 @@ describe('prompt sistem', () => {
 
   it('menyebut batas beat dan batas kata dari konstanta yang sama', () => {
     // Angka yang ditulis ulang di dua tempat akan bercabang; keduanya harus
-    // berasal dari konstanta yang sama.
+    // berasal dari konstanta yang sama. Sejak beat punya LANTAI, yang dituntut
+    // adalah rentangnya — bukan hanya batas atasnya.
     expect(STORY_SYSTEM_PROMPT).toContain(`MAXIMUM ${String(MAX_SCENE_BEATS)} events`);
-    expect(STORY_SYSTEM_PROMPT).toContain(`under ${String(MAX_BEAT_WORDS)} words`);
+    expect(STORY_SYSTEM_PROMPT).toContain(
+      `${String(MIN_BEAT_WORDS)} to ${String(MAX_BEAT_WORDS)} words`,
+    );
   });
 
   it('mempertahankan aturan @user dan token karakter', () => {
@@ -231,9 +236,17 @@ describe('pesan pengguna', () => {
   });
 
   it('meneruskan aksi pemain saat ada, bukan menulis adegan pembuka lagi', () => {
-    const pesan = buildStoryUserPrompt({ ...MASUKAN, playerAction: 'Menatapnya tanpa bicara' });
+    /*
+     * Bentuk sebelumnya menegaskan kalimat harfiah
+     * "Pemain memilih/melakukan: ...". Sejak ucapan dipisahkan dari tindakan,
+     * masukan yang sama ditulis dengan penanda jenisnya. Maksud ujinya tidak
+     * berubah: aksi pemain HARUS sampai ke prompt, dan prompt TIDAK boleh
+     * menyuruh model menulis adegan pembuka.
+     */
+    const pesan = buildStoryUserPrompt({ ...MASUKAN, playerAction: '*Menatapnya tanpa bicara*' });
 
-    expect(pesan).toContain('Pemain memilih/melakukan: Menatapnya tanpa bicara');
+    expect(pesan).toContain('Menatapnya tanpa bicara');
+    expect(pesan).toContain('MENCOBA tindakan');
     expect(pesan).not.toContain('Tulis ADEGAN PEMBUKA');
   });
 
@@ -262,7 +275,11 @@ describe('pesan pengguna', () => {
     const pesan = buildStoryUserPrompt(MASUKAN);
 
     expect(pesan).toContain(`maksimum ${String(MAX_SCENE_BEATS)} beat`);
-    expect(pesan).toContain(`di bawah ${String(MAX_BEAT_WORDS)} kata`);
+    // Rentangnya, bukan hanya batas atas: pengingat yang hanya menyebut plafon
+    // membuat model menulis sependek mungkin.
+    expect(pesan).toContain(
+      `${String(MIN_BEAT_WORDS)} sampai ${String(MAX_BEAT_WORDS)} kata`,
+    );
   });
 });
 
@@ -838,5 +855,133 @@ describe('lapisan gambar mengikuti isi cerita', () => {
     for (const terlarang of ['"senyum"', '"marah"', '"sedih"', '"dasar"']) {
       expect(aturan).not.toContain(terlarang);
     }
+  });
+});
+
+/**
+ * Ucapan pemain berbeda dari tindakan pemain.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA PENJAGA INI ADA
+ * ---------------------------------------------------------------------------
+ * Terukur pada pemilik produk: ia mengetik "kamu marah" — sebuah UCAPAN — lalu
+ * mendapat narasi tentang tubuhnya sendiri ("wajah memerah, tangan mengepal").
+ * Sebabnya prompt menulis setiap masukan bebas sebagai
+ * "Pemain memilih/melakukan: ...", sehingga kalimat yang jelas diucapkan pun
+ * diperlakukan sebagai tindakan fisik.
+ *
+ * Konvensinya: ketik biasa = ucapan; *di antara bintang* = tindakan. Konvensi
+ * itu juga TIDAK PERNAH dijelaskan di antarmuka sebelum ini.
+ */
+describe('ucapan pemain dibedakan dari tindakannya', () => {
+  it('ketik biasa dianggap UCAPAN', () => {
+    expect(jenisAksiPemain('kamu marah')).toEqual({ jenis: 'ucapan', isi: 'kamu marah' });
+  });
+
+  it('bintang yang mengapit seluruh masukan dianggap TINDAKAN', () => {
+    expect(jenisAksiPemain('*aku menepuk meja*')).toEqual({
+      jenis: 'tindakan',
+      isi: 'aku menepuk meja',
+    });
+  });
+
+  it('bintang di TENGAH kalimat bukan penanda tindakan', () => {
+    /*
+     * Menebak maksud "aku bilang *diam* lalu pergi" hanya menambah cara untuk
+     * salah. Masukan seperti itu diperlakukan sebagai ucapan apa adanya.
+     */
+    expect(jenisAksiPemain('aku bilang *diam* lalu pergi').jenis).toBe('ucapan');
+  });
+
+  it('bintang tanpa isi bukan tindakan', () => {
+    // `**` dan `*   *` tidak berisi apa pun; memperlakukannya sebagai tindakan
+    // akan mengirim tindakan kosong ke model.
+    expect(jenisAksiPemain('**').jenis).toBe('ucapan');
+    expect(jenisAksiPemain('*   *').jenis).toBe('ucapan');
+  });
+
+  it('menulis ucapan sebagai UCAPAN di prompt, bukan sebagai tindakan', () => {
+    /*
+     * BUKTI MUTASI: kembalikan `bagian.push(\`Pemain memilih/melakukan: ...\`)`
+     * untuk semua masukan, lalu uji ini memerah.
+     */
+    const pesan = buildStoryUserPrompt({ ...MASUKAN, playerAction: 'kamu marah' });
+
+    expect(pesan).toContain('MENGUCAPKAN');
+    expect(pesan).toContain('"kamu marah"');
+    // Kata "tindakan" tidak boleh menjadi label untuk sebuah ucapan.
+    expect(pesan).not.toContain('Pemain memilih/melakukan');
+    expect(pesan).not.toContain('MENCOBA tindakan');
+  });
+
+  it('menulis tindakan sebagai TINDAKAN di prompt', () => {
+    const pesan = buildStoryUserPrompt({ ...MASUKAN, playerAction: '*aku menepuk meja*' });
+
+    expect(pesan).toContain('MENCOBA tindakan');
+    expect(pesan).toContain('aku menepuk meja');
+    expect(pesan).not.toContain('MENGUCAPKAN');
+  });
+
+  it('meminta tokoh menanggapi ISI ucapan, bukan menarasikan tubuh pemain', () => {
+    // Inilah aturan yang mencegah "kamu marah" dijawab dengan "wajahmu memerah".
+    const pesan = buildStoryUserPrompt({ ...MASUKAN, playerAction: 'kamu marah' });
+
+    expect(pesan).toContain('JANGAN');
+    expect(pesan).toContain('menarasikan tubuh pemain');
+  });
+});
+
+/**
+ * Beat tidak boleh berupa penggalan.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA PENJAGA INI ADA
+ * ---------------------------------------------------------------------------
+ * Prompt lama HANYA menyebut batas ATAS ("di bawah 25 kata") tanpa batas bawah.
+ * Model mematuhinya secara harfiah dan menulis sependek mungkin; pemilik produk
+ * mengeluh beat-nya berbunyi "Lupakan." dan "Apa?!" sehingga ia tidak paham
+ * maksud adegannya.
+ *
+ * Batas 25 kata itu JATAH, bukan langit-langit yang harus dijauhi.
+ */
+describe('panjang beat punya lantai, bukan hanya plafon', () => {
+  it('lantainya dekat dengan plafon, bukan sekadar "jangan terlalu pendek"', () => {
+    /*
+     * Angka yang jauh di bawah plafon tidak mengubah apa pun: model tetap
+     * menulis sependek yang diizinkan. Yang membuat jatah terpakai adalah
+     * lantai yang dekat dengan batas atas.
+     */
+    expect(MIN_BEAT_WORDS).toBeGreaterThanOrEqual(15);
+    expect(MIN_BEAT_WORDS).toBeLessThan(MAX_BEAT_WORDS);
+  });
+
+  it('aturan panjang menyebut LANTAI dan PLAFON sekaligus', () => {
+    /*
+     * BUKTI MUTASI: kembalikan aturan 5 ke "Keep every text under 25 words",
+     * lalu uji ini memerah.
+     */
+    expect(STORY_SYSTEM_PROMPT).toContain('15 to 25 words');
+    expect(STORY_SYSTEM_PROMPT).not.toContain('Keep every "text" under');
+  });
+
+  it('menyuruh model memakai hampir seluruh jatahnya', () => {
+    expect(STORY_SYSTEM_PROMPT).toContain('aim for the TOP of that range');
+  });
+
+  it('menyebut penggalan sebagai beat yang terbuang', () => {
+    // Aturan tanpa alasan mudah diabaikan; contohnya yang membuat jelas.
+    expect(STORY_SYSTEM_PROMPT).toContain('wasted beat');
+  });
+
+  it('tetap mengizinkan penggalan sekali saja untuk hentakan', () => {
+    // Melarangnya sama sekali akan menghapus satu alat bercerita yang sah.
+    expect(STORY_SYSTEM_PROMPT).toContain('deliberate beat of impact');
+  });
+
+  it('pengingat penutup menyebut rentangnya, bukan hanya batas atas', () => {
+    // Pengingat di akhir prompt dibaca paling akhir sebelum model menulis.
+    const pesan = buildStoryUserPrompt(MASUKAN);
+
+    expect(pesan).toContain(`${String(MIN_BEAT_WORDS)} sampai ${String(MAX_BEAT_WORDS)} kata`);
   });
 });

@@ -286,10 +286,16 @@ export const en: Dictionary = {
   'player.log': 'History',
   'player.characters': 'Characters',
   'player.pause': 'Pause',
-  'player.composerLabel': 'Write your action or line',
-  'player.composerPlaceholder': 'Example: I step closer and ask about the job',
+  'player.composerLabel': 'Say something, or take action',
+  'player.composerPlaceholder': 'Type plainly to speak — e.g. are you angry?',
+  /*
+   * The asterisk convention MUST be explained here. Nothing used to tell the
+   * player that plain text is SPEECH and *asterisks* mean ACTION, so typing a
+   * line like "are you angry?" was narrated as a physical action instead.
+   */
   'player.composerHint':
-    'Your action is an attempt, not a command. Characters may still refuse or misread it.',
+    'Type plainly = you say it. Wrap in *asterisks* = you do it. ' +
+    'e.g. "are you angry?" versus *I slap the table*. Your attempt can be refused or misread.',
   'player.send': 'Send',
   'player.charactersLeft': '{count} characters left',
   'player.customTooLong': 'Your action is too long. Try shortening it.',

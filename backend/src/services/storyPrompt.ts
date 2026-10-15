@@ -172,6 +172,37 @@ export type StoryPromptInput = {
 };
 
 /**
+ * Apakah masukan bebas pemain sebuah UCAPAN atau sebuah TINDAKAN?
+ *
+ * ---------------------------------------------------------------------------
+ * KONVENSI YANG DIPAKAI
+ * ---------------------------------------------------------------------------
+ *   ketik biasa   -> UCAPAN pemain (kata-katanya)
+ *   *di antara bintang* -> TINDAKAN pemain
+ *
+ * Mengapa perlu dipisah: keduanya diminta ke model dengan cara yang berbeda.
+ * Ucapan ditanggapi ISI kata-katanya; tindakan dinarasikan sebagai upaya yang
+ * boleh gagal. Menyamakan keduanya membuat pemain yang mengetik "kamu marah" —
+ * sebuah kalimat — mendapat narasi tentang tubuhnya sendiri.
+ *
+ * Bintang hanya dianggap penanda bila mengapit SELURUH masukan. Kalimat seperti
+ * "aku bilang *diam* lalu pergi" mengandung bintang di tengah, dan menebak
+ * maksudnya hanya akan menambah cara untuk salah; masukan seperti itu
+ * diperlakukan sebagai ucapan apa adanya, dan model tetap melihat bintangnya.
+ */
+export function jenisAksiPemain(teks: string): { jenis: 'ucapan' | 'tindakan'; isi: string } {
+  const bersih = teks.trim();
+  if (bersih.length >= 2 && bersih.startsWith('*') && bersih.endsWith('*')) {
+    const isi = bersih.slice(1, -1).trim();
+    // `**` atau `*  *` bukan tindakan: tidak ada isinya.
+    if (isi.length > 0) {
+      return { jenis: 'tindakan', isi };
+    }
+  }
+  return { jenis: 'ucapan', isi: bersih };
+}
+
+/**
  * Menyusun pesan pengguna: seluruh kanun yang dibutuhkan model untuk SATU adegan.
  *
  * Daftar aset ditulis lengkap dan bernomor karena di sinilah model paling sering
@@ -450,8 +481,34 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
 
   bagian.push('TUGAS:');
   if (input.playerAction) {
-    bagian.push(`Pemain memilih/melakukan: ${input.playerAction}`);
-    bagian.push('Lanjutkan cerita dari tindakan itu, lalu akhiri dengan keputusan baru.');
+    const aksi = jenisAksiPemain(input.playerAction);
+    if (aksi.jenis === 'ucapan') {
+      /*
+       * KETIKA PEMAIN MENULIS BIASA, ITU UCAPANNYA.
+       *
+       * Sebelum ini seluruh masukan bebas ditulis ke prompt sebagai
+       * "Pemain memilih/melakukan: ...", sehingga kalimat yang jelas-jelas
+       * diucapkan diperlakukan sebagai tindakan fisik. Terukur pada pemilik
+       * produk: ia mengetik "kamu marah" — sebuah ucapan — dan jawabannya
+       * menarasikan tubuhnya ("wajah memerah, tangan mengepal") alih-alih
+       * menanggapi kata-katanya.
+       */
+      bagian.push(`Pemain MENGUCAPKAN kata-kata ini (ucapan, BUKAN tindakan fisik):`);
+      bagian.push(`  "${aksi.isi}"`);
+      bagian.push('');
+      bagian.push('Perlakukan itu sebagai KALIMAT YANG DIUCAPKAN pemain. Tokoh di');
+      bagian.push('adegan ini MENDENGARNYA dan menanggapi ISI kata-katanya. JANGAN');
+      bagian.push('menarasikan tubuh pemain seolah ia baru melakukan sesuatu — pemain');
+      bagian.push('hanya berbicara. Bila perlu, kata-katanya boleh dikutip kembali.');
+    } else {
+      bagian.push(`Pemain MENCOBA tindakan ini (tindakan, BUKAN ucapan): ${aksi.isi}`);
+      bagian.push('');
+      bagian.push('Perlakukan itu sebagai UPAYA, bukan perintah yang berhasil. Narasikan');
+      bagian.push('apa yang pemain lakukan dan bagaimana hasilnya. Tokoh boleh menolak,');
+      bagian.push('salah paham, atau bereaksi tak terduga. JANGAN memperlakukannya sebagai');
+      bagian.push('kalimat yang diucapkan pemain.');
+    }
+    bagian.push('Lanjutkan cerita dari situ, lalu akhiri dengan keputusan baru.');
     bagian.push('');
     bagian.push('Periksa dulu: apakah tindakan itu MEMINDAHKAN pemain ke tempat lain?');
     bagian.push('Bila ya, jangan langsung mengganti latar. Tulis niatnya, tulis');
@@ -497,7 +554,8 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
   }
   bagian.push('');
   bagian.push(
-    `Ingat: maksimum ${String(MAX_SCENE_BEATS)} beat, setiap teks di bawah ${String(MAX_BEAT_WORDS)} kata, ` +
+    `Ingat: maksimum ${String(MAX_SCENE_BEATS)} beat, setiap teks antara ` +
+      `${String(MIN_BEAT_WORDS)} sampai ${String(MAX_BEAT_WORDS)} kata, ` +
       'dan scene WAJIB berakhir dengan keputusan berisi tepat tiga opsi.',
   );
   if (input.storySoFar || input.recentBeats.length > 0) {
@@ -511,8 +569,32 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
 }
 
 
-/** Batas kata per beat. Sama dengan potongan narasi: yang terbaca di ponsel. */
+/**
+ * Panjang teks satu beat, dalam kata.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA ADA LANTAINYA, BUKAN HANYA PLAFON
+ * ---------------------------------------------------------------------------
+ * Prompt lama hanya menyebut batas ATAS ("di bawah 25 kata") tanpa batas bawah.
+ * Model mematuhinya secara harfiah: ia menulis sependek mungkin. Terukur pada
+ * pemilik produk, beat-nya berbunyi "Lupakan.", "Apa?!", "Jari gemetar di meja
+ * kayu." — penggalan yang tidak memberi pemain cukup untuk membayangkan apa
+ * yang sedang terjadi, sehingga ia mengaku tidak paham maksudnya.
+ *
+ * Batas 25 kata itu JATAH, bukan langit-langit yang harus dijauhi. Karena itu
+ * lantainya diletakkan dekat plafonnya: beat yang baik memakai hampir seluruh
+ * jatahnya, dan penggalan tiga kata berarti satu beat terbuang.
+ */
 export const MAX_BEAT_WORDS = 25;
+
+/**
+ * Lantai panjang beat.
+ *
+ * Dipilih dekat plafon dengan sengaja: memberi tahu model "jangan terlalu
+ * pendek" tanpa angka hanya menghasilkan penggalan yang sedikit lebih panjang.
+ * Angka yang dekat dengan batas atas membuat jatah itu benar-benar terpakai.
+ */
+export const MIN_BEAT_WORDS = 15;
 
 export const STORY_SYSTEM_PROMPT = [
   'You are the story engine of an interactive visual novel. You direct the scene,',
@@ -559,8 +641,15 @@ export const STORY_SYSTEM_PROMPT = [
   '   forward — a scene without one strands them.',
   '3. The first beat MUST be setBackground, so the player sees where they are.',
   '4. Show a character before they speak. A voice with no face is confusing.',
-  `5. Keep every "text" under ${String(MAX_BEAT_WORDS)} words. This is read on a phone; a`,
-  '   long block is unreadable, no matter how good the prose is.',
+  `5. Every "text" must be ${String(MIN_BEAT_WORDS)} to ${String(MAX_BEAT_WORDS)} words, and you`,
+  '   should aim for the TOP of that range, not the bottom. That budget is there',
+  '   to be used. A beat of three words ("Lupakan.") is a wasted beat: the player',
+  '   has nothing to picture and does not understand what just happened.',
+  '   Write one or two COMPLETE sentences carrying something concrete — a place, a',
+  '   gesture, a tone of voice, an object, what someone is doing with their hands.',
+  '   A fragment is only acceptable when it is a deliberate beat of impact, and',
+  '   never more than once in a scene. This is read on a phone, so a long block is',
+  '   unreadable no matter how good the prose is — but a stub is worse.',
   /*
    * Dulu berbunyi "OPTIONAL and rare".
    *

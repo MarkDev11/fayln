@@ -303,10 +303,20 @@ export const id = {
   'player.log': 'Riwayat',
   'player.characters': 'Tokoh',
   'player.pause': 'Jeda',
-  'player.composerLabel': 'Tulis tindakan atau dialogmu',
-  'player.composerPlaceholder': 'Contoh: aku mendekatinya dan bertanya soal pekerjaan',
+  'player.composerLabel': 'Ucapkan sesuatu, atau bertindak',
+  'player.composerPlaceholder': 'Ketik biasa untuk berbicara — mis. kamu marah?',
+  /*
+   * Konvensi bintang WAJIB dijelaskan di sini.
+   *
+   * Sebelumnya tidak ada satu pun tempat yang memberi tahu pemain bahwa ketik
+   * biasa berarti UCAPAN dan *bintang* berarti TINDAKAN. Akibatnya pemain
+   * mengetik "kamu marah" — jelas sebuah ucapan — lalu mendapat narasi tentang
+   * tubuhnya sendiri, karena mesin cerita memperlakukan semuanya sebagai
+   * tindakan.
+   */
   'player.composerHint':
-    'Tindakanmu adalah usaha, bukan perintah. Tokoh tetap bisa menolak atau salah paham.',
+    'Ketik biasa = kamu mengucapkannya. Apit dengan *bintang* = kamu melakukannya. ' +
+    'Mis. "kamu marah?" versus *aku menepuk meja*. Usahamu bisa ditolak atau disalahpahami.',
   'player.send': 'Kirim',
   'player.charactersLeft': '{count} karakter tersisa',
   'player.customTooLong': 'Tindakanmu terlalu panjang. Pendekkan sedikit.',
