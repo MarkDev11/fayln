@@ -2,7 +2,7 @@ import React from 'react';
 import { Modal, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
-import type { RelationEntry } from '@/domain/types';
+import type { RelationEntry, RelationVocabularyEntry } from '@/domain/types';
 
 import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
@@ -25,6 +25,13 @@ export type InspectorCharacter = {
 export type NPCInspectorProps = {
   visible: boolean;
   characters: InspectorCharacter[];
+  /**
+   * Kosakata hubungan versi dunia ini.
+   *
+   * Opsional supaya panel tetap dapat dibuka sebelum sesi termuat; saat itu
+   * label bawaan yang dipakai, bukan id mentah.
+   */
+  relationVocabulary?: readonly RelationVocabularyEntry[];
   onClose: () => void;
   testID?: string;
 };
@@ -35,7 +42,13 @@ export type NPCInspectorProps = {
  * Hanya menampilkan tokoh yang sudah muncul di panggung, beserta hubungan yang
  * sudah terlihat. Rahasia kanon dan skrip AI tidak pernah masuk ke sini (FR-56).
  */
-export function NPCInspector({ visible, characters, onClose, testID }: NPCInspectorProps) {
+export function NPCInspector({
+  visible,
+  characters,
+  relationVocabulary = [],
+  onClose,
+  testID,
+}: NPCInspectorProps) {
   const { colors } = useTheme();
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
@@ -73,6 +86,7 @@ export function NPCInspector({ visible, characters, onClose, testID }: NPCInspec
             accessibilityLabel={t('inspector.close')}
             hitSlop={10}
             style={styles.close}
+            testID="inspector-close"
           >
             <Icon name="close" size={20} color={colors.inkSecondary} />
           </Pressable>
@@ -121,7 +135,11 @@ export function NPCInspector({ visible, characters, onClose, testID }: NPCInspec
                   <Text variant="caption" tone="secondary">
                     {t('inspector.relation')}
                   </Text>
-                  <NPCRelationChip npcName={character.name} status={character.relation} />
+                  <NPCRelationChip
+                    npcName={character.name}
+                    status={character.relation}
+                    vocabulary={relationVocabulary}
+                  />
                 </View>
 
                 {character.reasonPublic ? (

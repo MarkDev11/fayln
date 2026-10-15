@@ -1,6 +1,6 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ActivityIndicator, Pressable, StyleSheet, View } from 'react-native';
+import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { useGateway } from '@/data/GatewayProvider';
@@ -13,9 +13,9 @@ import { Screen } from '@/components/Screen';
 import { StateView } from '@/components/StateView';
 import { Text } from '@/components/Text';
 
+import { AutoDelayControl } from '@/features/player/components/AutoDelayControl';
 import { ChoiceSheet } from '@/features/player/components/ChoiceSheet';
 import { Composer, MAX_CUSTOM_ACTION_CHARS } from '@/features/player/components/Composer';
-import { DialogueBox } from '@/features/player/components/DialogueBox';
 import { GatewayErrorSheet } from '@/features/player/components/GatewayErrorSheet';
 import { LogDrawer } from '@/features/player/components/LogDrawer';
 import { NPCInspector, type InspectorCharacter } from '@/features/player/components/NPCInspector';
@@ -23,6 +23,9 @@ import { PlayerControls } from '@/features/player/components/PlayerControls';
 import { RelationNotice } from '@/features/player/components/RelationNotice';
 import { assetUri } from '@/domain/assets';
 import { Stage } from '@/features/player/components/Stage';
+import { StageHud } from '@/features/player/components/StageHud';
+import { StageNav } from '@/features/player/components/StageNav';
+import { StageText } from '@/features/player/components/StageText';
 import { usePlayerEngine } from '@/features/player/usePlayerEngine';
 import type { SceneNotice } from '@/features/player/types';
 
@@ -42,6 +45,7 @@ export default function PlayerScreen() {
   const router = useRouter();
 
   const [session, setSession] = useState<JourneySession | null>(null);
+  const [personaName, setPersonaName] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -49,8 +53,12 @@ export default function PlayerScreen() {
     setLoading(true);
     setLoadError(null);
     try {
-      const result = await gateway.openJourneySession(journeyId);
+      const [result, detail] = await Promise.all([
+        gateway.openJourneySession(journeyId),
+        gateway.fetchJourneyDetail(journeyId),
+      ]);
       setSession(result);
+      setPersonaName(detail.personaName);
     } catch {
       setLoadError(t('state.errorBody'));
     } finally {
@@ -99,34 +107,57 @@ export default function PlayerScreen() {
     );
   }
 
-  return <PlayerView session={session} />;
+  return <PlayerView session={session} personaName={personaName} />;
 }
 
-function PlayerView({ session }: { session: JourneySession }) {
-  const { colors } = useTheme();
+function PlayerView({
+  session,
+  personaName,
+}: {
+  session: JourneySession;
+  personaName: string;
+}) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
   const router = useRouter();
 
-  const engine = usePlayerEngine({
-    journeyId: session.journeyId,
-    worldId: session.world.worldId,
-    worldVersion: session.world.worldVersion,
-    personaName: '',
-    initialBeats: session.beats,
-    initialRelations: session.relationsBaseline,
-    memory: session.memory,
-    simulator: session.simulator,
-    // Bahasa dari SESI — nilai yang sama dengan yang dipakai server.
-    responseLocale: session.responseLocale,
-  });
-
+  /*
+   * Keadaan overlay dideklarasikan SEBELUM mesin, karena `suspended` di bawah
+   * membacanya. Urutannya penting: sebuah nilai tidak bisa dipakai sebelum ia
+   * ada, dan memindahkan mesin ke atas akan membuat Auto tidak pernah tertahan.
+   */
   const [logVisible, setLogVisible] = useState(false);
   const [inspectorVisible, setInspectorVisible] = useState(false);
   const [errorDismissed, setErrorDismissed] = useState(false);
   /** Mode bersih: seluruh UI disembunyikan agar ilustrasi terlihat penuh. */
   const [uiHidden, setUiHidden] = useState(false);
   const [leaveDialogVisible, setLeaveDialogVisible] = useState(false);
+
+  /** Ada lapisan yang menutupi cerita? Auto ditahan selama itu. */
+  const overlayTerbuka = logVisible || inspectorVisible || uiHidden || leaveDialogVisible;
+
+  const engine = usePlayerEngine({
+    journeyId: session.journeyId,
+    worldId: session.world.worldId,
+    worldVersion: session.world.worldVersion,
+    personaName,
+    initialBeats: session.beats,
+    initialRelations: session.relationsBaseline,
+    memory: session.memory,
+    simulator: session.simulator,
+    // Bahasa dari SESI — nilai yang sama dengan yang dipakai server.
+    responseLocale: session.responseLocale,
+    /*
+     * Auto DITAHAN, bukan dimatikan, saat overlay terbuka atau UI disembunyikan.
+     *
+     * Pemain tidak sedang membaca pada keadaan itu, jadi Auto tidak boleh
+     * memajukan cerita di belakang punggungnya — tetapi ia juga tidak dimatikan:
+     * begitu overlay ditutup, Auto melanjutkan sendiri. Sebelumnya `pauseAuto()`
+     * mengirim `SET_AUTO false`, sehingga membuka Riwayat mematikan Auto secara
+     * permanen.
+     */
+    suspended: overlayTerbuka,
+  });
 
   const { state } = engine;
 
@@ -177,6 +208,25 @@ function PlayerView({ session }: { session: JourneySession }) {
   const focusName =
     state.scene.focusNpcId != null ? (npcNameById[state.scene.focusNpcId] ?? null) : null;
 
+  /*
+   * Status hubungan yang ditampilkan di HUD.
+   *
+   * Diambil dari tokoh yang SEDANG tampil; bila hubungannya belum pernah berubah
+   * di perjalanan ini, dipakai hubungan awal dari definisi dunia — bukan
+   * "belum diketahui", karena hubungan awalnya memang sudah ditetapkan admin.
+   */
+  const relationStatus = useMemo(() => {
+    const npcId = state.scene.focusNpcId;
+    if (!npcId) {
+      return null;
+    }
+    const fromJourney = state.relations.find((item) => item.npcId === npcId);
+    if (fromJourney) {
+      return fromJourney.status;
+    }
+    return session.world.characters.find((item) => item.npcId === npcId)?.initialRelation ?? null;
+  }, [session.world.characters, state.relations, state.scene.focusNpcId]);
+
   /** Tokoh yang sudah muncul di panggung, beserta hubungan yang sudah terlihat. */
   const inspectorCharacters = useMemo<InspectorCharacter[]>(() => {
     return state.scene.visibleNpcIds
@@ -202,17 +252,19 @@ function PlayerView({ session }: { session: JourneySession }) {
   const syncProgress = useSyncReadProgress();
 
   /**
-   * Auto dijeda saat overlay dibuka ATAU saat UI disembunyikan.
+   * Auto DITAHAN saat overlay dibuka ATAU saat UI disembunyikan.
    *
    * Saat mode bersih, pemain tidak dapat membaca teks, jadi membiarkan Auto
    * berjalan akan memajukan cerita tanpa sepengetahuannya.
+   *
+   * Penahanannya lewat opsi `suspended` milik mesin, BUKAN lewat `pauseAuto()`
+   * seperti sebelumnya: `pauseAuto()` mengirim `SET_AUTO false`, sehingga
+   * menutup Riwayat pun mematikan Auto secara permanen. Sekarang Auto menyala
+   * terus sampai pemain mematikannya sendiri, dan overlay hanya menahan lajunya.
+   *
+   * Karena itu tidak ada lagi `useEffect` di sini — nilainya diturunkan langsung
+   * dari keadaan overlay, dan mesin membacanya setiap render.
    */
-  useEffect(() => {
-    if (logVisible || inspectorVisible || uiHidden) {
-      engine.pauseAuto();
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [logVisible, inspectorVisible, uiHidden]);
 
   /**
    * Laporan posisi baca.
@@ -250,9 +302,13 @@ function PlayerView({ session }: { session: JourneySession }) {
   }, [engine, router]);
 
   const requestLeave = useCallback(() => {
-    engine.pauseAuto();
+    /*
+     * Tidak ada `pauseAuto()` di sini. Dialog keluar termasuk `overlayTerbuka`,
+     * jadi Auto sudah tertahan selama dialognya tampil — dan bila pemain menekan
+     * "Tetap di sini", Auto melanjutkan sendiri, bukan mati.
+     */
     setLeaveDialogVisible(true);
-  }, [engine]);
+  }, []);
 
   /* Pemberitahuan hubungan tampil sementara lalu hilang sendiri. */
   const activeNotice: SceneNotice | undefined = state.notices[0];
@@ -276,7 +332,7 @@ function PlayerView({ session }: { session: JourneySession }) {
   const draftTooLong = state.draft.length > MAX_CUSTOM_ACTION_CHARS;
 
   /**
-   * Mode bersih: hanya panggung yang tampil, tanpa safe area dan tanpa panel.
+   * Mode bersih: hanya panggung yang tampil, tanpa HUD dan tanpa panel.
    * Ketuk di mana saja untuk mengembalikan UI.
    */
   if (uiHidden) {
@@ -306,174 +362,208 @@ function PlayerView({ session }: { session: JourneySession }) {
     );
   }
 
+  /*
+   * Seluruh layar adalah panggungnya.
+   *
+   * Bentuk lamanya menumpuk tiga blok berurutan — panggung, lalu kotak dialog
+   * hitam, lalu panel kendali berlatar aplikasi — sehingga gambarnya hanya
+   * mengisi sepertiga atas layar dan sisanya menjadi dinding gelap. Sekarang
+   * panggung menutupi SELURUH layar, dan HUD, teks, serta tombolnya menumpang
+   * di atasnya sebagai lapisan absolut.
+   */
   return (
-    <View style={[styles.root, { backgroundColor: colors.bgApp }]}>
-      <View style={[styles.stageWrap, { paddingTop: insets.top + space.sm }]}>
-        <Stage
-          scene={state.scene}
-          focusName={focusName}
-          {...(locationLabel !== undefined ? { locationLabel } : null)}
-          backgroundUri={backgroundUri}
-          portraitUri={portraitUri}
-          testID="player-stage"
-        />
-      </View>
-
-      <View style={[styles.hudTop, { paddingTop: insets.top + space.sm }]}>
-        <View style={styles.hudRow}>
-          <Pressable
-            onPress={requestLeave}
-            accessibilityRole="button"
-            accessibilityLabel={t('player.back')}
-            hitSlop={8}
-            style={styles.hudButton}
-            testID="player-back"
-          >
-            <Icon name="chevronLeft" size={22} color={colors.inkPrimary} />
-          </Pressable>
-        </View>
-
-        {/*
-         * Kendali cerita ada di PALING ATAS, bukan di panel bawah — dan tanpa
-         * bingkai sama sekali.
-         *
-         * Di bawah, empat tombol itu duduk di kotak bergaris di atas kotak
-         * bergaris lain (kotak dialog). Dua lapis bingkai itulah bagian yang
-         * paling menonjol di layar, padahal yang penting adalah ceritanya —
-         * dan itulah yang membuat pemilik produk menyebut layarnya "masih
-         * templat". Di sini yang tersisa hanya teks tebal dengan pemisah tipis.
-         *
-         * Diletakkan di barisnya SENDIRI, bukan di sebelah tombol kembali:
-         * `hudRow` memakai `justifyContent: 'space-between'`, sehingga satu baris
-         * akan mendorong kendali ke tepi kanan dan menjauhkannya dari tempat
-         * mata membacanya.
-         */}
-        <View style={styles.controlsRow}>
-          <PlayerControls
-            testID="player-controls"
-            items={[
-              {
-                id: 'auto',
-                icon: state.auto ? 'pause' : 'play',
-                label: state.auto ? t('player.autoOn') : t('player.auto'),
-                active: state.auto,
-                disabled: isSubmitting,
-                onPress: engine.toggleAuto,
-              },
-              {
-                id: 'log',
-                icon: 'book',
-                label: t('player.log'),
-                onPress: openLog,
-              },
-              {
-                id: 'npc',
-                icon: 'journey',
-                label: t('player.characters'),
-                onPress: () => setInspectorVisible(true),
-              },
-              {
-                id: 'hide',
-                icon: 'eyeOff',
-                label: t('player.hideUi'),
-                onPress: () => setUiHidden(true),
-              },
-            ]}
-          />
-        </View>
-      </View>
-
-      <View
-        style={[
-          styles.bottom,
-          { backgroundColor: colors.bgApp, paddingBottom: insets.bottom + space.md },
-        ]}
+    <View style={styles.root}>
+      <Stage
+        scene={state.scene}
+        focusName={focusName}
+        {...(locationLabel !== undefined ? { locationLabel } : null)}
+        backgroundUri={backgroundUri}
+        portraitUri={portraitUri}
+        onTap={state.decision === null && engine.canAdvance && !isSubmitting ? engine.advance : undefined}
+        testID="player-stage"
       >
-        {activeNotice ? (
-          <RelationNotice
-            notice={activeNotice}
-            npcName={npcNameById[activeNotice.npcId] ?? t('log.unknownSpeaker')}
-            onDismiss={() => engine.dismissNotice(activeNotice.id)}
-            testID="relation-notice"
+        {/* Lapisan atas: hubungan, tempat, dan tombol mode. */}
+        <View
+          style={[styles.hud, { paddingTop: insets.top + space.sm }]}
+          pointerEvents="box-none"
+        >
+          <StageHud
+            relationStatus={relationStatus}
+            relationName={focusName}
+            locationLabel={locationLabel ?? null}
+            autoActive={state.auto}
+            autoDisabled={isSubmitting}
+            onToggleAuto={engine.toggleAuto}
+            onHideUi={() => setUiHidden(true)}
+            relationVocabulary={state.relationVocabulary}
+            testID="player-hud"
           />
-        ) : null}
 
-        {state.decision ? (
-          <View style={styles.decisionBlock}>
-            <ChoiceSheet
-              decision={state.decision}
-              disabled={isSubmitting}
-              onSelect={engine.submitChoice}
-              testID="player-choices"
-            />
-            <Composer
-              value={state.draft}
-              onChange={engine.setDraft}
-              onSubmit={engine.submitCustom}
-              disabled={isSubmitting}
-              submitting={isSubmitting}
-              testID="player-composer"
+          {/*
+           * Kendali cerita tetap di PALING ATAS, di barisnya sendiri.
+           *
+           * Diletakkan di sini sejak layar masih berpanel, dan tetap di sini
+           * setelah panelnya hilang: kalau ia turun ke kaki panggung, ia akan
+           * duduk tepat di atas kalimat cerita — bagian layar yang paling perlu
+           * dibaca.
+           */}
+          <View style={styles.controlsRow} pointerEvents="box-none">
+            <PlayerControls
+              testID="player-controls"
+              /*
+               * `onMedia`: baris ini menumpang di atas ilustrasi panggung, bukan
+               * di atas permukaan aplikasi. Dengan nada bawaan, labelnya gelap
+               * pada tema terang dan lenyap begitu adegannya berlatar gelap.
+               */
+              tone="onMedia"
+              items={[
+                {
+                  id: 'log',
+                  icon: 'book',
+                  label: t('player.log'),
+                  onPress: openLog,
+                },
+                {
+                  id: 'npc',
+                  icon: 'person',
+                  label: t('player.characters'),
+                  onPress: () => setInspectorVisible(true),
+                },
+              ]}
             />
           </View>
-        ) : (
-          <>
-            <DialogueBox
-              line={state.line}
-              speakerName={speakerName}
-              onRevealed={engine.revealLine}
-              onAdvance={engine.advance}
-              testID="player-dialogue"
+
+          {/*
+            * Pengatur jeda Auto HANYA muncul saat Auto menyala.
+            *
+            * Saat Auto mati, jeda tidak berarti apa pun — menampilkannya hanya
+            * menambah barang yang harus diabaikan mata. Muncul saat relevan juga
+            * membuatnya dapat ditemukan: pemain yang baru menyalakan Auto melihat
+            * langsung bahwa kecepatannya dapat diatur.
+            */}
+          {state.auto ? (
+            <View style={styles.autoDelayRow} pointerEvents="box-none">
+              <AutoDelayControl
+                value={state.autoDelayMs}
+                onChange={engine.setAutoDelay}
+                testID="player-auto-delay"
+              />
+            </View>
+          ) : null}
+        </View>
+
+        {/* Lapisan bawah: teks cerita, pilihan, dan tombol maju. */}
+        <View
+          style={[styles.bottom, { paddingBottom: insets.bottom + space.md }]}
+          pointerEvents="box-none"
+        >
+          {activeNotice ? (
+            <RelationNotice
+              notice={activeNotice}
+              npcName={npcNameById[activeNotice.npcId] ?? t('log.unknownSpeaker')}
+              onDismiss={() => engine.dismissNotice(activeNotice.id)}
+              relationVocabulary={state.relationVocabulary}
+              testID="relation-notice"
             />
-            {isSubmitting ? (
-              /*
-               * Keadaan "AI sedang menulis" — tanpa bingkai, senada dengan sisa
-               * layar. Bentuk lamanya kotak bergaris berlatar; di layar yang
-               * sudah dibersihkan dari bingkai, satu kotak tersisa justru
-               * menarik perhatian paling besar.
-               */
-              <View accessible accessibilityRole="alert" style={styles.waiting}>
-                <Text variant="small" tone="secondary">
-                  {t('player.waiting')}
-                </Text>
-                <Text variant="caption" tone="secondary">
-                  {t('player.waitingHint')}
-                </Text>
-                <View style={styles.waitingAction}>
-                  <Button
-                    label={t('player.cancel')}
-                    onPress={engine.cancelSubmission}
-                    variant="ghost"
-                    testID="player-cancel"
-                  />
+          ) : null}
+
+          {state.decision ? (
+            <View style={styles.decisionBlock}>
+              {/*
+               * Isi blok pilihan dapat DIGULIR.
+               *
+               * Tiga opsi + komposer + pertanyaan bisa melebihi tinggi yang
+               * tersedia di ponsel pendek; tanpa guliran, elemen pertamanya
+               * terdorong keluar dari panggung yang `overflow:'hidden'` dan
+               * pemain kehilangan pertanyaannya.
+               */}
+              <ScrollView
+                style={styles.decisionScroll}
+                contentContainerStyle={styles.decisionContent}
+                showsVerticalScrollIndicator={false}
+                keyboardShouldPersistTaps="handled"
+              >
+                <ChoiceSheet
+                  decision={state.decision}
+                  disabled={isSubmitting}
+                  onSelect={engine.submitChoice}
+                  testID="player-choices"
+                />
+                <Composer
+                  value={state.draft}
+                  onChange={engine.setDraft}
+                  onSubmit={engine.submitCustom}
+                  disabled={isSubmitting}
+                  submitting={isSubmitting}
+                  testID="player-composer"
+                />
+              </ScrollView>
+            </View>
+          ) : (
+            <>
+              <StageText
+                line={state.line}
+                speakerName={speakerName}
+                onRevealed={engine.revealLine}
+                onAdvance={engine.advance}
+                testID="player-dialogue"
+              />
+              {isSubmitting ? (
+                /*
+                 * Keadaan "AI sedang menulis" — tanpa bingkai, senada dengan
+                 * sisa layar. Di layar yang sudah dibersihkan dari bingkai, satu
+                 * kotak tersisa justru menarik perhatian paling besar.
+                 */
+                <View accessible accessibilityRole="alert" style={styles.waiting}>
+                  <Text variant="small" tone="onMedia">
+                    {t('player.waiting')}
+                  </Text>
+                  <Text variant="caption" tone="onMedia">
+                    {t('player.waitingHint')}
+                  </Text>
+                  <View style={styles.waitingAction}>
+                    <Button
+                      label={t('player.cancel')}
+                      onPress={engine.cancelSubmission}
+                      variant="ghost"
+                      testID="player-cancel"
+                    />
+                  </View>
                 </View>
-              </View>
-            ) : null}
-            {state.decision === null && !engine.canAdvance && state.status === 'idle' && !isSubmitting ? (
-              <Text variant="caption" tone="secondary">
-                {t('player.noBeatsLeft')}
-              </Text>
-            ) : null}
-          </>
-        )}
+              ) : null}
+              {state.decision === null && !engine.canAdvance && state.status === 'idle' && !isSubmitting ? (
+                <Text variant="caption" tone="onMedia">
+                  {t('player.noBeatsLeft')}
+                </Text>
+              ) : null}
+            </>
+          )}
 
-        {showError && state.error ? (
-          <GatewayErrorSheet
-            error={state.error}
-            onRetry={() => {
-              setErrorDismissed(true);
-              engine.retry();
-            }}
-            onDismiss={() => setErrorDismissed(true)}
-            testID="player-error-sheet"
+          {showError && state.error ? (
+            <GatewayErrorSheet
+              error={state.error}
+              onRetry={() => {
+                setErrorDismissed(true);
+                engine.retry();
+              }}
+              onDismiss={() => setErrorDismissed(true)}
+              testID="player-error-sheet"
+            />
+          ) : null}
+
+          {draftTooLong ? (
+            <Text variant="caption" tone="onMedia">
+              {t('player.customTooLong')}
+            </Text>
+          ) : null}
+
+          <StageNav
+            onBack={requestLeave}
+            backLabel={t('player.back')}
+            testID="player-nav"
           />
-        ) : null}
-
-        {draftTooLong ? (
-          <Text variant="caption" tone="danger">
-            {t('player.customTooLong')}
-          </Text>
-        ) : null}
-      </View>
+        </View>
+      </Stage>
 
       <LogDrawer
         visible={logVisible}
@@ -481,12 +571,14 @@ function PlayerView({ session }: { session: JourneySession }) {
         cursor={state.cursor}
         npcNameById={npcNameById}
         onClose={() => setLogVisible(false)}
+        relationVocabulary={state.relationVocabulary}
         testID="player-log"
       />
 
       <NPCInspector
         visible={inspectorVisible}
         characters={inspectorCharacters}
+        relationVocabulary={state.relationVocabulary}
         onClose={() => setInspectorVisible(false)}
         testID="player-inspector"
       />
@@ -521,40 +613,75 @@ const styles = StyleSheet.create({
   backSlot: {
     paddingHorizontal: space.lg,
   },
-  stageWrap: {
-    flex: 1,
-  },
-  hudTop: {
+  /**
+   * HUD dan kaki panggung adalah LAPISAN, bukan bagian dari aliran tata letak.
+   *
+   * Karena panggung kini menutupi seluruh layar, keduanya harus diposisikan
+   * absolut supaya tidak mendorong gambarnya. `pointerEvents="box-none"` pada
+   * pembungkusnya membuat ketukan di ruang kosong tetap sampai ke teks cerita di
+   * bawahnya — tanpa itu, seluruh layar menjadi mati kecuali tombolnya.
+   */
+  hud: {
     position: 'absolute',
     top: 0,
     left: 0,
     right: 0,
     paddingHorizontal: space.lg,
-    gap: space.xs,
-    alignItems: 'flex-start',
-  },
-  hudRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    alignSelf: 'stretch',
+    gap: space.sm,
   },
   controlsRow: {
     alignSelf: 'stretch',
     paddingTop: space.xs,
   },
-  /**
-   * Tombol kembali tanpa bingkai.
-   *
-   * Sebelumnya ia kotak 40×40 bergaris dengan latar. Di sudut layar, di atas
-   * ilustrasi, kotak itu adalah elemen berbingkai pertama yang dilihat mata —
-   * sebelum adegan dan sebelum kalimatnya. Yang tersisa sekarang hanya ikon,
-   * dengan `hitSlop` menjaga area sentuhnya tetap lapang.
-   */
-  hudButton: {
-    width: 36,
-    height: 36,
-    alignItems: 'center',
-    justifyContent: 'center',
+  autoDelayRow: {
+    alignSelf: 'stretch',
+    paddingTop: space.sm,
+  },
+  bottom: {
+    position: 'absolute',
+    left: 0,
+    right: 0,
+    bottom: 0,
+    paddingHorizontal: space.lg,
+    paddingTop: space.md,
+    gap: space.md,
+  },
+  decisionBlock: {
+    gap: space.lg,
+    /*
+     * Panel di belakang blok pilihan.
+     *
+     * Gradasi panggung paling pekat di TEPI BAWAH layar, sedangkan pertanyaan
+     * pilihan duduk lebih tinggi — di situ gradasinya belum banyak menolong, dan
+     * kalimat pertanyaannya jatuh di atas rambut tokoh serta jendela yang terang.
+     *
+     * Kepekatannya dinaikkan dari 0,55 ke 0,78 setelah peninjau QA menemukan
+     * bahwa pada 0,55 "the character's face ghosts through the panel behind the
+     * text". Angka ini dipatok, bukan token tema: panel ini duduk di atas
+     * GAMBAR yang tidak ikut berubah bersama tema.
+     *
+     * `maxHeight` mencegah panel menelan seluruh layar di ponsel pendek: tiga
+     * opsi + komposer + pertanyaan bisa melebihi tinggi yang tersedia, dan tanpa
+     * batas ia akan mendorong elemen pertama keluar dari panggung yang
+     * `overflow:'hidden'`.
+     */
+    backgroundColor: 'rgba(0, 0, 0, 0.78)',
+    borderRadius: 16,
+    padding: space.md,
+    maxHeight: '72%',
+  },
+  decisionScroll: {
+    flexGrow: 0,
+  },
+  decisionContent: {
+    gap: space.lg,
+  },
+  waiting: {
+    gap: 2,
+  },
+  waitingAction: {
+    marginTop: space.sm,
+    alignSelf: 'flex-start',
   },
   hiddenRoot: {
     flex: 1,
@@ -575,20 +702,5 @@ const styles = StyleSheet.create({
   hiddenHintText: {
     color: '#FFFFFF',
     opacity: 0.9,
-  },
-  bottom: {
-    paddingHorizontal: space.lg,
-    paddingTop: space.md,
-    gap: space.md,
-  },
-  decisionBlock: {
-    gap: space.lg,
-  },
-  waiting: {
-    gap: 2,
-  },
-  waitingAction: {
-    marginTop: space.sm,
-    alignSelf: 'flex-start',
   },
 });

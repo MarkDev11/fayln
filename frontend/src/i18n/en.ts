@@ -255,6 +255,24 @@ export const en: Dictionary = {
 
   'player.tapHint': 'Tap once to finish the text, tap again to continue.',
   'player.tapToContinue': 'Tap to continue',
+  /*
+   * Stage HUD labels.
+   *
+   * The reference layout shows a "Time" block at the top of the stage. fayLN has
+   * no in-story time data — the `worlds` table stores only an id and a creation
+   * date. What is shown instead is the PLACE of the scene, which does have real
+   * data (the background label from the world asset manifest).
+   */
+  'player.relationLabel': 'Relationship',
+  'player.locationLabel': 'Place',
+  'player.locationUnknown': 'Place unknown',
+  'player.advance': 'Continue the story',
+  'player.expressionNeutral': 'neutral',
+  'player.stageBackgroundLabel': 'Background',
+  'player.stageBackgroundUnavailable': 'Background unavailable',
+  'player.stageBackgroundPlaceholder': 'Background unavailable.',
+  'player.stageCharacterLabel': 'Character',
+  'player.stageCharacterLoading': 'Character',
   'player.optionLabel': 'Option {index}',
   'player.auto': 'Auto',
   'player.autoOn': 'Auto is on',
@@ -262,6 +280,9 @@ export const en: Dictionary = {
   'player.autoStopDecision': 'Auto stopped because a choice is waiting.',
   'player.autoStopError': 'Auto stopped because something went wrong.',
   'player.autoStoppedBackground': 'Auto paused because the app is not active.',
+  /* Auto speed control. See the Indonesian dictionary for why the unit lives in the label. */
+  'player.autoDelayLabel': 'Auto delay',
+  'player.autoDelayOption': '{seconds}s',
   'player.log': 'History',
   'player.characters': 'Characters',
   'player.pause': 'Pause',

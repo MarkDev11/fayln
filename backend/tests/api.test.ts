@@ -10,6 +10,8 @@
 import type { FastifyInstance } from 'fastify';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { DEFAULT_RELATION_STATUSES } from '../src/contracts/types';
+
 import { parseConfig, type AppConfig } from '../src/config';
 import { AccountRepository } from '../src/repositories/accountRepository';
 import { AuthRepository } from '../src/repositories/authRepository';
@@ -1367,5 +1369,146 @@ describe('penanda nama diganti sistem', () => {
     // Jalur kedua juga harus sudah bersih.
     expect(teksGiliran).not.toContain('@user');
     expect(teksGiliran).toContain('Arfan');
+  });
+});
+
+/**
+ * Keadaan hubungan sampai ke mesin cerita.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA INI DIUJI DI TINGKAT KONTEKS, BUKAN KELUARAN
+ * ---------------------------------------------------------------------------
+ * Keluhan pemilik produk: "cek fitur hubungan sudah full fungsional apa belum".
+ * Jawabannya tidak, dan salah satu sebabnya: `StoryContext` TIDAK PERNAH membawa
+ * keadaan hubungan, sehingga model diminta memutuskan apakah seorang tokoh
+ * tersinggung tanpa tahu bagaimana hubungan mereka sekarang — dan prompt bahkan
+ * tidak memuat daftar status yang sah.
+ *
+ * Mesin deterministik tidak dapat menangkap cacat ini: ia tidak membaca keadaan
+ * hubungan dari konteks sama sekali. Karena itu yang diperiksa di sini adalah
+ * KONTEKS yang benar-benar dikirim ke mesin, persis seperti uji `optionLabel`.
+ *
+ * BUKTI MUTASI: hapus `relations:` dari konteks di `journeyService` (pembuka
+ * atau giliran), lalu uji yang bersangkutan memerah.
+ */
+describe('keadaan hubungan sampai ke mesin cerita', () => {
+  class MesinPerekamRelasi extends DeterministicStoryEngine {
+    readonly pembuka: StoryContext[] = [];
+    readonly giliran: StoryContext[] = [];
+
+    override async generateOpening(context: StoryContext) {
+      this.pembuka.push(context);
+      return super.generateOpening(context);
+    }
+
+    override async generateTurn(context: StoryContext) {
+      this.giliran.push(context);
+      return super.generateTurn(context);
+    }
+  }
+
+  let mesin: MesinPerekamRelasi;
+
+  beforeEach(async () => {
+    await app.close();
+    mesin = new MesinPerekamRelasi();
+    app = await buildTestApp(testConfig(), mesin);
+    auth = await createTestAccount(app, ctx.db);
+  });
+
+  it('pembuka membawa hubungan AWAL yang ditetapkan dunia', async () => {
+    const created = await inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('relasi-buka'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+
+    const konteks = mesin.pembuka[0];
+    expect(konteks).toBeDefined();
+    expect(konteks?.relations?.length ?? 0).toBeGreaterThan(0);
+
+    for (const relasi of konteks?.relations ?? []) {
+      // Statusnya harus nilai yang SAH, dan alasannya tidak boleh kosong —
+      // prompt menuliskannya sebagai kalimat yang dibaca model.
+      expect(DEFAULT_RELATION_STATUSES).toContain(relasi.status);
+      expect(relasi.reasonPublic.trim().length).toBeGreaterThan(0);
+    }
+  });
+
+  it('giliran berikutnya membawa status yang SUDAH BERUBAH, bukan yang lama', async () => {
+    const created = await inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('relasi-giliran'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'id-ID',
+      },
+    });
+    const journeyId = (created.json() as { journeyId: string }).journeyId;
+
+    const sesi = await inject({ method: 'GET', url: `/v1/journeys/${journeyId}/session` });
+    const keputusanAwal = (sesi.json() as { beats: { event: { type: string; decisionId?: string } }[] })
+      .beats.find((beat) => beat.event.type === 'presentChoices')?.event.decisionId;
+    expect(keputusanAwal).toBeTruthy();
+
+    // Giliran 1: aksi yang melewati batas — mesin deterministik menaikkan
+    // hubungan menjadi "waspada" untuk aksi ini (lihat uji FR-16 di atas).
+    const giliran1 = await inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('relasi-1'),
+        decisionId: keputusanAwal,
+        customText: '*aku mendekati Elysia dan mengkabedonnya*',
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(giliran1.statusCode).toBe(201);
+
+    const delta = (giliran1.json() as {
+      beats: { event: { type: string; npcId?: string; status?: string } }[];
+    }).beats.find((beat) => beat.event.type === 'relationshipDelta');
+    expect(delta?.event.status).toBe('waspada');
+
+    const keputusanBerikut = (giliran1.json() as {
+      beats: { event: { type: string; decisionId?: string } }[];
+    }).beats.find((beat) => beat.event.type === 'presentChoices')?.event.decisionId;
+    expect(keputusanBerikut).toBeTruthy();
+
+    // Giliran 2: konteksnya HARUS sudah memuat status baru.
+    const giliran2 = await inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('relasi-2'),
+        decisionId: keputusanBerikut,
+        selection: { optionId: 'opt1' },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(giliran2.statusCode).toBe(201);
+
+    const konteksGiliran2 = mesin.giliran[1];
+    expect(konteksGiliran2).toBeDefined();
+
+    const relasi = (konteksGiliran2?.relations ?? []).find(
+      (item) => item.npcId === delta?.event.npcId,
+    );
+    expect(relasi).toBeDefined();
+    /*
+     * Yang dijaga: statusnya yang BARU. Kalau `canonicalRelations` tidak
+     * dipanggil, konteks akan membawa status awal dunia ("normal") dan model
+     * akan memutuskan arah perubahan dari keadaan yang sudah basi.
+     */
+    expect(relasi?.status).toBe('waspada');
+    expect(relasi?.reasonPublic.trim().length).toBeGreaterThan(0);
   });
 });

@@ -30,6 +30,8 @@ export type IconName =
   | 'play'
   | 'eye'
   | 'eyeOff'
+  | 'heart'
+  | 'person'
   | 'star';
 
 export type IconProps = {
@@ -283,28 +285,49 @@ export function Icon({ name, size = 24, color, strokeWidth = 2 }: IconProps) {
         </View>
       );
 
+    /*
+     * Panah chevron — DUA batang yang bertemu di satu TITIK, bukan dua batang
+     * yang bersilangan di tengah.
+     *
+     * Bentuk sebelumnya memberi kedua batang `marginLeft` yang SAMA
+     * (`size * 0.1`), dan wadahnya memakai `alignItems` bawaan (`stretch`) yang
+     * menaruh keduanya di tepi kiri. Akibatnya kedua batang punya pusat X yang
+     * sama: `rotate ±45°` pada pusat yang sama menghasilkan **×**, bukan `>`.
+     *
+     * Perbaikan: posisikan tiap batang dengan `position:'absolute'` sehingga
+     * PUSATNYA berada di titik yang sudah dihitung — batang atas di (0.5s, 0.32s),
+     * batang bawah di (0.5s, 0.68s) — lalu putar dari sana. Keduanya bertemu di
+     * ujung kanan (x ≈ 0.66s), dan itulah ujung panahnya.
+     *
+     * BUKTI MUTASI: kembalikan `marginLeft` yang sama untuk kedua batang, lalu
+     * uji "menggambar chevron, bukan tanda silang" memerah karena kedua batang
+     * kembali sejajar di titik yang sama.
+     */
     case 'chevronRight':
       return (
-        <View style={[styles.box, { width: size, height: size, justifyContent: 'center' }]}>
+        <View style={[styles.box, { width: size, height: size }]}>
           <View
             style={{
-              width: size * 0.38,
+              position: 'absolute',
+              left: size * 0.275,
+              top: size * 0.32 - strokeWidth / 2,
+              width: size * 0.45,
               height: strokeWidth,
               backgroundColor: tint,
               borderRadius: strokeWidth / 2,
               transform: [{ rotate: '45deg' }],
-              marginLeft: size * 0.1,
             }}
           />
           <View
             style={{
-              width: size * 0.38,
+              position: 'absolute',
+              left: size * 0.275,
+              top: size * 0.68 - strokeWidth / 2,
+              width: size * 0.45,
               height: strokeWidth,
               backgroundColor: tint,
               borderRadius: strokeWidth / 2,
               transform: [{ rotate: '-45deg' }],
-              marginTop: -strokeWidth,
-              marginLeft: size * 0.1,
             }}
           />
         </View>
@@ -312,26 +335,29 @@ export function Icon({ name, size = 24, color, strokeWidth = 2 }: IconProps) {
 
     case 'chevronLeft':
       return (
-        <View style={[styles.box, { width: size, height: size, justifyContent: 'center' }]}>
+        <View style={[styles.box, { width: size, height: size }]}>
           <View
             style={{
-              width: size * 0.38,
+              position: 'absolute',
+              left: size * 0.275,
+              top: size * 0.32 - strokeWidth / 2,
+              width: size * 0.45,
               height: strokeWidth,
               backgroundColor: tint,
               borderRadius: strokeWidth / 2,
               transform: [{ rotate: '-45deg' }],
-              marginLeft: -size * 0.1,
             }}
           />
           <View
             style={{
-              width: size * 0.38,
+              position: 'absolute',
+              left: size * 0.275,
+              top: size * 0.68 - strokeWidth / 2,
+              width: size * 0.45,
               height: strokeWidth,
               backgroundColor: tint,
               borderRadius: strokeWidth / 2,
               transform: [{ rotate: '45deg' }],
-              marginTop: -strokeWidth,
-              marginLeft: -size * 0.1,
             }}
           />
         </View>
@@ -453,6 +479,98 @@ export function Icon({ name, size = 24, color, strokeWidth = 2 }: IconProps) {
         <View style={[styles.box, { width: size, height: size, flexDirection: 'row', justifyContent: 'center', alignItems: 'center', gap: size * 0.16 }]}>
           {bar(size * 0.16, size * 0.56, { borderRadius: size * 0.05 })}
           {bar(size * 0.16, size * 0.56, { borderRadius: size * 0.05 })}
+        </View>
+      );
+
+    /*
+     * Hati dibentuk dari dua bulatan dan satu persegi yang diputar 45°.
+     *
+     * Bukan glif `♥`: alasan yang sama dengan bintang di atas — bentuk glif
+     * bergantung pada font sistem, sehingga ukuran dan proporsinya berbeda
+     * antar perangkat. Tiga `View` membuat bentuknya sama di mana pun.
+     *
+     * Geometri (kotak ikon s×s), untuk bentuk hati yang benar:
+     *   - Bulatan kiri : pusat (0.28s, 0.36s), diameter 0.4s → lobus kiri.
+     *   - Bulatan kanan: pusat (0.72s, 0.36s), diameter 0.4s → lobus kanan.
+     *     Keduanya menyisakan CELAH di x = 0.48s..0.52s, dan celah itulah
+     *     lekukan (notch) di puncak hati.
+     *   - Persegi sisi 0.44s diputar 45°, pusat (0.5s, 0.58s). Titik atasnya
+     *     jatuh di (0.5s, 0.27s) — DI DALAM celah, di bawah bibir kedua
+     *     bulatan (yang puncaknya di y = 0.16s) — dan titik bawahnya di
+     *     (0.5s, 0.89s) menjadi ujung hati.
+     *
+     * Bentuk sebelumnya menaruh titik atas persegi di y = 0.066s, yaitu DI ATAS
+     * bibir bulatan (0.16s), sehingga persegi itu MENUTUP celah dan bentuknya
+     * menjadi tetesan air (teardrop), bukan hati. Ditemukan oleh peninjau visual
+     * yang menyebutnya "chunky and asymmetric".
+     *
+     * BUKTI MUTASI: kembalikan `top: size * 0.17` pada persegi (dan bulatan
+     * selebar 0.5s), lalu uji "menggambar hati, bukan tetesan air" memerah.
+     */
+    case 'heart':
+      return (
+        <View style={[styles.box, { width: size, height: size }]}>
+          {[0.28, 0.72].map((cx) => (
+            <View
+              key={cx}
+              style={{
+                position: 'absolute',
+                left: size * (cx - 0.2),
+                top: size * 0.16,
+                width: size * 0.4,
+                height: size * 0.4,
+                borderRadius: size * 0.2,
+                backgroundColor: tint,
+              }}
+            />
+          ))}
+          <View
+            style={{
+              position: 'absolute',
+              left: size * 0.28,
+              top: size * 0.36,
+              width: size * 0.44,
+              height: size * 0.44,
+              backgroundColor: tint,
+              transform: [{ rotate: '45deg' }],
+            }}
+          />
+        </View>
+      );
+
+    /*
+     * Siluet orang: satu bulatan kepala + satu badan berbentuk bahu.
+     *
+     * Sebelumnya kendali "Tokoh" memakai ikon `journey` — balon percakapan.
+     * Peninjau QA menandainya: "the 'Tokoh' icon is a speech bubble, not a
+     * person". Label teksnya menyelamatkan, tetapi ikon yang berlawanan arti
+     * dengan labelnya membuat baris itu harus dibaca, bukan dipindai.
+     */
+    case 'person':
+      return (
+        <View style={[styles.box, { width: size, height: size }]}>
+          <View
+            style={{
+              width: size * 0.36,
+              height: size * 0.36,
+              borderRadius: size * 0.18,
+              borderWidth: strokeWidth,
+              borderColor: tint,
+              marginTop: size * 0.06,
+            }}
+          />
+          <View
+            style={{
+              width: size * 0.68,
+              height: size * 0.34,
+              borderWidth: strokeWidth,
+              borderBottomWidth: 0,
+              borderColor: tint,
+              borderTopLeftRadius: size * 0.34,
+              borderTopRightRadius: size * 0.34,
+              marginTop: size * 0.06,
+            }}
+          />
         </View>
       );
 

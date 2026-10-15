@@ -115,7 +115,22 @@ export type WorldCatalogItem = {
   publishedAt: string;
 };
 
-export const RELATION_STATUSES = [
+/**
+ * Delapan status hubungan BAWAAN — bukan lagi daftar yang menutup.
+ *
+ * Daftar yang sah sekarang tinggal di basis data (`relation_definitions`) dan
+ * disalin per versi dunia. Konstanta ini tetap ada karena dua hal yang tidak
+ * dapat diambilkan dari basis data:
+ *
+ *   1. migrasi 021 mengisinya sebagai data awal;
+ *   2. uji memakainya sebagai kosakata contoh.
+ *
+ * Yang TIDAK boleh lagi dilakukan: memakainya sebagai penjaga keabsahan. Itu
+ * persis kesalahan yang membuat status kesembilan mustahil — `CHECK` di skema,
+ * array di frontend, dan `cocokkanStatus` semuanya menyalin daftar ini, jadi
+ * nilai yang sah di master tetap ditolak di salah satu tempat.
+ */
+export const DEFAULT_RELATION_STATUSES = [
   'normal',
   'hangat',
   'waspada',
@@ -125,7 +140,58 @@ export const RELATION_STATUSES = [
   'sayang',
   'cinta',
 ] as const;
-export type RelationStatus = (typeof RELATION_STATUSES)[number];
+
+/**
+ * Status hubungan adalah ID BEBAS yang sah selama ada di kosakata dunia itu.
+ *
+ * Sengaja `string`, bukan gabungan harfiah: status baru ditambahkan lewat panel,
+ * tanpa membangun ulang aplikasi. Tipe yang menutup daftarnya akan menuntut
+ * penyuntingan kode setiap kali admin menambah satu status — dan itulah bentuk
+ * lama yang digantikan.
+ */
+export type RelationStatus = string;
+
+/**
+ * Satu definisi hubungan sebagaimana dibaca mesin cerita dan pemain.
+ *
+ * `meaning` adalah kalimat arahan untuk MODEL (bagaimana tokoh harus bersikap),
+ * bukan teks yang ditampilkan ke pemain. Yang ditampilkan ke pemain adalah
+ * `labelId`/`labelEn`.
+ */
+export type RelationDefinition = {
+  relationId: string;
+  labelId: string;
+  labelEn: string;
+  /** Apa keadaan ini berarti bagi tokohnya. */
+  meaning: string;
+  /**
+   * Contoh sikap: apa yang TERLIHAT, bukan apa yang dirasakan.
+   *
+   * `meaning` menjawab "apa keadaannya"; ini menjawab "bagaimana kelihatannya di
+   * layar". Boleh string kosong — wajib secara bentuk supaya tidak ada
+   * `undefined` yang harus dijaga setiap pemanggil.
+   */
+  behaviourHint: string;
+  position: number;
+  active: boolean;
+};
+
+/**
+ * Definisi yang DIBEKUKAN untuk satu versi dunia.
+ *
+ * Bentuknya sengaja tanpa `active`: yang tersimpan di sini sudah menjadi
+ * kosakata yang berlaku untuk versi itu, dan menonaktifkan sebuah definisi di
+ * master tidak boleh mencabut status yang sedang dipakai perjalanan lama.
+ */
+export type RelationVocabularyEntry = {
+  relationId: string;
+  labelId: string;
+  labelEn: string;
+  meaning: string;
+  /** Contoh sikap, tersalin apa adanya pada saat versi ini terbit. */
+  behaviourHint: string;
+  position: number;
+};
 
 export type NPCPublicDTO = {
   npcId: string;
@@ -301,6 +367,15 @@ export type JourneySessionDTO = {
   world: WorldDetailDTO;
   beats: Beat[];
   relationsBaseline: RelationEntry[];
+  /**
+   * Kosakata hubungan yang berlaku untuk versi dunia perjalanan ini.
+   *
+   * Dibawa ke klien supaya label status ditentukan DATA, bukan daftar tetap di
+   * aplikasi. Tanpa ini, status kesembilan yang sah tersimpan dengan benar di
+   * server tetapi tampil sebagai "Belum diketahui" di layar pemain — dan tidak
+   * ada satu pun galat yang menunjuk ke sana.
+   */
+  relationVocabulary: RelationVocabularyEntry[];
   memory: MemorySnapshot;
   committedCursor: number;
   simulator: boolean;

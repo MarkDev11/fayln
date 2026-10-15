@@ -24,6 +24,7 @@ import { PromotionsRepository } from './admin/promotionsRepository';
 import { SettingsRepository } from './admin/settingsRepository';
 import { WorldDraftRepository } from './admin/worldDraftRepository';
 import { GenresRepository } from './admin/genresRepository';
+import { RelationsRepository } from './admin/relationsRepository';
 import { CharactersRepository } from './admin/charactersRepository';
 import { LocationsRepository } from './admin/locationsRepository';
 import { ProvidersRepository } from './admin/providersRepository';
@@ -246,6 +247,7 @@ async function main(): Promise<void> {
     models: new ModelsRepository(db),
     drafts: new WorldDraftRepository(db),
     genres: new GenresRepository(db),
+    relations: new RelationsRepository(db),
     characters: new CharactersRepository(db),
     locations: new LocationsRepository(db),
     providers: new ProvidersRepository(db),

@@ -26,6 +26,8 @@ import type {
   Beat,
   ChoiceOption,
   NPCPublicDTO,
+  RelationStatus,
+  RelationVocabularyEntry,
   StoryEvent,
   AssetManifest,
   ResponseLocale,
@@ -122,7 +124,29 @@ export class AiStoryEngine implements StoryEngine {
       })),
       storySoFar: context.storySoFar ?? null,
       recentBeats: context.recentBeats ?? [],
+      /*
+       * Keadaan hubungan dibawa ke prompt.
+       *
+       * Nama tokoh diambil dari daftar karakter dunia, bukan dari `RelationEntry`
+       * (yang hanya memuat npcId). Bila tokohnya tidak ada di daftar — mis. dunia
+       * berubah setelah perjalanan dibuat — namanya jatuh ke id-nya sendiri,
+       * supaya prompt tetap terbaca dan tidak memuat `undefined`.
+       */
+      relations: (context.relations ?? []).map((relasi) => ({
+        npcId: relasi.npcId,
+        name: context.characters.find((c) => c.npcId === relasi.npcId)?.name ?? relasi.npcId,
+        status: relasi.status,
+        reasonPublic: relasi.reasonPublic,
+      })),
       playerAction,
+      /*
+       * Kosakata status dunia ini dibawa apa adanya.
+       *
+       * Ia datang dari versi dunia yang sudah DIBEKUKAN, bukan dari master yang
+       * sedang berlaku: menyunting arti sebuah status di panel hari ini tidak
+       * boleh mengubah cara tokoh bersikap di perjalanan yang sudah berjalan.
+       */
+      relationVocabulary: context.relationVocabulary,
       // Bahasa pilihan pemain dibawa sampai ke prompt.
       responseLocale: context.responseLocale ?? 'id-ID',
     });
@@ -145,6 +169,7 @@ export class AiStoryEngine implements StoryEngine {
       panggilan.scene,
       context.manifest,
       context.characters,
+      context.relationVocabulary,
       context.responseLocale,
     );
     if (!diperiksa.ok) {
@@ -215,7 +240,18 @@ export type PeriksaHasil =
  *
  * Diekspor supaya dapat diuji tanpa memanggil model — dan supaya aturannya
  * terlihat sebagai daftar, bukan tersembunyi di dalam alur.
+ *
+ * ---------------------------------------------------------------------------
+ * CATATAN PENEMPATAN
+ * ---------------------------------------------------------------------------
+ * Dulu blok "Mencocokkan ekspresi" menempel tepat di bawah sini, sehingga ia
+ * terbaca sebagai dokumen fungsi `periksaAdegan` padahal yang dijelaskannya ada
+ * di bawah, pada `cocokkanEkspresi`. Komentar yang menempel pada fungsi yang
+ * salah lebih buruk daripada tidak ada komentar: ia meyakinkan pembaca tentang
+ * hal yang tidak dilakukan kode di tempat itu. Dokumennya sudah dipindahkan ke
+ * atas `cocokkanEkspresi`.
  */
+
 /**
  * Mencocokkan ekspresi yang diminta model dengan daftar yang sah.
  *
@@ -232,6 +268,64 @@ export type PeriksaHasil =
  * Yang dikembalikan selalu salah satu nilai dari `daftar`, sehingga nilai yang
  * tersimpan tetap sah dan tidak ada ekspresi karangan yang lolos.
  */
+/**
+ * Mencocokkan `status` hubungan yang ditulis model dengan daftar yang sah.
+ *
+ * Model cenderung menulis keadaan perasaannya, bukan kuncinya: "marah",
+ * "tersinggung", "senang", "mulai suka", "jauh". Nilai seperti itu dulu
+ * tersimpan apa adanya (dulu tidak ada pemeriksaan sama sekali), lalu diubah
+ * `coerceRelationStatus` menjadi "Belum diketahui" di layar — perubahan hubungan
+ * yang ditulis model HILANG tanpa satu pun galat.
+ *
+ * Toleransinya: spasi di ujung dibuang, lalu harus PERSIS salah satu id dari
+ * kosakata dunia itu; kalau tidak, dicocokkan dengan LABEL-nya. Tidak ada
+ * pemetaan dari kata bebas ke status — "marah" BUKAN "tegang". Model yang
+ * menebak kata sendiri tidak ditebak balik; perubahannya dibuang dan dilaporkan.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA NORMALISASI LAMA DIBUANG
+ * ---------------------------------------------------------------------------
+ * Bentuk sebelumnya membuang spasi, tanda hubung, dan garis bawah sebelum
+ * mencocokkan. Itu aman selama daftarnya delapan kata bawaan yang tidak mungkin
+ * bertabrakan. Sejak status dibuat admin, tidak lagi: `sangat_dekat` dan
+ * `sangatdekat` adalah dua status yang berbeda, dan normalisasi itu membuat
+ * keduanya cocok satu sama lain — perubahan hubungan tersimpan pada status yang
+ * salah, tanpa galat, dan pemain melihat tokoh bersikap tidak sesuai ceritanya.
+ *
+ * Yang dikembalikan selalu id dari kosakata, sehingga tidak ada status karangan
+ * yang pernah tersimpan.
+ */
+export function cocokkanStatus(
+  diminta: unknown,
+  vocabulary: readonly RelationVocabularyEntry[],
+): RelationStatus | undefined {
+  if (typeof diminta !== 'string') {
+    return undefined;
+  }
+  const nilai = diminta.trim();
+  if (nilai.length === 0) {
+    return undefined;
+  }
+
+  const tepat = vocabulary.find((definisi) => definisi.relationId === nilai);
+  if (tepat) {
+    return tepat.relationId;
+  }
+
+  /*
+   * Dua kelonggaran, keduanya TIDAK menyatukan dua id yang berbeda:
+   *   - id yang hanya berbeda huruf besar/kecil;
+   *   - LABEL, karena model kadang menulis "Waspada" alih-alih "waspada".
+   */
+  const hurufKecil = nilai.toLowerCase();
+  const lewatId = vocabulary.find((definisi) => definisi.relationId.toLowerCase() === hurufKecil);
+  if (lewatId) {
+    return lewatId.relationId;
+  }
+  const lewatLabel = vocabulary.find((definisi) => definisi.labelId.trim().toLowerCase() === hurufKecil);
+  return lewatLabel?.relationId;
+}
+
 export function cocokkanEkspresi(daftar: string[], diminta: string): string | undefined {
   if (daftar.includes(diminta)) {
     return diminta;
@@ -312,6 +406,16 @@ export function periksaAdegan(
   mentah: unknown,
   manifest: AssetManifest,
   characters: NPCPublicDTO[],
+  /*
+   * Kosakata DUNIA INI, dan ia wajib.
+   *
+   * Dulu fungsi ini membaca daftar tetap di dalam kode, sehingga tidak ada
+   * pemanggil yang bisa lupa — sekaligus tidak ada cara menambah status tanpa
+   * membangun ulang aplikasi. Sejak daftarnya menjadi data, lupa mengisinya
+   * berarti setiap status baru dibuang tanpa galat; karena itu parameternya
+   * wajib, bukan opsional dengan cadangan.
+   */
+  vocabulary: readonly RelationVocabularyEntry[],
   responseLocale?: ResponseLocale,
 ): PeriksaHasil {
   if (!mentah || typeof mentah !== 'object' || Array.isArray(mentah)) {
@@ -496,11 +600,48 @@ export function periksaAdegan(
         if (!idSah) {
           return { ok: false, reason: 'npc-tidak-dikenal', detail: String(peristiwa.npcId) };
         }
+        /*
+         * ---------------------------------------------------------------------
+         * STATUS DIPERIKSA, TIDAK DIPERCAYA BEGITU SAJA
+         * ---------------------------------------------------------------------
+         * Bentuk sebelumnya menulis `status: peristiwa.status as never` — satu
+         * `as never` yang mematikan seluruh pemeriksaan tipe SEKALIGUS
+         * memastikan tidak ada nilai yang diperiksa saat berjalan. Model bebas
+         * menulis "marah", "suka", "tersinggung"; semuanya tersimpan, lalu di
+         * layar pemain `coerceRelationStatus` mengubahnya menjadi "Belum
+         * diketahui". Pemain melihat hubungannya tidak pernah berubah, dan tidak
+         * ada satu pun galat di mana pun.
+         *
+         * Toleransinya sama dengan ekspresi dan npcId: bentuknya dinormalkan
+         * (huruf kecil, spasi/tanda hubung dibuang), lalu harus PERSIS salah
+         * satu nilai dari daftar. Yang tetap asing DIBUANG.
+         *
+         * Dibuang, BUKAN menolak adegan. Satu status keliru tidak boleh
+         * menjatuhkan seluruh giliran ke simulator — itu pola "looping" yang
+         * sudah empat kali menggigit proyek ini. Kehilangan satu perubahan
+         * hubungan jauh lebih ringan daripada kehilangan seluruh adegan.
+         */
+        const statusSah = cocokkanStatus(peristiwa.status, vocabulary);
+        if (!statusSah) {
+          dibuang.push(`relationshipDelta status tidak dikenal (${String(peristiwa.status)})`);
+          break;
+        }
+        const alasan = typeof peristiwa.reasonPublic === 'string' ? peristiwa.reasonPublic.trim() : '';
+        /*
+         * `reasonPublic` WAJIB — ia satu-satunya hal yang membuat perubahan
+         * hubungan dapat dipercaya pemain (FR-19). Delta tanpa alasan hanya
+         * memunculkan lencana status baru tanpa sebab, dan itu terbaca seperti
+         * kesalahan. Mesin deterministik sudah menegakkan ini; mesin AI belum.
+         */
+        if (alasan.length === 0) {
+          dibuang.push(`relationshipDelta tanpa reasonPublic (${statusSah})`);
+          break;
+        }
         events.push({
           type: 'relationshipDelta',
           npcId: idSah,
-          status: peristiwa.status as never,
-          reasonPublic: typeof peristiwa.reasonPublic === 'string' ? peristiwa.reasonPublic : '',
+          status: statusSah,
+          reasonPublic: alasan,
         });
         break;
       }

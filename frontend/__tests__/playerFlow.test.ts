@@ -234,19 +234,66 @@ describe('AC-10 — pembatalan aman sebelum commit', () => {
   });
 });
 
-describe('AC-15 — Auto berhenti pada keputusan', () => {
-  it('menonaktifkan Auto begitu keputusan muncul', async () => {
+describe('AC-15 — Auto BERTAHAN melewati keputusan', () => {
+  /*
+   * KEPUTUSAN PEMILIK PRODUK, dan ini MENGUBAH perilaku sebelumnya.
+   *
+   * Bentuk lama: Auto mati setiap kali pemain memilih opsi, jadi ia harus
+   * dinyalakan ulang berkali-kali dalam satu sesi. Pemilik produk memutuskan:
+   * **"kalau user menyalakan maka nyala terus sampai user matikan."**
+   *
+   * Yang menahan laju selama keputusan menunggu dan selama giliran berjalan
+   * bukan lagi flag `auto`, melainkan syarat `shouldRun` di `usePlayerEngine`
+   * (`decision === null` dan `status === 'idle'`). Jadi Auto tetap MENYALA
+   * tetapi tidak memajukan apa pun sampai giliran baru tiba.
+   *
+   * BUKTI MUTASI: kembalikan `auto: false` ke `SUBMIT_START` di `reducer.ts`,
+   * lalu uji ini memerah.
+   */
+  it('tetap menyala saat keputusan muncul, saat memilih, dan setelah giliran baru', async () => {
     const gateway = instant();
-    const { session } = await startDemo(gateway);
+    const { created, session } = await startDemo(gateway);
 
     let state = loadSession(session);
     state = playerReducer(state, { type: 'SET_AUTO', enabled: true });
     expect(state.auto).toBe(true);
 
     state = reachDecision(state);
-    // Auto masih menyala pada state, tetapi reducer menolaknya saat keputusan ada.
-    const attempted = playerReducer(state, { type: 'SET_AUTO', enabled: true });
-    expect(attempted.auto).toBe(false);
+    expect(state.decision).not.toBeNull();
+    // Keputusan yang menunggu TIDAK mematikannya.
+    expect(state.auto).toBe(true);
+
+    state = playerReducer(state, { type: 'SUBMIT_START', operationId: 'op-auto-1' });
+    expect(state.auto).toBe(true);
+
+    const envelope = await gateway.submitChoice({
+      clientOperationId: 'op-auto-1',
+      journeyId: created.journeyId,
+      decisionId: 'd001',
+      optionId: 'opt1',
+      responseLocale: 'id-ID',
+    });
+    state = playerReducer(state, { type: 'TURN_COMMITTED', envelope });
+    expect(state.auto).toBe(true);
+  });
+
+  it('tetap dapat DINYALAKAN saat keputusan sedang menunggu', async () => {
+    /*
+     * Bentuk lama menolak `SET_AUTO enabled: true` selama keputusan ada
+     * (`action.enabled && state.decision === null`), sehingga tombolnya diam
+     * tanpa penjelasan dan pemain menyimpulkan tombolnya rusak.
+     *
+     * BUKTI MUTASI: kembalikan syarat `&& state.decision === null` ke
+     * `SET_AUTO`, lalu uji ini memerah.
+     */
+    const gateway = instant();
+    const { session } = await startDemo(gateway);
+
+    const state = reachDecision(loadSession(session));
+    expect(state.decision).not.toBeNull();
+
+    const auto = playerReducer(state, { type: 'SET_AUTO', enabled: true });
+    expect(auto.auto).toBe(true);
   });
 });
 

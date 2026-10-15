@@ -18,6 +18,7 @@ import type {
   MemorySnapshot,
   RelationEntry,
   RelationStatus,
+  RelationVocabularyEntry,
   StoryEvent,
 } from '../contracts/types';
 
@@ -234,6 +235,46 @@ export class JourneyRepository {
   }
 
   /**
+   * Kosakata hubungan yang DIBEKUKAN untuk satu versi dunia.
+   *
+   * Dibaca dari salinan milik versi itu, bukan dari master yang sedang berlaku.
+   * Itulah yang membuat penyuntingan arti sebuah status di panel tidak menulis
+   * ulang cara tokoh bersikap di perjalanan yang sudah berjalan — dan yang
+   * membuat status kesembilan mungkin tanpa membangun ulang aplikasi.
+   *
+   * Urutannya menurut `position` supaya daftar di prompt dan di layar pemain
+   * konsisten dengan urutan yang diatur admin.
+   */
+  async relationshipVocabulary(
+    worldId: string,
+    worldVersion: number,
+  ): Promise<RelationVocabularyEntry[]> {
+    const { rows } = await this.db.query<{
+      relation_id: string;
+      label_id: string;
+      label_en: string;
+      meaning: string;
+      behaviour_hint: string;
+      position: number;
+    }>(
+      `SELECT relation_id, label_id, label_en, meaning, behaviour_hint, position
+       FROM world_relationship_definitions
+       WHERE world_id = $1 AND world_version = $2
+       ORDER BY position ASC, relation_id ASC`,
+      [worldId, worldVersion],
+    );
+
+    return rows.map((row) => ({
+      relationId: row.relation_id,
+      labelId: row.label_id,
+      labelEn: row.label_en,
+      meaning: row.meaning,
+      behaviourHint: row.behaviour_hint,
+      position: row.position,
+    }));
+  }
+
+  /**
    * Keadaan hubungan kanonik: baseline ditimpa oleh setiap relationshipDelta
    * yang sudah di-commit, berurutan.
    */
@@ -332,6 +373,18 @@ export class JourneyRepository {
       journeyId: journey.journey_id,
       beats,
       relationsBaseline: await this.baselineRelations(journeyId),
+      /*
+       * Kosakata hubungan ikut dikirim ke klien.
+       *
+       * Tanpa ini aplikasi pemain hanya mengenal delapan label yang ditulis di
+       * dalam kodenya, sehingga status kesembilan yang SAH dan tersimpan dengan
+       * benar tampil sebagai "Belum diketahui" — status yang berubah di server
+       * tetapi tidak terlihat berubah oleh pemain.
+       */
+      relationVocabulary: await this.relationshipVocabulary(
+        journey.world_id,
+        journey.world_version,
+      ),
       memory: await this.memorySnapshot(journeyId),
       committedCursor: beats.length,
     };

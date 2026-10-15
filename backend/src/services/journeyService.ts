@@ -30,6 +30,7 @@ import type { OperationRepository } from '../repositories/operationRepository';
 import type { UsageRepository } from '../repositories/usageRepository';
 import {
   gantiPenandaBeats,
+  karakterDenganEkspresiTampil,
   validateEngineBeats,
   type StoryContext,
   type StoryEngine,
@@ -260,13 +261,49 @@ export class JourneyService {
         openingLocationLabel:
           detail.locations.find((item) => item.locationId === detail.openingLocationId)?.label ??
           null,
-        characters: detail.characters,
+        /*
+         * Hanya ekspresi yang PUNYA POTRET yang diberikan ke model.
+         *
+         * Daftar nama ekspresi dan berkas potretnya disimpan terpisah, dan
+         * ekspresi yang gambarnya belum diunggah tetap ada di daftar. Bila model
+         * memilihnya, pencocokan potret meleset tanpa galat dan gambar jatuh ke
+         * potret bawaan — narasi menulis satu hal, gambarnya menunjukkan hal
+         * lain. Lihat `karakterDenganEkspresiTampil`.
+         */
+        characters: karakterDenganEkspresiTampil(detail.characters, detail.assetManifest),
         manifest: detail.assetManifest,
         personaName: command.persona.name,
         personaAge: command.persona.age,
         synopsis: detail.synopsis,
         // Bahasa pilihan pemain, dibawa sampai ke prompt.
         responseLocale: command.responseLocale,
+        /*
+         * Hubungan PEMBUKA: hubungan awal yang ditetapkan dunia.
+         *
+         * Adegan pembuka juga bisa mengubah hubungan (mis. perkenalan yang
+         * langsung canggung). Tanpa keadaan awal, model menulis `relationshipDelta`
+         * dari ketiadaan — dan `waspada` pada adegan pertama tidak berarti apa pun
+         * bila pemain tidak tahu asalnya dari mana.
+         */
+        relations: detail.characters.map((character) => ({
+          npcId: character.npcId,
+          status: character.initialRelation,
+          reasonPublic: 'Hubungan awal yang ditetapkan dunia.',
+          updatedAtTurnId: '',
+        })),
+        /*
+         * Kosakata hubungan VERSI DUNIA INI.
+         *
+         * Tanpa ini prompt tidak punya daftar status yang sah, dan seluruh
+         * perubahan hubungan dibuang tanpa galat. Dibaca dari salinan yang
+         * dibekukan saat versi ini terbit, bukan dari master yang sedang
+         * berlaku — menyunting arti sebuah status di panel tidak boleh mengubah
+         * perjalanan yang sudah berjalan.
+         */
+        relationVocabulary: await this.deps.journeys.relationshipVocabulary(
+          world.world_id,
+          world.world_version,
+        ),
         turnOrdinal: 1,
         beatIdPrefix: turnId,
       };
@@ -551,7 +588,11 @@ export class JourneyService {
       const context: StoryContext = {
         worldTitle: world.title,
         premise: world.premise,
-        characters: world.characters,
+        /*
+         * Sama seperti adegan pembuka: hanya ekspresi berpotret yang ditawarkan
+         * ke model, supaya gambar tidak pernah bertentangan dengan narasinya.
+         */
+        characters: karakterDenganEkspresiTampil(world.characters, world.assetManifest),
         manifest: world.assetManifest,
         personaName: journey.persona_name,
         personaAge: journey.persona_age,
@@ -574,6 +615,27 @@ export class JourneyService {
             ? ringkasanTerakhir.event.summary
             : null,
         recentBeats: ringkasBeatTerakhir(existingBeats),
+        /*
+         * Keadaan hubungan yang BERLAKU SEKARANG, dari beat yang sudah di-commit.
+         *
+         * Tanpa ini model diminta memutuskan apakah seorang tokoh tersinggung
+         * atau menyukai tindakan pemain tanpa tahu bagaimana hubungan mereka
+         * sekarang — sehingga arah perubahannya tidak bermakna. `canonicalRelations`
+         * sudah ada dan sudah benar (baseline ditimpa tiap `relationshipDelta`);
+         * yang belum ada hanyalah jalur dari sana ke prompt.
+         */
+        relations: await this.deps.journeys.canonicalRelations(command.journeyId),
+        /*
+         * Kosakata hubungan versi dunia perjalanan ini, sama seperti pembuka.
+         *
+         * Ia dibaca ulang setiap giliran dari SALINAN yang dibekukan, bukan dari
+         * master: penyuntingan arti sebuah status di panel hari ini tidak boleh
+         * mengubah cara tokoh bersikap di perjalanan yang sudah berjalan.
+         */
+        relationVocabulary: await this.deps.journeys.relationshipVocabulary(
+          journey.world_id,
+          journey.world_version,
+        ),
         ...(opsiTerpilih ? { optionLabel: opsiTerpilih.label } : null),
         ...(command.customText !== undefined ? { customText: command.customText } : null),
         ...(command.optionId !== undefined ? { optionId: command.optionId } : null),

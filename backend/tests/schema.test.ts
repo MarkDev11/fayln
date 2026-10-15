@@ -58,6 +58,7 @@ describe('migrasi', () => {
     '018_jiwa_karakter.sql',
     '019_latar_pembuka.sql',
     '020_akun_pemain.sql',
+    '021_master_hubungan.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
@@ -65,6 +66,70 @@ describe('migrasi', () => {
       'SELECT name FROM schema_migrations ORDER BY name ASC',
     );
     expect(rows.map((row) => row.name)).toEqual(EXPECTED_MIGRATIONS);
+  });
+
+  it('membekukan kosakata untuk versi dunia yang SUDAH ADA', async () => {
+    /*
+     * ---------------------------------------------------------------------------
+     * PENJAGA UNTUK BACKFILL MIGRASI 021
+     * ---------------------------------------------------------------------------
+     * Mengapa uji ini perlu ada: backfill pernah HILANG dari berkas migrasinya
+     * tanpa satu pun uji yang memerah. Agen penguji yang bermutasi mati di
+     * tengah dan meninggalkan bekasnya; seluruh uji lain tetap hijau karena
+     * mereka memanggil `freezeRelationVocabulary()` secara langsung, bukan
+     * membaca hasil backfill.
+     *
+     * Tanpa backfill, akibatnya paling berat: setiap perjalanan yang sudah ada
+     * dibuka tanpa satu pun status yang sah, sehingga seluruh perubahan
+     * hubungan dibuang — dan tidak ada galat yang muncul di mana pun.
+     *
+     * Yang diuji di sini bukan versi yang dibuat oleh uji ini. Backfill hanya
+     * menjangkau versi yang SUDAH ADA saat migrasi berjalan; membuat versi baru
+     * di dalam uji lalu menuntut kosakatanya akan menguji `copyVersionInto`,
+     * bukan backfill — dan akan gagal karena alasan yang benar. Yang dipakai
+     * adalah dunia rujukan dari migrasi 002, yang sudah ada jauh sebelum 021.
+     *
+     * BUKTI MUTASI: hapus pernyataan `INSERT INTO
+     * world_relationship_definitions` di 021_master_hubungan.sql, lalu kedua
+     * pengujian ini memerah.
+     */
+    /*
+     * Dua kueri biasa, lalu dibandingkan di kode.
+     *
+     * Bukan sub-kueri berkorelasi: pg-mem tidak dapat sub-kueri yang merujuk
+     * alias tabel induk, dan kegagalan itu berbunyi "column does not exist" —
+     * galat yang sama sekali tidak menunjuk ke penyebabnya (batasan mesin),
+     * melainkan seolah kuerinya yang salah.
+     */
+    const { rows: versi } = await ctx.db.query<{ world_id: string; world_version: number }>(
+      'SELECT world_id, world_version FROM world_versions',
+    );
+    const { rows: kosakata } = await ctx.db.query<{ world_id: string; world_version: number }>(
+      `SELECT DISTINCT world_id, world_version FROM world_relationship_definitions`,
+    );
+
+    // Pemeriksaan kebalikan: uji yang hanya memeriksa "yang kosong" akan tetap
+    // hijau bila memang tidak ada versi dunia sama sekali.
+    expect(versi.length, 'tidak ada versi dunia untuk diuji').toBeGreaterThan(0);
+
+    const punyaKosakata = new Set(
+      kosakata.map((baris) => `${baris.world_id}:${String(baris.world_version)}`),
+    );
+    const tanpaKosakata = versi
+      .map((baris) => `${baris.world_id}:${String(baris.world_version)}`)
+      .filter((kunci) => !punyaKosakata.has(kunci));
+
+    expect(tanpaKosakata, 'ada versi dunia tanpa kosakata').toEqual([]);
+
+    // Dan setiap versi itu memuat kedelapan status bawaan, bukan sebagian.
+    const { rows: isi } = await ctx.db.query<{ world_id: string; world_version: number; total: number }>(
+      `SELECT world_id, world_version, count(*)::int AS total
+       FROM world_relationship_definitions GROUP BY world_id, world_version`,
+    );
+    expect(isi.length).toBe(versi.length);
+    for (const baris of isi) {
+      expect(baris.total, `${baris.world_id} v${String(baris.world_version)}`).toBe(8);
+    }
   });
 
   it('aman dijalankan ulang tanpa menerapkan apa pun lagi', async () => {

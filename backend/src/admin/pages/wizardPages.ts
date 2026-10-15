@@ -26,6 +26,7 @@ import {
   type WizardStep,
 } from '../worldDraftRepository';
 import type { AdminPageContext } from './context';
+import type { RelationRow } from '../relationsRepository';
 
 /* ------------------------------------------------------------------ */
 /* Bagian yang dipakai bersama                                        */
@@ -393,10 +394,20 @@ export async function wizardStep3(ctx: AdminPageContext, worldId: string): Promi
   }
 
   const npcs = await ctx.drafts.listNpcs(draft.worldId, draft.worldVersion);
-  const [masterCharacters, providers] = await Promise.all([
+  const [masterCharacters, providers, relations] = await Promise.all([
     ctx.characters.list(),
     ctx.providers.listOfferable(),
+    /*
+     * Seluruh status, bukan hanya yang aktif.
+     *
+     * Yang ditawarkan untuk karakter BARU adalah yang aktif saja. Tetapi kartu
+     * karakter yang sudah ada harus tetap menampilkan status yang sedang
+     * dipakainya walau status itu sudah dinonaktifkan — kalau tidak, membuka
+     * dan menyimpan kartu itu diam-diam mengganti hubungan awalnya.
+     */
+    ctx.relations.list(),
   ]);
+  const hubunganAktif = relations.filter((relation) => relation.active);
 
   /*
    * Karakter master yang sudah dipakai dunia ini tidak ditawarkan dua kali.
@@ -431,6 +442,28 @@ export async function wizardStep3(ctx: AdminPageContext, worldId: string): Promi
         )
       : [html`<option value="">(belum ada provider)</option>`];
 
+  /*
+   * Pilihan hubungan awal.
+   *
+   * Pilihan pertama SENGAJA kosong dan tidak dapat dikirim: hubungan awal harus
+   * dipilih, bukan diambil dari nilai bawaan. Dunia yang lahir tanpa sikap awal
+   * membuat mesin cerita tidak punya apa pun untuk diperankan pada adegan
+   * pertama — dan kegagalan itu tidak terlihat sebagai galat, hanya sebagai
+   * tokoh yang bersikap datar.
+   */
+  const pilihanHubungan =
+    hubunganAktif.length > 0
+      ? [
+          html`<option value="">(pilih hubungan awal)</option>`,
+          ...hubunganAktif.map(
+            (relation) =>
+              html`<option value="${inputValue(relation.relationId)}">${esc(relation.labelId)}</option>`,
+          ),
+        ]
+      : [html`<option value="">(master hubungan masih kosong)</option>`];
+
+  const masterKosong = hubunganAktif.length === 0;
+
   return html`<h1>Karakter — Langkah 3 dari 3</h1>
 ${wizardSteps(3, worldId, 3)}
 <p class="sub">
@@ -443,7 +476,7 @@ ${wizardSteps(3, worldId, 3)}
 </p>
 
 ${
-  tersedia.length > 0
+  tersedia.length > 0 && !masterKosong
     ? html`<form method="post" action="/admin/worlds-wizard/3/npc" class="card">
   <input type="hidden" name="worldId" value="${inputValue(draft.worldId)}">
   <div class="two">
@@ -453,6 +486,19 @@ ${
     <label><span>Peran dalam cerita ini</span>
       <input name="role" maxlength="120" placeholder="mis. bosmu, sahabatmu, mantan pacarmu">
     </label>
+  </div>
+  <div class="two">
+    <label><span>Hubungan awal dengan pemain</span>
+      <select name="initialRelation" required aria-describedby="rel-hint">${pilihanHubungan}</select>
+    </label>
+    <div class="field">
+      <span class="field__hint" id="rel-hint">
+        <b>Wajib.</b> Sikap tokoh ini <em>saat cerita dimulai</em> — bukan sikap
+        tetapnya. Mesin cerita memerankannya sejak adegan pertama, lalu
+        mengubahnya sesuai tindakanmu selama bermain. Pilihannya datang dari
+        <a href="/admin/relations">master hubungan</a>.
+      </span>
+    </div>
   </div>
   <p class="sub" style="margin-top:0">
     Potret dan seluruh ekspresinya ikut otomatis dari master. Namanya boleh diganti
@@ -465,10 +511,17 @@ ${
 </form>`
     : html`<div class="card" style="border-color:var(--warn)">
   <p class="sub" style="margin-top:0">
-    <strong>Tidak ada karakter yang dapat dipungut.</strong> Semua karakter master
+    ${
+      masterKosong
+        ? html`<strong>Master hubungan masih kosong.</strong> Sebuah karakter harus punya
+    sikap awal terhadap pemain, dan daftar sikap itu belum diisi. Isi
+    <a href="/admin/relations">master hubungan</a> lebih dulu — setidaknya satu
+    status beserta artinya.`
+        : html`<strong>Tidak ada karakter yang dapat dipungut.</strong> Semua karakter master
     sudah dipakai dunia ini, atau master masih kosong. Isi
     <a href="/admin/characters">master karakter</a> lebih dulu: tambahkan nama,
-    lalu unggah potretnya.
+    lalu unggah potretnya.`
+    }
   </p>
 </div>`
 }
@@ -490,7 +543,7 @@ ${
     </div>
   </div>
 
-  ${npcs.map((npc) => npcCard(npc, draft))}
+  ${npcs.map((npc) => npcCard(npc, draft, relations))}
 </div>`
     : html`<div class="empty">Belum ada karakter. Pungut minimal satu sebelum menerbitkan.</div>`
 }
@@ -515,7 +568,30 @@ ${
  * master dan karena itu tidak disunting: mengubahnya di sini akan membuat dunia
  * ini berbeda dari master tanpa cara untuk menyelaraskan keduanya lagi.
  */
-function npcCard(npc: NpcRow, draft: DraftWorld): SafeHtml {
+function npcCard(npc: NpcRow, draft: DraftWorld, relations: RelationRow[]): SafeHtml {
+  /*
+   * Status yang boleh dipilih untuk karakter INI.
+   *
+   * Yang aktif, ditambah status yang sedang dipakainya walau sudah nonaktif.
+   * Tanpa tambahan itu, membuka kartu karakter yang memakai status nonaktif akan
+   * memilih pilihan pertama tanpa suara, dan menyimpannya diam-diam mengubah
+   * hubungan awal karakter itu.
+   */
+  const bolehDipilih = relations.filter(
+    (relation) => relation.active || relation.relationId === npc.initialRelation,
+  );
+  const dipilihAda = bolehDipilih.some((relation) => relation.relationId === npc.initialRelation);
+
+  const opsiHubungan = [
+    ...(dipilihAda ? [] : [html`<option value="">(pilih hubungan awal)</option>`]),
+    ...bolehDipilih.map(
+      (relation) =>
+        html`<option value="${inputValue(relation.relationId)}"${
+          relation.relationId === npc.initialRelation ? ' selected' : ''
+        }>${esc(relation.labelId)}${relation.active ? '' : ' — tidak ditawarkan'}</option>`,
+    ),
+  ];
+
   return html`<div class="npc-card">
   <div class="npc-card__head">
     <img class="upload-thumb" style="width:72px;height:108px" alt=""
@@ -525,7 +601,7 @@ function npcCard(npc: NpcRow, draft: DraftWorld): SafeHtml {
       <div class="muted" style="font-size:12px">
         ${String(npc.expressions.length)} ekspresi${
           npc.masterCharacterId ? ' · dipungut dari master' : ' · tanpa master'
-        }
+        } · hubungan awal: ${esc(labelHubungan(relations, npc.initialRelation))}
       </div>
     </div>
     <form method="post" action="/admin/worlds-wizard/3/npc/delete"
@@ -550,6 +626,16 @@ function npcCard(npc: NpcRow, draft: DraftWorld): SafeHtml {
         <input name="role" maxlength="120" value="${inputValue(npc.role)}"
                placeholder="mis. bosmu, sahabatmu">
       </label>
+    </div>
+
+    <div class="field">
+      <label class="field__label" for="rel-${esc(npc.npcId)}">Hubungan awal dengan pemain</label>
+      <select id="rel-${esc(npc.npcId)}" name="initialRelation" required
+              aria-describedby="rel-hint-${esc(npc.npcId)}">${opsiHubungan}</select>
+      <span class="field__hint" id="rel-hint-${esc(npc.npcId)}"><b>Wajib.</b> Sikap tokoh
+        ini saat cerita dimulai. Mesin cerita memerankannya sejak adegan pertama, lalu
+        mengubahnya sesuai tindakan pemain selama bermain. Daftarnya diatur di
+        <a href="/admin/relations">master hubungan</a>.</span>
     </div>
 
     <label><span>Background — tulis sedikit, lalu perinci dengan AI</span>
@@ -632,4 +718,20 @@ function notADraft(): SafeHtml {
   </p>
   <p><a href="/admin/worlds">Kembali ke daftar dunia</a></p>
 </div>`;
+}
+
+/**
+ * Nama status hubungan untuk ditampilkan, atau id-nya bila tidak ada di master.
+ *
+ * Jatuh ke ID, bukan ke kata "tidak diketahui". Status yang id-nya masih
+ * tersimpan di karakter tetapi barisnya sudah tidak ada adalah keadaan yang
+ * mungkin — dan menampilkan id apa adanya membuat admin dapat menelusurinya,
+ * sedangkan "tidak diketahui" hanya memberitahu bahwa ada yang salah.
+ */
+function labelHubungan(relations: RelationRow[], relationId: string): string {
+  const ketemu = relations.find((relation) => relation.relationId === relationId);
+  if (ketemu) {
+    return ketemu.labelId;
+  }
+  return relationId.trim().length > 0 ? relationId : 'belum dipilih';
 }

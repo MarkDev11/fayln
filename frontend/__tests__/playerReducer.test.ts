@@ -15,7 +15,11 @@ const baselineRelations: RelationEntry[] = worldBoskuMantan.characters.map((char
   updatedAtTurnId: 't000',
 }));
 
-function load(beats: Beat[], startCursor = 0): PlaybackState {
+function load(
+  beats: Beat[],
+  startCursor = 0,
+  relations: RelationEntry[] = baselineRelations,
+): PlaybackState {
   return playerReducer(createEmptyPlaybackState(), {
     type: 'LOADED',
     payload: {
@@ -24,7 +28,7 @@ function load(beats: Beat[], startCursor = 0): PlaybackState {
       worldVersion: worldBoskuMantan.worldVersion,
       personaName: 'Arfan',
       beats,
-      relations: baselineRelations,
+      relations,
       memory: { activeVersion: null, source: 'none' },
       simulator: true,
       startCursor,
@@ -36,6 +40,11 @@ function load(beats: Beat[], startCursor = 0): PlaybackState {
 function tapAndAdvance(state: PlaybackState): PlaybackState {
   const revealed = playerReducer(state, { type: 'REVEAL_LINE' });
   return playerReducer(revealed, { type: 'ADVANCE' });
+}
+
+function expectPersonalizedText(text: string, expected: string): void {
+  expect(text).toBe(expected);
+  expect(text).not.toMatch(/@user(?![\p{L}\p{N}_])/u);
 }
 
 describe('AC-05 — satu tap menyelesaikan teks, tap berikutnya melanjutkan', () => {
@@ -98,15 +107,31 @@ describe('AC-06 — tepat tiga opsi berbeda niat', () => {
     expect(blocked.decision).not.toBeNull();
   });
 
-  it('tidak pernah mengaktifkan Auto saat keputusan menunggu', () => {
+  it('DAPAT mengaktifkan Auto saat keputusan menunggu', () => {
+    /*
+     * KEPUTUSAN PEMILIK PRODUK, mengubah perilaku sebelumnya.
+     *
+     * Bentuk lama menolak `SET_AUTO enabled: true` selama keputusan menunggu
+     * (`action.enabled && state.decision === null`). Akibatnya tombol Auto diam
+     * tanpa penjelasan ketika ditekan di depan sebuah keputusan, dan pemain
+     * menyimpulkan tombolnya rusak.
+     *
+     * Sekarang Auto dapat dinyalakan kapan saja dan menyala terus sampai pemain
+     * mematikannya. Yang menahan laju bukan flag ini, melainkan `shouldRun` di
+     * `usePlayerEngine` — ia mensyaratkan `decision === null`.
+     *
+     * BUKTI MUTASI: kembalikan `&& state.decision === null` ke `SET_AUTO`,
+     * lalu uji ini memerah.
+     */
     let state = load(buildOpeningBeats('t001'));
     for (let index = 0; index < 10 && !state.decision; index += 1) {
       state = tapAndAdvance(state);
     }
+    expect(state.decision).not.toBeNull();
 
     const auto = playerReducer(state, { type: 'SET_AUTO', enabled: true });
 
-    expect(auto.auto).toBe(false);
+    expect(auto.auto).toBe(true);
   });
 });
 
@@ -337,6 +362,173 @@ describe('kegagalan tidak menghapus draft dan posisi baca', () => {
     expect(failed.draft).toBe('aku bertanya soal pekerjaan');
     expect(failed.error?.code).toBe('NETWORK');
     expect(failed.decision).not.toBeNull();
+  });
+});
+
+describe('player persona token personalization', () => {
+  it('personalizes loaded beats and relation baselines without mutating inputs', () => {
+    /*
+     * MUTATION CHECK: removing personalizeBeats(...) from LOADED makes these
+     * presented line, decision, and stored-beat assertions fail.
+     */
+    const beats: Beat[] = [
+      {
+        beatId: 'loaded-narrate',
+        turnId: 't_loaded',
+        sequence: 1,
+        event: { type: 'narrate', text: '@user enters; @username waits.' },
+      },
+      {
+        beatId: 'loaded-say',
+        turnId: 't_loaded',
+        sequence: 2,
+        event: { type: 'say', npcId: 'npc_elysia', text: '@user, meet @username.' },
+      },
+      {
+        beatId: 'loaded-relation',
+        turnId: 't_loaded',
+        sequence: 3,
+        event: {
+          type: 'relationshipDelta',
+          npcId: 'npc_elysia',
+          status: 'waspada',
+          reasonPublic: '@user trusted @username.',
+        },
+      },
+      {
+        beatId: 'loaded-choices',
+        turnId: 't_loaded',
+        sequence: 4,
+        event: {
+          type: 'presentChoices',
+          decisionId: 'd_loaded',
+          prompt: 'What should @user tell @username?',
+          options: [
+            { optionId: 'a', label: 'Help @user', description: '@user asks @username for help.' },
+            { optionId: 'b', label: 'Warn @user', description: 'Tell @username to wait.' },
+            { optionId: 'c', label: 'Leave @user', description: 'Let @username decide.' },
+          ],
+        },
+      },
+    ];
+    const originalBeats = JSON.stringify(beats);
+    const relations = baselineRelations.map((relation) =>
+      relation.npcId === 'npc_elysia'
+        ? { ...relation, reasonPublic: '@user remembers @username.' }
+        : relation,
+    );
+
+    let state = load(beats, 0, relations);
+
+    expectPersonalizedText(state.line?.text ?? '', 'Arfan enters; @username waits.');
+    expect(state.beats[0]?.event).toEqual({
+      type: 'narrate',
+      text: 'Arfan enters; @username waits.',
+    });
+    expectPersonalizedText(
+      state.relations.find((relation) => relation.npcId === 'npc_elysia')?.reasonPublic ?? '',
+      'Arfan remembers @username.',
+    );
+
+    state = tapAndAdvance(state);
+    expectPersonalizedText(state.line?.text ?? '', 'Arfan, meet @username.');
+
+    state = tapAndAdvance(state);
+    expectPersonalizedText(state.decision?.prompt ?? '', 'What should Arfan tell @username?');
+    expectPersonalizedText(state.decision?.options[0]?.label ?? '', 'Help Arfan');
+    expectPersonalizedText(
+      state.decision?.options[0]?.description ?? '',
+      'Arfan asks @username for help.',
+    );
+    expectPersonalizedText(
+      state.relations.find((relation) => relation.npcId === 'npc_elysia')?.reasonPublic ?? '',
+      'Arfan trusted @username.',
+    );
+    expectPersonalizedText(state.notices[0]?.reasonPublic ?? '', 'Arfan trusted @username.');
+    expect(JSON.stringify(beats)).toBe(originalBeats);
+  });
+
+  it('personalizes incoming turn beats without mutating the envelope', () => {
+    /*
+     * MUTATION CHECK: removing personalizeBeats(envelope.beats, state.personaName)
+     * from TURN_COMMITTED makes the presented and stored-beat assertions fail.
+     */
+    const beats: Beat[] = [
+      {
+        beatId: 'turn-narrate',
+        turnId: 't_incoming',
+        sequence: 1,
+        event: { type: 'narrate', text: '@user follows @username.' },
+      },
+      {
+        beatId: 'turn-say',
+        turnId: 't_incoming',
+        sequence: 2,
+        event: { type: 'say', npcId: 'npc_elysia', text: '@username calls @user.' },
+      },
+      {
+        beatId: 'turn-relation',
+        turnId: 't_incoming',
+        sequence: 3,
+        event: {
+          type: 'relationshipDelta',
+          npcId: 'npc_elysia',
+          status: 'waspada',
+          reasonPublic: '@user listened to @username.',
+        },
+      },
+      {
+        beatId: 'turn-choices',
+        turnId: 't_incoming',
+        sequence: 4,
+        event: {
+          type: 'presentChoices',
+          decisionId: 'd_incoming',
+          prompt: 'Will @user answer @username?',
+          options: [
+            { optionId: 'a', label: '@user answers @username', description: '@user speaks first.' },
+            { optionId: 'b', label: 'Wait for @user', description: 'Give @username some time.' },
+            { optionId: 'c', label: 'Ask @username', description: '@username chooses.' },
+          ],
+        },
+      },
+    ];
+    const originalBeats = JSON.stringify(beats);
+    const envelope = {
+      operationId: 'op-persona',
+      journeyId: 'j_test',
+      turnId: 't_incoming',
+      revision: 1,
+      beats,
+      usage: { promptTokens: 10, completionTokens: 5, chargedTotal: 15 },
+      memory: { activeVersion: null, source: 'none' as const },
+      budget: { availableAfter: 100, allowanceLimit: 1000, resetAt: '2026-10-01T00:00:00.000Z' },
+      modelId: 'simulator/deterministic-v1',
+      modelVersion: '1.0.0',
+      simulator: true,
+    };
+
+    let state = playerReducer(load([]), { type: 'TURN_COMMITTED', envelope });
+
+    expectPersonalizedText(state.line?.text ?? '', 'Arfan follows @username.');
+    expect(state.beats[0]?.event).toEqual({
+      type: 'narrate',
+      text: 'Arfan follows @username.',
+    });
+
+    state = tapAndAdvance(state);
+    expectPersonalizedText(state.line?.text ?? '', '@username calls Arfan.');
+
+    state = tapAndAdvance(state);
+    expectPersonalizedText(state.decision?.prompt ?? '', 'Will Arfan answer @username?');
+    expectPersonalizedText(state.decision?.options[0]?.label ?? '', 'Arfan answers @username');
+    expectPersonalizedText(state.decision?.options[0]?.description ?? '', 'Arfan speaks first.');
+    expectPersonalizedText(
+      state.relations.find((relation) => relation.npcId === 'npc_elysia')?.reasonPublic ?? '',
+      'Arfan listened to @username.',
+    );
+    expectPersonalizedText(state.notices[0]?.reasonPublic ?? '', 'Arfan listened to @username.');
+    expect(JSON.stringify(envelope.beats)).toBe(originalBeats);
   });
 });
 

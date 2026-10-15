@@ -19,6 +19,8 @@ import type {
   Beat,
   ChoiceOption,
   NPCPublicDTO,
+  RelationEntry,
+  RelationVocabularyEntry,
   ResponseLocale,
   StoryEvent,
 } from '../contracts/types';
@@ -41,6 +43,39 @@ export type StoryContext = {
   /** Nama lokasi pembuka; dipakai mencocokkan label latar. */
   openingLocationLabel?: string | null;
   characters: NPCPublicDTO[];
+  /**
+   * Keadaan hubungan SAAT INI untuk setiap tokoh, bila diketahui pemanggil.
+   *
+   * ---------------------------------------------------------------------------
+   * MENGAPA INI HARUS DIKIRIM
+   * ---------------------------------------------------------------------------
+   * Tanpa bidang ini, model diminta memutuskan apakah seorang tokoh tersinggung
+   * atau menyukai tindakan pemain — TANPA diberi tahu bagaimana hubungan mereka
+   * sekarang. Ia hanya bisa menebak, dan tebakannya tidak punya arah: tidak ada
+   * yang tahu apakah `waspada` itu MEMBAIK atau MEMBURUK dari keadaan sebelumnya.
+   *
+   * Gejalanya sama dengan kelas kegagalan lain di mesin ini: keluarannya masuk
+   * akal, tetapi tidak terhubung dengan keadaan cerita. Model menentukan MAKNA;
+   * sistem yang menyediakan KEADAAN.
+   *
+   * Bila kosong, prompt tetap ditulis tanpa bagian hubungan — mesin deterministik
+   * dan pengujian boleh memanggilnya begitu.
+   */
+  relations?: RelationEntry[];
+  /**
+   * Kosakata status hubungan yang SAH untuk versi dunia perjalanan ini.
+   *
+   * WAJIB, dan sengaja bukan `?`. Daftar status dulu tinggal di dalam kode, jadi
+   * tidak ada pemanggil yang bisa lupa mengisinya — sekaligus tidak ada cara
+   * menambah status tanpa membangun ulang aplikasi. Sejak daftarnya menjadi data
+   * per versi dunia, lupa mengisinya berarti setiap status baru dibuang tanpa
+   * satu pun galat; bidang wajib membuat kelalaian itu terlihat saat kompilasi,
+   * bukan saat pemain kehilangan perubahan hubungannya.
+   *
+   * Mesin deterministik tidak memakainya, tetapi tetap menerimanya: satu bentuk
+   * konteks untuk kedua mesin lebih baik daripada dua bentuk yang menyimpang.
+   */
+  relationVocabulary: RelationVocabularyEntry[];
   manifest: AssetManifest;
   personaName: string;
   /** Aksi bebas pemain, bila giliran ini berasal dari input teks. */
@@ -574,6 +609,64 @@ export const ALLOWED_EVENT_TYPES: readonly StoryEvent['type'][] = [
 ];
 
 export type BeatValidationIssue = { beatId: string; reason: string };
+
+/**
+ * Menyaring daftar ekspresi karakter ke ekspresi yang PUNYA POTRET.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA PENYARINGAN INI PERLU
+ * ---------------------------------------------------------------------------
+ * Daftar nama ekspresi dan berkas potretnya disimpan di DUA tempat, dan
+ * keduanya TIDAK selalu berisi hal yang sama:
+ *
+ *   - `world_character_expressions` menyimpan SEMUA nama ekspresi yang
+ *     diketik admin, termasuk yang gambarnya belum diunggah;
+ *   - `world_assets` hanya menyimpan ekspresi yang benar-benar punya berkas,
+ *     karena penyimpanan potret melewati ekspresi tanpa gambar.
+ *
+ * Mesin cerita mencocokkan keduanya dengan kunci persis `npcId|ekspresi`. Jadi
+ * begitu model memilih ekspresi yang sah menurut daftar tetapi tidak punya
+ * berkas, pencocokannya MELESET TANPA GALAT, lalu potret jatuh ke gambar
+ * bawaan. Yang dilihat pemain: narasinya menulis "tatapan sinis", gambarnya
+ * tetap tersenyum — dan tidak ada satu pun pesan yang menjelaskan mengapa.
+ *
+ * Dengan menyaring lebih dulu, model hanya dapat memilih ekspresi yang bisa
+ * ditampilkan, sehingga gambar selalu cocok dengan kalimatnya. Ini juga menjaga
+ * validasi: `cocokkanEkspresi` membaca daftar yang sama, jadi ekspresi tanpa
+ * potret tidak lagi lolos ke adegan.
+ *
+ * Bila setelah disaring daftarnya KOSONG, daftar aslinya dipertahankan apa
+ * adanya. Karakter tanpa satu pun potret memang sudah tidak dapat ditampilkan
+ * gambar apa pun; mengosongkan daftarnya hanya akan membuatnya tidak pernah
+ * bisa muncul sama sekali, dan itu memperburuk keadaan.
+ */
+export function karakterDenganEkspresiTampil(
+  characters: NPCPublicDTO[],
+  manifest: AssetManifest,
+): NPCPublicDTO[] {
+  const punyaPotret = new Set(
+    manifest.portraits
+      .filter(
+        (item) =>
+          typeof item.npcId === 'string' &&
+          item.npcId.length > 0 &&
+          // Bentuk lama/tepatnya manifes dapat tidak memuat `expression` sama
+          // sekali. Nilai itu diperlakukan sebagai "tidak punya potret", bukan
+          // sebagai galat: manifest yang cacat tidak boleh menjatuhkan seluruh
+          // giliran.
+          typeof item.expression === 'string' &&
+          item.expression.length > 0,
+      )
+      .map((item) => `${item.npcId}|${item.expression}`),
+  );
+
+  return characters.map((character) => {
+    const tampil = character.expressions.filter((item) =>
+      punyaPotret.has(`${character.npcId}|${item}`),
+    );
+    return tampil.length > 0 ? { ...character, expressions: tampil } : character;
+  });
+}
 
 /**
  * Mengganti penanda nama di dalam teks beat dengan nama yang sebenarnya.

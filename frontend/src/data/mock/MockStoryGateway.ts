@@ -43,6 +43,7 @@ import type {
   JourneyDetailDTO,
   JourneySummary,
   RelationEntry,
+  RelationVocabularyEntry,
   StoryEvent,
   TurnResultEnvelope,
   UsageDTO,
@@ -785,6 +786,16 @@ export class MockStoryGateway implements StoryGateway {
       world,
       beats,
       relationsBaseline: this.journeyBaseline.get(journeyId) ?? [],
+      /*
+       * Mock memakai kosakata BAWAAN.
+       *
+       * Server sungguhan mengirim salinan yang dibekukan untuk versi dunia
+       * perjalanan itu. Mock tidak punya versi dunia, jadi yang dipakai adalah
+       * delapan status bawaan — dan itu cukup untuk menjaga bentuk kontraknya:
+       * yang diuji di sini adalah apakah aplikasi memakai kosakata dari sesi,
+       * bukan isi kosakatanya.
+       */
+      relationVocabulary: KOSAKATA_BAWAAN,
       memory: journey.memory,
       committedCursor: beats.length,
       simulator: true,
@@ -1205,3 +1216,21 @@ export {
   buildCustomBeats as buildCustomBeatsForTest,
   buildHumorBeats as buildHumorBeatsForTest,
 };
+
+/**
+ * Kosakata hubungan bawaan untuk mock.
+ *
+ * Labelnya sengaja sama dengan terjemahan `relation.*` supaya mock tidak
+ * memperkenalkan label yang tidak ada di kamus — mock yang menampilkan teks
+ * berbeda dari aplikasi sungguhan akan menutupi cacat label, bukan menemukannya.
+ */
+const KOSAKATA_BAWAAN: RelationVocabularyEntry[] = [
+  { relationId: 'normal', labelId: 'Normal', labelEn: 'Neutral', meaning: 'Netral.', behaviourHint: '', position: 1 },
+  { relationId: 'hangat', labelId: 'Hangat', labelEn: 'Warm', meaning: 'Hangat.', behaviourHint: '', position: 2 },
+  { relationId: 'waspada', labelId: 'Waspada', labelEn: 'Wary', meaning: 'Waspada.', behaviourHint: '', position: 3 },
+  { relationId: 'tegang', labelId: 'Tegang', labelEn: 'Tense', meaning: 'Tegang.', behaviourHint: '', position: 4 },
+  { relationId: 'renggang', labelId: 'Renggang', labelEn: 'Distant', meaning: 'Renggang.', behaviourHint: '', position: 5 },
+  { relationId: 'dekat', labelId: 'Dekat', labelEn: 'Close', meaning: 'Dekat.', behaviourHint: '', position: 6 },
+  { relationId: 'sayang', labelId: 'Sayang', labelEn: 'Fond', meaning: 'Sayang.', behaviourHint: '', position: 7 },
+  { relationId: 'cinta', labelId: 'Cinta', labelEn: 'In love', meaning: 'Cinta.', behaviourHint: '', position: 8 },
+];

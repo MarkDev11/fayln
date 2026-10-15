@@ -2,13 +2,17 @@ import { fireEvent, render, screen } from '@testing-library/react-native';
 import React from 'react';
 import { StyleSheet } from 'react-native';
 
+import { AUTO_DELAY_OPTIONS_MS, AutoDelayControl } from '@/features/player/components/AutoDelayControl';
 import { ChoiceSheet } from '@/features/player/components/ChoiceSheet';
 import { Composer, MAX_CUSTOM_ACTION_CHARS } from '@/features/player/components/Composer';
-import { DialogueBox } from '@/features/player/components/DialogueBox';
 import { GatewayErrorSheet, mapGatewayError } from '@/features/player/components/GatewayErrorSheet';
 import { PlayerControls } from '@/features/player/components/PlayerControls';
+import { NPCInspector } from '@/features/player/components/NPCInspector';
 import { RelationNotice } from '@/features/player/components/RelationNotice';
-import type { PendingDecision } from '@/features/player/types';
+import { StageHud } from '@/features/player/components/StageHud';
+import { StageNav } from '@/features/player/components/StageNav';
+import { StageText } from '@/features/player/components/StageText';
+import { DEFAULT_AUTO_DELAY_MS, type PendingDecision } from '@/features/player/types';
 import { TestProviders } from '@/testing/TestProviders';
 
 /**
@@ -28,11 +32,11 @@ const decision: PendingDecision = {
   ],
 };
 
-describe('DialogueBox', () => {
+describe('StageText', () => {
   it('menampilkan nama pembicara dan isi dialog', async () => {
     await render(
       <TestProviders>
-        <DialogueBox
+        <StageText
           line={{ beatId: 'b1', kind: 'say', speakerNpcId: 'npc_elysia', text: 'Kamu telat.' }}
           speakerName="Elysia"
           onRevealed={() => {}}
@@ -43,15 +47,23 @@ describe('DialogueBox', () => {
     );
 
     expect(screen.getByText('Elysia')).toBeTruthy();
-    expect(screen.getByText('Kamu telat.')).toBeTruthy();
+    // Ucapan tokoh dikutip; model cerita tidak pernah menuliskan kutipnya sendiri.
+    expect(screen.getByText('“Kamu telat.”')).toBeTruthy();
   });
 
   it('tidak menampilkan nama pembicara pada narasi', async () => {
+    /*
+     * BUKTI MUTASI — versi pertama uji ini mengirim `speakerName={null}` juga,
+     * sehingga `queryByText('Elysia')` tidak akan pernah bisa gagal: nama itu
+     * memang tidak pernah diberikan. Uji seperti itu hijau walaupun komponennya
+     * menampilkan nama pada narasi. Sekarang nama BENAR-BENAR dikirim, dan yang
+     * dijaga adalah komponen yang MEMUTUSKAN untuk tidak menampilkannya.
+     */
     await render(
       <TestProviders>
-        <DialogueBox
+        <StageText
           line={{ beatId: 'b2', kind: 'narrate', speakerNpcId: null, text: 'Kamu memasuki gedung.' }}
-          speakerName={null}
+          speakerName="Elysia"
           onRevealed={() => {}}
           onAdvance={() => {}}
           instant
@@ -59,6 +71,7 @@ describe('DialogueBox', () => {
       </TestProviders>,
     );
 
+    // Narasi TANPA nama pembicara dan TANPA tanda kutip.
     expect(screen.getByText('Kamu memasuki gedung.')).toBeTruthy();
     expect(screen.queryByText('Elysia')).toBeNull();
   });
@@ -67,7 +80,7 @@ describe('DialogueBox', () => {
     const onAdvance = jest.fn();
     await render(
       <TestProviders>
-        <DialogueBox
+        <StageText
           line={{ beatId: 'b3', kind: 'narrate', speakerNpcId: null, text: 'Teks pendek.' }}
           speakerName={null}
           onRevealed={() => {}}
@@ -83,21 +96,20 @@ describe('DialogueBox', () => {
   });
 
   /**
-   * Kotak dialog: TANPA bingkai, latar HITAM, teks PUTIH.
+   * Teks cerita TANPA kotak.
    *
-   * Bentuk lamanya memakai `colors.bgSurface` + `colors.line`, sehingga ia
-   * berubah warna mengikuti tema — padahal ia duduk di atas GAMBAR adegan yang
-   * tidak ikut berubah. Akibatnya kotak itu bisa "benar" di satu tema dan hilang
-   * kontras di tema lain.
+   * Bentuk lamanya adalah kotak berlatar hitam pekat yang memakan seluruh lebar
+   * layar. Pemilik produk menunjukkan komposisi yang dituju: kalimatnya duduk
+   * LANGSUNG di atas ilustrasi, dan keterbacaannya dijaga gradasi gelap milik
+   * panggung — bukan oleh kotak milik teksnya.
    *
-   * Pengujian ini memeriksa warnanya sebagai NILAI, bukan sebagai token: kalau
-   * seseorang mengembalikannya ke `colors.bgSurface`, nilainya berubah dan uji
-   * ini memerah. Itulah yang diinginkan — keputusannya adalah mematok warna.
+   * BUKTI MUTASI: kembalikan `backgroundColor: '#000000'` ke `styles.root`,
+   * lalu uji ini memerah.
    */
-  it('berlatar hitam berteks putih tanpa bingkai', async () => {
+  it('tidak menggambar kotak di belakang teks', async () => {
     await render(
       <TestProviders>
-        <DialogueBox
+        <StageText
           line={{ beatId: 'b4', kind: 'say', speakerNpcId: 'npc_elysia', text: 'Kamu telat.' }}
           speakerName="Elysia"
           onRevealed={() => {}}
@@ -114,13 +126,227 @@ describe('DialogueBox', () => {
     const kotak = screen.getByLabelText(/Elysia: Kamu telat\./);
     const gaya = StyleSheet.flatten(kotak.props.style);
 
-    expect(gaya.backgroundColor).toBe('#000000');
+    expect(gaya.backgroundColor).toBeUndefined();
     expect(gaya.borderWidth ?? 0).toBe(0);
     expect(gaya.borderColor).toBeUndefined();
     expect(gaya.borderRadius ?? 0).toBe(0);
 
     // Teks isi dialog harus putih, apa pun temanya.
-    expect(StyleSheet.flatten(screen.getByText('Kamu telat.').props.style).color).toBe('#FFFFFF');
+    expect(StyleSheet.flatten(screen.getByText('“Kamu telat.”').props.style).color).toBe(
+      '#FFFFFF',
+    );
+  });
+
+  it('memberi bayangan pada teks sebagai jaring pengaman kontras', async () => {
+    /*
+     * Gradasi panggung menutupi kaki layar, tetapi teks tetap bisa meleset ke
+     * area yang lebih terang pada layar pendek. Bayangan tipis menjaga kalimatnya
+     * tetap terbaca tanpa perlu menggelapkan seluruh gambar.
+     *
+     * BUKTI MUTASI: hapus `textShadowColor` dari `styles.body`, lalu uji ini
+     * memerah.
+     */
+    await render(
+      <TestProviders>
+        <StageText
+          line={{ beatId: 'b5', kind: 'narrate', speakerNpcId: null, text: 'Narasi.' }}
+          speakerName={null}
+          onRevealed={() => {}}
+          onAdvance={() => {}}
+          instant
+        />
+      </TestProviders>,
+    );
+
+    const gaya = StyleSheet.flatten(screen.getByText('Narasi.').props.style);
+    expect(String(gaya.textShadowColor)).toBe('rgba(0, 0, 0, 0.85)');
+    expect(gaya.textShadowRadius).toBeGreaterThan(0);
+  });
+});
+
+describe('StageText — tanda kutip', () => {
+  /*
+   * Uji ini MERENDER komponennya, bukan memanggil helper.
+   *
+   * Bentuk sebelumnya menguji `quoteDialogue()` secara langsung — dan helper itu
+   * ternyata tidak pernah dipakai `StageText`, sehingga uji tersebut hijau
+   * terlepas dari apa yang dilihat pemain. BUKTI MUTASI: hapus
+   * `const needsQuotes = …isQuoted(fullText)` dan ganti dengan `true`, lalu uji
+   * "tidak mengutip dua kali" memerah.
+   */
+  it('mengutip ucapan tokoh', async () => {
+    await render(
+      <TestProviders>
+        <StageText
+          line={{ beatId: 'q1', kind: 'say', speakerNpcId: 'npc_1', text: 'Aku tidak bisa berhenti.' }}
+          speakerName="Rina"
+          onRevealed={() => {}}
+          onAdvance={() => {}}
+          instant
+        />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('“Aku tidak bisa berhenti.”')).toBeTruthy();
+  });
+
+  it('tidak mengutip dua kali bila model sudah menuliskan kutipnya', async () => {
+    await render(
+      <TestProviders>
+        <StageText
+          line={{ beatId: 'q2', kind: 'say', speakerNpcId: 'npc_1', text: '“Sudah dikutip.”' }}
+          speakerName="Rina"
+          onRevealed={() => {}}
+          onAdvance={() => {}}
+          instant
+        />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('“Sudah dikutip.”')).toBeTruthy();
+    expect(screen.queryByText('““Sudah dikutip.””')).toBeNull();
+  });
+});
+
+describe('StageHud', () => {
+  it('menampilkan hubungan dan tempat dengan data yang nyata', async () => {
+    await render(
+      <TestProviders>
+        <StageHud
+          relationStatus="dekat"
+          relationName="Elysia"
+          locationLabel="Kedai Teh"
+          autoActive={false}
+          onToggleAuto={() => {}}
+          onHideUi={() => {}}
+        />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('Hubungan')).toBeTruthy();
+    expect(screen.getByText('Dekat')).toBeTruthy();
+    expect(screen.getByText('Tempat')).toBeTruthy();
+    expect(screen.getByText('Kedai Teh')).toBeTruthy();
+  });
+
+  it('memakai label netral saat tidak ada tokoh di panggung', async () => {
+    // Adegan tanpa tokoh tetap menampilkan blok hubungan — dan tidak boleh
+    // kosong atau menampilkan id mentah.
+    await render(
+      <TestProviders>
+        <StageHud
+          relationStatus={null}
+          relationName={null}
+          locationLabel={null}
+          autoActive={false}
+          onToggleAuto={() => {}}
+          onHideUi={() => {}}
+        />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('Belum diketahui')).toBeTruthy();
+  });
+
+  it('menandai mode Auto yang menyala lewat `selected`, bukan hanya warna', async () => {
+    /*
+     * Penanda mode aktif tidak boleh bergantung pada warna saja: pembaca layar
+     * tidak membacakannya, dan pemain dengan buta warna tidak melihat bedanya
+     * (NFR-01).
+     */
+    const onToggleAuto = jest.fn();
+    await render(
+      <TestProviders>
+        <StageHud
+          relationStatus="normal"
+          relationName={null}
+          locationLabel="Kantor"
+          autoActive
+          onToggleAuto={onToggleAuto}
+          onHideUi={() => {}}
+        />
+      </TestProviders>,
+    );
+
+    const auto = screen.getByTestId('player-hud-auto');
+    expect(auto.props.accessibilityState?.selected).toBe(true);
+
+    await fireEvent.press(auto);
+    expect(onToggleAuto).toHaveBeenCalledTimes(1);
+  });
+
+  it('memanggil aksi sembunyikan UI', async () => {
+    const onHideUi = jest.fn();
+    await render(
+      <TestProviders>
+        <StageHud
+          relationStatus="normal"
+          relationName={null}
+          locationLabel="Kantor"
+          autoActive={false}
+          onToggleAuto={() => {}}
+          onHideUi={onHideUi}
+        />
+      </TestProviders>,
+    );
+
+    await fireEvent.press(screen.getByTestId('player-hud-hide'));
+    expect(onHideUi).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('StageNav', () => {
+  it('meneruskan aksi keluar', async () => {
+    const onBack = jest.fn();
+    await render(
+      <TestProviders>
+        <StageNav onBack={onBack} backLabel="Kembali ke menu" />
+      </TestProviders>,
+    );
+
+    await fireEvent.press(screen.getByTestId('player-nav-back'));
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * HANYA satu tombol di kaki panggung.
+   *
+   * Pemilik produk menghapus panah kanan. Sebelumnya layar punya TIGA isyarat
+   * maju sekaligus (ketuk di mana saja, tombol `»`, dan petunjuk "Ketuk untuk
+   * lanjut"), dan itu keluhan yang sama dari tiga peninjau independen.
+   *
+   * BUKTI MUTASI: kembalikan tombol `player-nav-forward`, lalu uji ini memerah.
+   */
+  it('TIDAK punya tombol maju', async () => {
+    await render(
+      <TestProviders>
+        <StageNav onBack={() => {}} backLabel="Kembali ke menu" />
+      </TestProviders>,
+    );
+
+    expect(screen.queryByTestId('player-nav-forward')).toBeNull();
+    expect(screen.getAllByRole('button')).toHaveLength(1);
+  });
+
+  it('memakai target sentuh minimum 44 px', async () => {
+    /*
+     * Peninjau QA mengukur tombol ini dan menemukannya 38 px — di bawah
+     * `touchTarget` (48) yang dipakai aplikasi ini di tempat lain, dan lebih
+     * kecil daripada referensi. Dinaikkan ke 44 px + `hitSlop`.
+     *
+     * BUKTI MUTASI: kembalikan `width: 38`, lalu uji ini memerah.
+     */
+    await render(
+      <TestProviders>
+        <StageNav onBack={() => {}} backLabel="Kembali ke menu" />
+      </TestProviders>,
+    );
+
+    const tombol = screen.getByTestId('player-nav-back');
+    const gaya = StyleSheet.flatten(tombol.props.style);
+    expect(gaya.width).toBe(44);
+    expect(gaya.height).toBe(44);
   });
 });
 
@@ -163,6 +389,25 @@ describe('ChoiceSheet', () => {
     await fireEvent.press(screen.getByText('Jelaskan singkat'));
 
     expect(onSelect).not.toHaveBeenCalled();
+  });
+
+  it('menulis pertanyaannya dengan warna yang terbaca di atas gambar', async () => {
+    /*
+     * Pertanyaan ini duduk di atas ilustrasi panggung yang digelapkan gradasi,
+     * bukan di atas permukaan aplikasi. Dengan `tone="secondary"` ia bernilai
+     * GELAP pada tema terang dan lenyap ke dalam gambarnya.
+     *
+     * BUKTI MUTASI: kembalikan `tone="secondary"` pada prompt di `ChoiceSheet`,
+     * lalu uji ini memerah.
+     */
+    await render(
+      <TestProviders>
+        <ChoiceSheet decision={decision} onSelect={() => {}} />
+      </TestProviders>,
+    );
+
+    const gaya = StyleSheet.flatten(screen.getByText('Bagaimana kamu merespons?').props.style);
+    expect(gaya.color).toBe('#FFFFFF');
   });
 });
 
@@ -356,6 +601,31 @@ describe('PlayerControls', () => {
     const teks = StyleSheet.flatten(screen.getByText('Auto').props.style);
     expect(String(teks.fontWeight)).toBe('700');
   });
+
+  /**
+   * Nada warna baris kontrol harus dapat diminta `onMedia`.
+   *
+   * Di layar pemain baris ini menumpang di atas ILUSTRASI. Dengan nada bawaan
+   * (`'primary'`), labelnya bernilai gelap pada tema terang — terbaca di atas
+   * langit-langit kantor yang terang, tetapi lenyap begitu adegannya berlatar
+   * gelap. `onMedia` bernilai putih pada kedua tema.
+   *
+   * BUKTI MUTASI: hapus `tone={tone}` pada `PlayerControls` (kembalikan ke
+   * `'primary'`), lalu uji ini memerah.
+   */
+  it('mengikuti nada `onMedia` saat diminta', async () => {
+    await render(
+      <TestProviders>
+        <PlayerControls
+          tone="onMedia"
+          items={[{ id: 'log', icon: 'book', label: 'Riwayat', onPress: () => {} }]}
+        />
+      </TestProviders>,
+    );
+
+    const teks = StyleSheet.flatten(screen.getByText('Riwayat').props.style);
+    expect(teks.color).toBe('#FFFFFF');
+  });
 });
 
 describe('RelationNotice', () => {
@@ -403,5 +673,144 @@ describe('RelationNotice', () => {
     await fireEvent.press(screen.getByLabelText('Tutup pemberitahuan'));
 
     expect(onDismiss).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('NPCInspector — daftar tokoh dan hubungannya', () => {
+  /*
+   * Pemilik produk menjelaskan fungsi panel ini: "tokoh itu untuk liat list nama
+   * nama tokoh/npc (yang ada karakter) beserta hubungan statusnya".
+   *
+   * Komponen ini sebelumnya TIDAK PUNYA SATU PUN UJI. Yang dijaga di sini
+   * persis yang ia sebutkan: nama, status hubungan, dan alasan publiknya.
+   */
+  const TOKOH = [
+    {
+      npcId: 'npc_rina',
+      name: 'Rina',
+      role: 'Atasanmu',
+      soul: 'Keras di permukaan, tetapi menyimpan banyak hal.',
+      relation: 'waspada' as const,
+      reasonPublic: 'Kamu menyebut masa lalu di depan tim.',
+    },
+    {
+      npcId: 'npc_leo',
+      name: 'Leo',
+      role: 'Rekan senior',
+      soul: 'Santai sampai orang lain mengira ia tidak peduli.',
+      relation: 'dekat' as const,
+      reasonPublic: 'Ia menolongmu tanpa diminta.',
+    },
+  ];
+
+  it('mendaftar nama, peran, dan status hubungan setiap tokoh', async () => {
+    await render(
+      <TestProviders>
+        <NPCInspector visible characters={TOKOH} onClose={() => {}} />
+      </TestProviders>,
+    );
+
+    // Nama muncul di kartu DAN di lencana hubungannya, jadi dihitung, bukan dicari satu.
+    expect(screen.getAllByText('Rina').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Leo').length).toBeGreaterThan(0);
+    expect(screen.getByText('Atasanmu')).toBeTruthy();
+
+    // Status hubungan ditampilkan lewat label terjemahan, bukan enum mentah.
+    expect(screen.getAllByText('Waspada').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('Dekat').length).toBeGreaterThan(0);
+  });
+
+  it('menyertakan ALASAN perubahan hubungan, bukan hanya statusnya', async () => {
+    /*
+     * FR-19: perubahan hubungan harus dapat dipercaya pemain, dan itu hanya
+     * mungkin bila alasannya ikut ditampilkan. Status tanpa alasan terbaca
+     * seperti angka yang berubah sendiri.
+     */
+    await render(
+      <TestProviders>
+        <NPCInspector visible characters={TOKOH} onClose={() => {}} />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('Kamu menyebut masa lalu di depan tim.')).toBeTruthy();
+    expect(screen.getByText('Ia menolongmu tanpa diminta.')).toBeTruthy();
+  });
+
+  it('menampilkan keadaan kosong sebelum ada tokoh yang muncul', async () => {
+    // Tokoh hanya masuk daftar setelah muncul di panggung (punya potret).
+    await render(
+      <TestProviders>
+        <NPCInspector visible characters={[]} onClose={() => {}} />
+      </TestProviders>,
+    );
+
+    expect(screen.getByText('Belum ada tokoh yang muncul di perjalanan ini.')).toBeTruthy();
+  });
+
+  it('memanggil onClose dari tombol tutup', async () => {
+    const onClose = jest.fn();
+    await render(
+      <TestProviders>
+        <NPCInspector visible characters={TOKOH} onClose={onClose} />
+      </TestProviders>,
+    );
+
+    await fireEvent.press(screen.getByTestId('inspector-close'));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('AutoDelayControl — pengatur jeda Auto', () => {
+  /*
+   * Kontrol ini menutup kontrol MATI: `engine.setAutoDelay` dan `autoDelayMs`
+   * sudah ada sejak awal, lengkap dengan penjepitan 1–5 detik, tetapi NOL
+   * pemanggil. Jeda Auto terpaku dan pemain tidak dapat mengubahnya — kemampuan
+   * yang tidak pernah muncul, tanpa satu pun yang tampak rusak.
+   */
+  it('menampilkan seluruh pilihan jeda', async () => {
+    await render(
+      <TestProviders>
+        <AutoDelayControl value={2000} onChange={() => {}} />
+      </TestProviders>,
+    );
+
+    for (const ms of AUTO_DELAY_OPTIONS_MS) {
+      expect(screen.getByTestId(`auto-delay-${String(ms)}`)).toBeTruthy();
+    }
+  });
+
+  it('menandai pilihan yang sedang aktif lewat `selected`, bukan hanya warna', async () => {
+    await render(
+      <TestProviders>
+        <AutoDelayControl value={3000} onChange={() => {}} />
+      </TestProviders>,
+    );
+
+    expect(screen.getByTestId('auto-delay-3000').props.accessibilityState?.selected).toBe(true);
+    expect(screen.getByTestId('auto-delay-1000').props.accessibilityState?.selected).toBe(false);
+  });
+
+  it('mengirim nilai dalam milidetik saat dipilih', async () => {
+    const onChange = jest.fn();
+    await render(
+      <TestProviders>
+        <AutoDelayControl value={2000} onChange={onChange} />
+      </TestProviders>,
+    );
+
+    await fireEvent.press(screen.getByTestId('auto-delay-5000'));
+    expect(onChange).toHaveBeenCalledWith(5000);
+  });
+
+  it('jeda bawaan HARUS salah satu pilihan yang tersedia', () => {
+    /*
+     * Kalau bawaan tidak cocok dengan pilihan mana pun, pengaturnya terbuka
+     * tanpa satu pun pilihan tersorot — dan itu terbaca seperti kontrol yang
+     * rusak, bukan seperti nilai bawaan.
+     *
+     * BUKTI MUTASI: ubah `DEFAULT_AUTO_DELAY_MS` menjadi 2200, lalu uji ini
+     * memerah.
+     */
+    expect(AUTO_DELAY_OPTIONS_MS).toContain(DEFAULT_AUTO_DELAY_MS);
   });
 });

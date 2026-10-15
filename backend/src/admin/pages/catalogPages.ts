@@ -223,6 +223,46 @@ export async function worldsForm(ctx: AdminPageContext, worldId: string | null):
 </div>`
     : '';
 
+  const publishedSnapshots = world
+    ? await Promise.all(
+        versions
+          .filter((version) => version.publishedAt !== null)
+          .map(async (version) => ({
+            version,
+            entries: await ctx.catalog.listRelationshipVocabulary(world.worldId, version.worldVersion),
+          })),
+      )
+    : [];
+  const relationshipSnapshotCards = publishedSnapshots.map(({ version, entries }) => {
+    const entriesRows = entries.map(
+      (entry) => html`<tr>
+  <td class="mono">${esc(entry.relationId)}</td>
+  <td>${esc(entry.labelId)}<div class="muted">${esc(entry.labelEn)}</div></td>
+  <td>${escOr(entry.meaning, '—')}</td>
+  <td>${escOr(entry.behaviourHint, '—')}</td>
+</tr>`,
+    );
+    return html`<div class="card">
+  <h3 style="margin-top:0">Versi ${String(version.worldVersion)} · ${esc(version.title)} (${esc(worldStatusLabel(version.status))})</h3>
+  <p class="sub" style="margin-top:0">
+    Ini adalah kosakata yang disimpan pada versi ini, bukan master yang berlaku sekarang.
+    Status yang tercantum tetap tersedia untuk versi ini meskipun master kemudian dinonaktifkan.
+  </p>
+  ${table(['ID', 'Label', 'Arti untuk mesin cerita', 'Contoh sikap'], entriesRows, 'Snapshot versi ini tidak memuat status hubungan.')}
+</div>`;
+  });
+  const relationshipSnapshotSection = world
+    ? html`<h2>Kosakata hubungan yang dibekukan</h2>
+<div class="notice info">
+  <strong>perubahan master berlaku untuk versi yang diterbitkan sesudahnya</strong>.
+  Daftar berikut dibaca dari snapshot versi terbit, bukan dari master saat ini; status yang
+  tercantum adalah kosakata yang tersedia pada versi tersebut.
+</div>
+${relationshipSnapshotCards.length > 0
+    ? relationshipSnapshotCards
+    : html`<div class="card"><p class="sub" style="margin:0">Belum ada versi yang pernah diterbitkan.</p></div>`}`
+    : '';
+
   const deleteCard = world
     ? html`<h2>Hapus</h2>
 <div class="card">
@@ -306,7 +346,8 @@ ${versionNotice}
     <a href="/admin/worlds"><button class="ghost" type="button">Batal</button></a>
   </div>
 </form>
-${deleteCard}
-${historyCard}`;
+${historyCard}
+${relationshipSnapshotSection}
+${deleteCard}`;
 }
 

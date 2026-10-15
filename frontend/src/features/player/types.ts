@@ -15,6 +15,7 @@ import type {
   GatewayError,
   MemorySnapshot,
   RelationEntry,
+  RelationVocabularyEntry,
   TurnResultEnvelope,
 } from '@/domain/types';
 
@@ -76,6 +77,15 @@ export type PlaybackState = {
   /** Hubungan hasil beat yang SUDAH dibaca; bukan hasil seluruh beat committed. */
   relations: RelationEntry[];
 
+  /**
+   * Kosakata hubungan versi dunia ini, apa adanya dari sesi.
+   *
+   * Disimpan di state, bukan diambil ulang saat render: labelnya harus tetap
+   * sama sepanjang perjalanan, dan mengambilnya ulang per komponen berarti satu
+   * permintaan jaringan untuk setiap kartu tokoh.
+   */
+  relationVocabulary: RelationVocabularyEntry[];
+
   notices: SceneNotice[];
 
   status: PlayerStatus;
@@ -114,6 +124,14 @@ export type PlayerAction =
         beats: Beat[];
         /** Hubungan AWAL dari definisi dunia, bukan hasil beat. */
         relations: RelationEntry[];
+        /**
+         * Kosakata hubungan versi dunia ini, dari sesi.
+         *
+         * Opsional supaya pemanggil lama (mis. pemulihan dari penyimpanan lokal
+         * sebelum sesi termuat) tidak wajib mengisinya — dan bila kosong, label
+         * bawaan yang dipakai, bukan id mentah.
+         */
+        relationVocabulary?: RelationVocabularyEntry[];
         memory: MemorySnapshot;
         simulator: boolean;
         /**
@@ -136,7 +154,15 @@ export type PlayerAction =
   | { type: 'SET_AUTO_DELAY'; delayMs: number }
   | { type: 'RESET'; payload: PlaybackState };
 
-export const DEFAULT_AUTO_DELAY_MS = 2200;
+/**
+ * Jeda bawaan Auto.
+ *
+ * Nilainya SENGAJA sama dengan salah satu pilihan di `AutoDelayControl`
+ * (`AUTO_DELAY_OPTIONS_MS`). Kalau bawaan tidak cocok dengan pilihan mana pun,
+ * pengatur jeda terbuka tanpa satu pun pilihan tersorot — dan itu terbaca seperti
+ * kontrol yang rusak, bukan seperti nilai bawaan.
+ */
+export const DEFAULT_AUTO_DELAY_MS = 2000;
 export const MIN_AUTO_DELAY_MS = 1000;
 export const MAX_AUTO_DELAY_MS = 5000;
 
@@ -161,6 +187,7 @@ export function createEmptyPlaybackState(
     lineRevealed: false,
     decision: null,
     relations: [],
+    relationVocabulary: [],
     notices: [],
     status: 'loading',
     error: null,

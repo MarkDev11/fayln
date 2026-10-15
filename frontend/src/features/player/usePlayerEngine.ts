@@ -33,6 +33,20 @@ export type PlayerEngineOptions = {
    * tengah cerita.
    */
   responseLocale: ResponseLocale;
+  /**
+   * Menahan laju Auto tanpa mematikannya.
+   *
+   * Dipakai saat overlay terbuka (Riwayat, Tokoh, dialog keluar) atau saat UI
+   * disembunyikan: pemain tidak sedang membaca, jadi Auto tidak boleh memajukan
+   * cerita di belakang punggungnya. Tetapi ia juga TIDAK dimatikan — begitu
+   * overlay ditutup, Auto melanjutkan sendiri.
+   *
+   * Bentuk sebelumnya memanggil `pauseAuto()` yang mengirim `SET_AUTO false`,
+   * sehingga membuka Riwayat mematikan Auto secara permanen dan pemain harus
+   * menyalakannya lagi. Keputusan pemilik produk: Auto menyala sampai pemain
+   * mematikannya sendiri — jadi overlay menahan, bukan mematikan.
+   */
+  suspended?: boolean;
   /** Disuntikkan pengujian; default memakai penyimpanan yang tersedia. */
   store?: PlaybackStore;
   /** Mematikan timer Auto pada pengujian. */
@@ -106,8 +120,8 @@ export function usePlayerEngine(options: PlayerEngineOptions): PlayerEngine {
         worldId: options.worldId,
         worldVersion: options.worldVersion,
         personaName: options.personaName,
-        beats: options.initialBeats,
-        relations: options.initialRelations,
+        beats: [],
+        relations: [],
         memory: options.memory,
         simulator: options.simulator,
       }),
@@ -312,6 +326,7 @@ export function usePlayerEngine(options: PlayerEngineOptions): PlayerEngine {
     // Auto hanya memajukan beat yang SUDAH tersedia (D-15, FR-20).
     const shouldRun =
       state.auto &&
+      !options.suspended &&
       state.lineRevealed &&
       state.decision === null &&
       state.error === null &&
@@ -330,6 +345,7 @@ export function usePlayerEngine(options: PlayerEngineOptions): PlayerEngine {
   }, [
     autoEnabled,
     state.auto,
+    options.suspended,
     state.lineRevealed,
     state.decision,
     state.error,

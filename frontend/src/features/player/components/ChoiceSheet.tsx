@@ -36,7 +36,14 @@ export function ChoiceSheet({
 
   return (
     <View testID={testID} style={styles.root}>
-      <Text variant="label" tone="secondary" style={styles.prompt}>
+      {/*
+        * `onMedia`, bukan `secondary`.
+        *
+        * Kalimat pertanyaan ini TIDAK duduk di atas permukaan aplikasi, melainkan
+        * di atas ilustrasi panggung yang digelapkan gradasi. `secondary` bernilai
+        * gelap pada tema terang, sehingga pertanyaannya lenyap ke dalam gambar.
+        */}
+      <Text variant="label" tone="onMedia" style={styles.prompt}>
         {decision.prompt}
       </Text>
 

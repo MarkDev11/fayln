@@ -20,8 +20,9 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { freezeRelationVocabulary } from './relationsRepository';
 import type { Database, DbClient } from '../db/pool';
-import type { ContentRating, GenreId, ResponseLocale } from '../contracts/types';
+import type { ContentRating, GenreId, RelationVocabularyEntry, ResponseLocale } from '../contracts/types';
 
 /**
  * Empat keadaan dunia, sesuai CHECK constraint pada `world_versions`.
@@ -233,6 +234,36 @@ export class CatalogAdminRepository {
     }));
   }
 
+  /** Kosakata hubungan yang benar-benar tersimpan pada snapshot versi ini. */
+  async listRelationshipVocabulary(
+    worldId: string,
+    worldVersion: number,
+  ): Promise<RelationVocabularyEntry[]> {
+    const { rows } = await this.db.query<{
+      relation_id: string;
+      label_id: string;
+      label_en: string;
+      meaning: string;
+      behaviour_hint: string;
+      position: number;
+    }>(
+      `SELECT relation_id, label_id, label_en, meaning, behaviour_hint, position
+       FROM world_relationship_definitions
+       WHERE world_id = $1 AND world_version = $2
+       ORDER BY position ASC, relation_id ASC`,
+      [worldId, worldVersion],
+    );
+
+    return rows.map((row) => ({
+      relationId: row.relation_id,
+      labelId: row.label_id,
+      labelEn: row.label_en,
+      meaning: row.meaning,
+      behaviourHint: row.behaviour_hint,
+      position: row.position,
+    }));
+  }
+
   /**
    * Menyimpan dunia: membuat versi pertama, atau menyalin ke versi baru.
    *
@@ -328,6 +359,18 @@ export class CatalogAdminRepository {
         // hapus genre dan lokale hasil salinan karena keduanya akan ditulis
         // ulang di bawah mengikuti pilihan admin.
         await this.copyVersionInto(client, worldId, previousMax, worldVersion);
+      }
+
+      /*
+       * Versi yang LANGSUNG terbit membekukan kosakatanya di sini.
+       *
+       * Versi draf memakai salinan dari versi sebelumnya (lihat `copyVersionInto`)
+       * dan dibekukan saat diterbitkan lewat wizard. Kedua jalur harus ada:
+       * dunia dapat lahir langsung terbit dari halaman ini, dan tanpa baris ini
+       * dunia seperti itu terbit tanpa satu pun status hubungan yang sah.
+       */
+      if (finalStatus === 'published') {
+        await freezeRelationVocabulary(client, worldId, worldVersion);
       }
 
       // Genre dan lokale adalah himpunan: lebih mudah dihapus lalu ditulis ulang
@@ -522,10 +565,30 @@ export class CatalogAdminRepository {
           'name',
           'role',
           'public_backstory',
+          // WAJIB ada di sini, sama alasannya dengan kolom master di bawah:
+          // daftar ini TETAP, jadi kolom yang terlewat hilang dari versi baru
+          // tanpa galat. Sebelum baris ini ditambahkan, menyunting sebuah dunia
+          // membuang SOUL setiap karakternya — kepribadian mendalam yang ditulis
+          // admin lenyap setiap kali ia menyimpan perubahan lain, dan yang
+          // tersisa hanya karakter yang datar.
+          'soul',
           'initial_relation',
           'default_portrait_asset_id',
           'position',
+          'master_character_id',
         ],
+      },
+      /*
+       * Kosakata hubungan versi ini ikut disalin.
+       *
+       * Tanpa baris ini, versi baru lahir tanpa kosakata sama sekali — dan
+       * setiap giliran sesudahnya kehilangan daftar status yang sah, sehingga
+       * model mengarang status dan seluruh perubahannya dibuang. Kegagalan itu
+       * tidak menghasilkan galat apa pun; hanya hubungan yang berhenti berubah.
+       */
+      {
+        table: 'world_relationship_definitions',
+        columns: ['relation_id', 'label_id', 'label_en', 'meaning', 'behaviour_hint', 'position'],
       },
       { table: 'world_character_traits', columns: ['npc_id', 'position', 'trait'] },
       { table: 'world_character_expressions', columns: ['npc_id', 'position', 'expression'] },

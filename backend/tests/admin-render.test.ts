@@ -34,6 +34,7 @@ import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
+import { RelationsRepository } from '../src/admin/relationsRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ProvidersRepository } from '../src/admin/providersRepository';
@@ -116,6 +117,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     models: new ModelsRepository(ctx.db),
     drafts: new WorldDraftRepository(ctx.db),
     genres: new GenresRepository(ctx.db),
+    relations: new RelationsRepository(ctx.db),
     characters: new CharactersRepository(ctx.db),
     locations: new LocationsRepository(ctx.db),
     providers: new ProvidersRepository(ctx.db),
@@ -621,7 +623,18 @@ describe('bilah sisi ala System Settings', () => {
     const body = await sweep(cookie, '/admin');
 
     const icons = body.match(/class="nav__icon"/g) ?? [];
-    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(14);
+    /*
+     * Jumlahnya harus SAMA dengan jumlah menu di `src/admin/html.ts`.
+     *
+     * Angka ini sengaja ditulis harfiah, bukan dihitung dari daftar menunya:
+     * uji yang menghitung dari sumber yang sama tidak akan pernah memerah saat
+     * sebuah menu ditambahkan tanpa ikonnya. Yang dijaga justru saat keduanya
+     * berbeda — dan itu terjadi setiap kali ada menu baru.
+     *
+     * 15 menu: Dasbor, Dunia, Karakter, Lokasi, Kategori lokasi, Genre,
+     * Hubungan, Aset, Akun, Model, Provider, Promosi, Pengaturan, Admin, Audit.
+     */
+    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(15);
     expect(body).toContain('--i-a:#0a84ff;--i-b:#0055c4');
     expect(body).toMatch(/nav__icon[^>]*>\s*<svg/);
     expect(body, 'ikon tidak boleh dimuat dari jaringan').not.toMatch(/<img[^>]+src="https?:/);

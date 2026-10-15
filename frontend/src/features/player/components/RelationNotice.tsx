@@ -6,7 +6,8 @@ import { Text } from '@/components/Text';
 
 import type { SceneNotice } from '../types';
 
-import { relationLabelKey } from '@/domain/labels';
+import { relationLabel } from '@/domain/labels';
+import type { RelationVocabularyEntry } from '@/domain/types';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/theme/ThemeProvider';
 import { radius, space } from '@/theme/tokens';
@@ -16,6 +17,13 @@ export type RelationNoticeProps = {
   /** Nama tampil NPC; diambil dari definisi dunia, bukan dari payload AI. */
   npcName: string;
   onDismiss: () => void;
+  /**
+   * Kosakata hubungan versi dunia ini.
+   *
+   * Opsional supaya komponen tetap dapat dirender tanpa sesi (mis. dari riwayat
+   * yang dipulihkan); saat itu label bawaan yang dipakai, bukan id mentah.
+   */
+  relationVocabulary?: readonly RelationVocabularyEntry[];
   testID?: string;
 };
 
@@ -25,11 +33,17 @@ export type RelationNoticeProps = {
  * Muncul hanya setelah beat penyebabnya dibaca (AC-11) dan selalu menyertakan
  * alasan publik, sehingga pemain tahu MENGAPA hubungan berubah (FR-19).
  */
-export function RelationNotice({ notice, npcName, onDismiss, testID }: RelationNoticeProps) {
+export function RelationNotice({
+  notice,
+  npcName,
+  onDismiss,
+  relationVocabulary = [],
+  testID,
+}: RelationNoticeProps) {
   const { colors } = useTheme();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
-  const statusLabel = t(relationLabelKey(notice.status));
+  const statusLabel = relationLabel(notice.status, relationVocabulary, locale, t);
 
   return (
     <View

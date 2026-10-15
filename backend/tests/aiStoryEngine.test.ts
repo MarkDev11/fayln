@@ -13,12 +13,36 @@ import {
   AiStoryEngine,
   cocokkanEkspresi,
   cocokkanNpc,
+  cocokkanStatus,
   periksaAdegan,
 } from '../src/services/aiStoryEngine';
 import { cadanganPertanyaan, MAX_SCENE_BEATS } from '../src/services/storyPrompt';
-import { DeterministicStoryEngine } from '../src/services/storyEngine';
+import { DeterministicStoryEngine, karakterDenganEkspresiTampil } from '../src/services/storyEngine';
 import type { StoryContext } from '../src/services/storyEngine';
-import type { AssetManifest, NPCPublicDTO } from '../src/contracts/types';
+import type { AssetManifest, NPCPublicDTO, RelationVocabularyEntry } from '../src/contracts/types';
+
+/**
+ * Kosakata status untuk pengujian.
+ *
+ * Sejak status hubungan menjadi DATA, `periksaAdegan` dan `cocokkanStatus`
+ * tidak lagi membaca daftar di dalam kode: kosakatanya WAJIB dikirim pemanggil.
+ * Di produksi yang mengirim adalah `journeyService`, dari salinan yang dibekukan
+ * pada versi dunia. Di sini bentuk yang sama disusun tangan.
+ *
+ * BUKTI MUTASI: kosongkan array ini, lalu uji "menerima status yang sah"
+ * memerah — dan itu memang yang diinginkan: tanpa kosakata, tidak ada status
+ * yang sah.
+ */
+const KOSAKATA: RelationVocabularyEntry[] = [
+  { relationId: 'normal', labelId: 'Normal', labelEn: 'Neutral', meaning: 'Netral.', behaviourHint: '', position: 1 },
+  { relationId: 'hangat', labelId: 'Hangat', labelEn: 'Warm', meaning: 'Hangat.', behaviourHint: '', position: 2 },
+  { relationId: 'waspada', labelId: 'Waspada', labelEn: 'Wary', meaning: 'Waspada.', behaviourHint: '', position: 3 },
+  { relationId: 'tegang', labelId: 'Tegang', labelEn: 'Tense', meaning: 'Tegang.', behaviourHint: '', position: 4 },
+  { relationId: 'renggang', labelId: 'Renggang', labelEn: 'Distant', meaning: 'Renggang.', behaviourHint: '', position: 5 },
+  { relationId: 'dekat', labelId: 'Dekat', labelEn: 'Close', meaning: 'Dekat.', behaviourHint: '', position: 6 },
+  { relationId: 'sayang', labelId: 'Sayang', labelEn: 'Fond', meaning: 'Sayang.', behaviourHint: '', position: 7 },
+  { relationId: 'cinta', labelId: 'Cinta', labelEn: 'In love', meaning: 'Cinta.', behaviourHint: '', position: 8 },
+];
 
 const MANIFEST = {
   cover: null,
@@ -60,7 +84,7 @@ function adeganSah(): unknown {
 
 describe('periksaAdegan', () => {
   it('menerima adegan yang sah, dan menambahkan keputusannya sebagai beat', () => {
-    const hasil = periksaAdegan(adeganSah(), MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adeganSah(), MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(true);
     if (hasil.ok) {
@@ -78,7 +102,7 @@ describe('periksaAdegan', () => {
     const adegan = adeganSah() as Record<string, unknown>;
     (adegan.beats as unknown[])[0] = { type: 'setBackground', assetId: 'bg_ruang_rapat_lt12' };
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
@@ -90,7 +114,7 @@ describe('periksaAdegan', () => {
     const adegan = adeganSah() as Record<string, unknown>;
     (adegan.beats as unknown[])[3] = { type: 'say', npcId: 'npc_budi', text: 'Halo.' };
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
@@ -107,7 +131,7 @@ describe('periksaAdegan', () => {
       assetId: 'p_rina_senyum',
     };
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
@@ -120,7 +144,7 @@ describe('periksaAdegan', () => {
     const adegan = adeganSah() as Record<string, unknown>;
     delete adegan.decision;
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
@@ -133,7 +157,7 @@ describe('periksaAdegan', () => {
     const keputusan = adegan.decision as Record<string, unknown>;
     keputusan.options = (keputusan.options as unknown[]).slice(0, 2);
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
@@ -160,7 +184,7 @@ describe('periksaAdegan', () => {
       text: `Kalimat ${i + 1}.`,
     }));
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(true);
     if (hasil.ok) {
@@ -180,7 +204,7 @@ describe('periksaAdegan', () => {
     ];
     void isi;
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(true);
     if (hasil.ok) {
@@ -196,7 +220,7 @@ describe('periksaAdegan', () => {
       text: 'Sesuatu.',
     }));
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
@@ -210,7 +234,7 @@ describe('periksaAdegan', () => {
     const adegan = adeganSah() as Record<string, unknown>;
     (adegan.beats as unknown[]).push({ type: 'presentChoices', options: [] });
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(false);
     if (!hasil.ok) {
@@ -227,7 +251,7 @@ describe('periksaAdegan', () => {
       o.optionId = 'sama';
     });
 
-    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(true);
     if (hasil.ok) {
@@ -247,6 +271,7 @@ describe('aksiPemain', () => {
     premise: 'P',
     characters: [],
     manifest: MANIFEST,
+    relationVocabulary: KOSAKATA,
     personaName: 'Marky',
     turnOrdinal: 2,
   };
@@ -273,6 +298,7 @@ describe('AiStoryEngine', () => {
     synopsis: 'Hari pertama kerja.',
     characters: KARAKTER,
     manifest: MANIFEST,
+    relationVocabulary: KOSAKATA,
     personaName: 'Marky',
     personaAge: 24,
     turnOrdinal: 1,
@@ -522,6 +548,7 @@ describe('cocokkanNpc', () => {
       },
       MANIFEST,
       KARAKTER,
+      KOSAKATA,
     );
 
     expect(hasil.ok).toBe(false);
@@ -561,7 +588,7 @@ describe('cadanganPertanyaan', () => {
       decision: { options: [{ label: 'a' }, { label: 'b' }, { label: 'c' }] },
     };
 
-    const inggris = periksaAdegan(adegan, MANIFEST, KARAKTER, 'en-US');
+    const inggris = periksaAdegan(adegan, MANIFEST, KARAKTER, KOSAKATA, 'en-US');
     expect(inggris.ok).toBe(true);
     if (inggris.ok) {
       const pilihan = inggris.events.find((e) => e.type === 'presentChoices');
@@ -601,13 +628,13 @@ describe('penanda pemain @user', () => {
   });
 
   it('adegan tetap DITERIMA, bukan jatuh ke simulator', () => {
-    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER, KOSAKATA);
 
     expect(hasil.ok).toBe(true);
   });
 
   it('peristiwa pemain DIBUANG dan dilaporkan, tidak disembunyikan', () => {
-    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER, KOSAKATA);
 
     if (!hasil.ok) throw new Error('seharusnya diterima');
     expect(hasil.skipped).toHaveLength(2);
@@ -615,7 +642,7 @@ describe('penanda pemain @user', () => {
   });
 
   it('kalimat pemain TETAP dipakai, sebagai narasi — bukan dihilangkan', () => {
-    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER);
+    const hasil = periksaAdegan(adeganDenganPemain(), MANIFEST, KARAKTER, KOSAKATA);
 
     if (!hasil.ok) throw new Error('seharusnya diterima');
     const teks = hasil.events
@@ -637,6 +664,7 @@ describe('penanda pemain @user', () => {
       },
       MANIFEST,
       KARAKTER,
+      KOSAKATA,
     );
 
     expect(hasil.ok).toBe(false);
@@ -651,6 +679,7 @@ describe('penanda pemain @user', () => {
       },
       MANIFEST,
       KARAKTER,
+      KOSAKATA,
     );
 
     expect(hasil.ok).toBe(false);
@@ -669,6 +698,7 @@ describe('penanda pemain @user', () => {
         },
         MANIFEST,
         KARAKTER,
+        KOSAKATA,
       );
       expect(hasil.ok, `penanda ${penanda}`).toBe(true);
     }
@@ -736,7 +766,7 @@ describe('potret mengikuti ekspresi', () => {
 
   it('potret mengikuti ekspresi, bukan yang dikirim model', () => {
     // Model memilih ekspresi "terkejut" tetapi mengirim potret BAWAAN.
-    const hasil = periksaAdegan(adegan('terkejut', 'p_senyum'), MANIFEST_DUA, karakter());
+    const hasil = periksaAdegan(adegan('terkejut', 'p_senyum'), MANIFEST_DUA, karakter(), KOSAKATA);
 
     expect(hasil.ok).toBe(true);
     if (hasil.ok) {
@@ -748,8 +778,8 @@ describe('potret mengikuti ekspresi', () => {
   });
 
   it('ekspresi berbeda menghasilkan potret berbeda', () => {
-    const a = periksaAdegan(adegan('senyum', 'p_senyum'), MANIFEST_DUA, karakter());
-    const b = periksaAdegan(adegan('terkejut', 'p_senyum'), MANIFEST_DUA, karakter());
+    const a = periksaAdegan(adegan('senyum', 'p_senyum'), MANIFEST_DUA, karakter(), KOSAKATA);
+    const b = periksaAdegan(adegan('terkejut', 'p_senyum'), MANIFEST_DUA, karakter(), KOSAKATA);
 
     const potret = (h: typeof a) => {
       if (!h.ok) throw new Error('seharusnya diterima');
@@ -769,12 +799,268 @@ describe('potret mengikuti ekspresi', () => {
       ],
     } as unknown as AssetManifest;
 
-    const hasil = periksaAdegan(adegan('senyum', 'p_lain'), manifesKosong, karakter());
+    const hasil = periksaAdegan(adegan('senyum', 'p_lain'), manifesKosong, karakter(), KOSAKATA);
 
     expect(hasil.ok).toBe(true);
     if (hasil.ok) {
       const tampil = hasil.events.find((e) => e.type === 'showCharacter');
       expect(tampil?.type === 'showCharacter' ? tampil.assetId : null).toBe('p_lain');
     }
+  });
+});
+
+describe('relationshipDelta — status harus sah, dan yang salah DIBUANG', () => {
+  /*
+   * Keluhan pemilik produk: "cek fitur hubungan sudah full fungsional apa belum".
+   *
+   * Jawabannya TIDAK. Akarnya di sini: `status: peristiwa.status as never` —
+   * satu `as never` yang mematikan pemeriksaan tipe sekaligus memastikan tidak
+   * ada nilai yang diperiksa saat berjalan. Model bebas menulis "marah" atau
+   * "tersinggung"; nilainya tersimpan apa adanya, lalu di layar pemain
+   * `coerceRelationStatus` mengubahnya menjadi "Belum diketahui". Pemain melihat
+   * hubungannya tidak pernah berubah, tanpa satu pun galat di mana pun.
+   *
+   * BUKTI MUTASI: kembalikan `status: peristiwa.status as never`, lalu uji
+   * "membuang status yang tidak dikenal" memerah.
+   */
+  const adeganDenganStatus = (status: unknown, reasonPublic: unknown = 'Ia tersinggung.') => ({
+    beats: [
+      { type: 'setBackground', assetId: 'bg_kantor' },
+      { type: 'narrate', text: 'Kamu menyebut masa lalu di depan tim.' },
+      { type: 'relationshipDelta', npcId: 'npc_rina', status, reasonPublic },
+      { type: 'narrate', text: 'Rina menutup buku catatannya.' },
+    ],
+    decision: {
+      prompt: 'Apa yang kamu lakukan?',
+      options: [
+        { optionId: 'opt1', label: 'Minta maaf', description: 'Akui salahmu.' },
+        { optionId: 'opt2', label: 'Diam', description: 'Biarkan reda.' },
+        { optionId: 'opt3', label: 'Bercanda', description: 'Cairkan suasana.' },
+      ],
+    },
+  });
+
+  it('menerima status yang sah', () => {
+    const hasil = periksaAdegan(adeganDenganStatus('waspada'), MANIFEST, KARAKTER, KOSAKATA);
+
+    expect(hasil.ok).toBe(true);
+    const delta = hasil.ok
+      ? hasil.events.find((event) => event.type === 'relationshipDelta')
+      : undefined;
+    expect(delta).toMatchObject({ type: 'relationshipDelta', status: 'waspada' });
+  });
+
+  it('membuang status yang tidak dikenal TANPA menjatuhkan seluruh adegan', () => {
+    /*
+     * Ini pola "looping" yang sudah empat kali menggigit proyek ini: satu
+     * pelanggaran kecil menolak SELURUH adegan, lalu seluruh giliran jatuh ke
+     * simulator. Kehilangan satu perubahan hubungan jauh lebih ringan.
+     */
+    const hasil = periksaAdegan(adeganDenganStatus('marah'), MANIFEST, KARAKTER, KOSAKATA);
+
+    expect(hasil.ok).toBe(true);
+    if (!hasil.ok) return;
+    expect(hasil.events.some((event) => event.type === 'relationshipDelta')).toBe(false);
+    expect(hasil.skipped.join(' ')).toContain('status tidak dikenal');
+    // Sisa adegannya tetap utuh — ceritanya tidak ikut hilang.
+    expect(hasil.events.some((event) => event.type === 'narrate')).toBe(true);
+  });
+
+  it('membuang relationshipDelta tanpa reasonPublic', () => {
+    /*
+     * `reasonPublic` satu-satunya hal yang membuat perubahan hubungan dapat
+     * dipercaya pemain (FR-19). Delta tanpa alasan hanya memunculkan lencana
+     * status baru tanpa sebab. Mesin deterministik sudah menegakkan ini; mesin
+     * AI belum — sampai sekarang.
+     */
+    const hasil = periksaAdegan(adeganDenganStatus('tegang', '   '), MANIFEST, KARAKTER, KOSAKATA);
+
+    expect(hasil.ok).toBe(true);
+    if (!hasil.ok) return;
+    expect(hasil.events.some((event) => event.type === 'relationshipDelta')).toBe(false);
+    expect(hasil.skipped.join(' ')).toContain('reasonPublic');
+  });
+
+  it('menormalkan bentuk status yang ditulis dengan spasi atau huruf besar', () => {
+    const hasil = periksaAdegan(adeganDenganStatus('  WASPADA '), MANIFEST, KARAKTER, KOSAKATA);
+
+    expect(hasil.ok).toBe(true);
+    if (!hasil.ok) return;
+    const delta = hasil.events.find((event) => event.type === 'relationshipDelta');
+    expect(delta).toMatchObject({ status: 'waspada' });
+  });
+});
+
+describe('cocokkanStatus', () => {
+  it('menerima id kosakata apa adanya', () => {
+    expect(cocokkanStatus('cinta', KOSAKATA)).toBe('cinta');
+    expect(cocokkanStatus('renggang', KOSAKATA)).toBe('renggang');
+  });
+
+  it('menerima huruf besar dan spasi di ujung', () => {
+    expect(cocokkanStatus('  waspada ', KOSAKATA)).toBe('waspada');
+    expect(cocokkanStatus('WASPADA', KOSAKATA)).toBe('waspada');
+  });
+
+  it('menerima LABEL, karena model kadang menulis namanya', () => {
+    // Model sering menulis "Waspada" (label) alih-alih "waspada" (id). Menolak
+    // bentuk itu berarti membuang perubahan yang sebenarnya dimaksud.
+    expect(cocokkanStatus('Waspada', KOSAKATA)).toBe('waspada');
+    expect(cocokkanStatus('Renggang', KOSAKATA)).toBe('renggang');
+  });
+
+  it('TIDAK menyatukan dua id yang berbeda hanya karena tanda pemisahnya', () => {
+    /*
+     * Bentuk lama membuang spasi, tanda hubung, dan garis bawah sebelum
+     * mencocokkan. Itu aman selama daftarnya delapan kata bawaan yang tidak
+     * mungkin bertabrakan. Sejak status dibuat admin, tidak lagi: `sangat_dekat`
+     * dan `sangatdekat` adalah dua status BERBEDA, dan normalisasi itu membuat
+     * keduanya cocok satu sama lain — perubahan tersimpan pada status yang
+     * salah, tanpa galat, dan tokoh bersikap tidak sesuai ceritanya.
+     *
+     * BUKTI MUTASI: kembalikan `.replace(/[\s_-]/g, '')` pada pencocokan, lalu
+     * uji ini memerah.
+     */
+    const kosakataGanda: RelationVocabularyEntry[] = [
+      { relationId: 'sangat_dekat', labelId: 'Sangat dekat', labelEn: 'Very close', meaning: 'x', behaviourHint: '', position: 1 },
+      { relationId: 'sangatdekat', labelId: 'Sangatdekat', labelEn: 'Veryclose', meaning: 'y', behaviourHint: '', position: 2 },
+    ];
+
+    expect(cocokkanStatus('sangat_dekat', kosakataGanda)).toBe('sangat_dekat');
+    expect(cocokkanStatus('sangatdekat', kosakataGanda)).toBe('sangatdekat');
+    /*
+     * "sangat dekat" (pakai spasi) TIDAK dianggap sama dengan salah satu id —
+     * ia cocok lewat LABEL "Sangat dekat", dan hasilnya tetap satu id yang pasti.
+     * Itu berbeda dari normalisasi lama, yang menyatukan dua ID berbeda.
+     */
+    expect(cocokkanStatus('sangat dekat', kosakataGanda)).toBe('sangat_dekat');
+    // Yang benar-benar asing tetap tidak ditebak.
+    expect(cocokkanStatus('sangat menjauh', kosakataGanda)).toBeUndefined();
+  });
+
+  it('menerima status yang HANYA ada di kosakata, bukan di daftar bawaan', () => {
+    /*
+     * Inilah yang membuat status kesembilan mungkin. Bentuk lama mencari di
+     * `RELATION_STATUSES` — delapan nilai yang ditulis di dalam kode — sehingga
+     * status baru yang sah di master SELALU dibuang di sini.
+     */
+    const kosakataSembilan: RelationVocabularyEntry[] = [
+      ...KOSAKATA,
+      { relationId: 'rel_curiga', labelId: 'Curiga', labelEn: 'Suspicious', meaning: 'Curiga.', behaviourHint: '', position: 9 },
+    ];
+
+    expect(cocokkanStatus('rel_curiga', kosakataSembilan)).toBe('rel_curiga');
+    // Tanpa status itu di kosakata, ia memang tidak sah.
+    expect(cocokkanStatus('rel_curiga', KOSAKATA)).toBeUndefined();
+  });
+
+  it('TIDAK menebak kata bebas — "marah" bukan "tegang"', () => {
+    /*
+     * Menggeser kata model ke status terdekat akan menyimpan perubahan yang
+     * tidak pernah ia maksud. Lebih baik dibuang dan dilaporkan.
+     */
+    expect(cocokkanStatus('marah', KOSAKATA)).toBeUndefined();
+    expect(cocokkanStatus('tersinggung', KOSAKATA)).toBeUndefined();
+    expect(cocokkanStatus('mulai suka', KOSAKATA)).toBeUndefined();
+    // Bentuk yang dulu diterima karena tanda pemisahnya dibuang.
+    expect(cocokkanStatus('TE GANG', KOSAKATA)).toBeUndefined();
+    expect(cocokkanStatus('', KOSAKATA)).toBeUndefined();
+    expect(cocokkanStatus(null, KOSAKATA)).toBeUndefined();
+    expect(cocokkanStatus(42, KOSAKATA)).toBeUndefined();
+  });
+});
+
+/**
+ * Ekspresi yang ditawarkan ke model harus yang PUNYA potret.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA PENJAGA INI ADA
+ * ---------------------------------------------------------------------------
+ * Terukur pada pemilik produk: narasi menulis "tatapan sinis", tetapi potretnya
+ * tetap tersenyum.
+ *
+ * Sebabnya dua tabel yang tidak selalu sepakat. `world_character_expressions`
+ * menyimpan SEMUA nama ekspresi yang diketik admin; `world_assets` hanya
+ * menyimpan ekspresi yang gambarnya benar-benar diunggah — penyimpanan potret
+ * melewati ekspresi tanpa gambar. Mesin mencocokkan keduanya dengan kunci
+ * PERSIS `npcId|ekspresi`, sehingga ekspresi tanpa berkas MELESET TANPA GALAT
+ * dan gambar jatuh ke potret bawaan.
+ *
+ * Penyaringannya dilakukan di `karakterDenganEkspresiTampil`, sehingga model
+ * hanya dapat memilih ekspresi yang bisa ditampilkan.
+ */
+describe('hanya ekspresi berpotret yang ditawarkan ke model', () => {
+  const MANIFEST_SEBAGIAN = {
+    cover: null,
+    backgrounds: [],
+    portraits: [
+      { assetId: 'p_rina_senyum', label: 'senyum', uri: '', npcId: 'npc_rina', expression: 'senyum' },
+    ],
+  } as unknown as AssetManifest;
+
+  const DUA_KARAKTER = [
+    {
+      npcId: 'npc_rina',
+      name: 'Rina',
+      role: 'bosmu',
+      soul: '',
+      publicBackstory: '',
+      initialRelation: 'normal',
+      // `kesal` ada di daftar tetapi gambarnya tidak pernah diunggah.
+      expressions: ['senyum', 'kesal'],
+      defaultPortraitAssetId: 'p_rina_senyum',
+    },
+    {
+      npcId: 'npc_tanpa_gambar',
+      name: 'Budi',
+      role: 'rekan',
+      soul: '',
+      publicBackstory: '',
+      initialRelation: 'normal',
+      expressions: ['datar'],
+      defaultPortraitAssetId: '',
+    },
+  ] as unknown as NPCPublicDTO[];
+
+  it('membuang ekspresi yang tidak punya potret', () => {
+    /*
+     * BUKTI MUTASI: buat `karakterDenganEkspresiTampil` mengembalikan
+     * `characters` apa adanya, lalu uji ini memerah.
+     */
+    const hasil = karakterDenganEkspresiTampil(DUA_KARAKTER, MANIFEST_SEBAGIAN);
+
+    expect(hasil[0]?.expressions).toEqual(['senyum']);
+    expect(hasil[0]?.expressions).not.toContain('kesal');
+  });
+
+  it('mempertahankan daftar asli bila TIDAK SATU pun punya potret', () => {
+    /*
+     * Pemeriksaan kebalikan, dan ini penting: karakter tanpa gambar sama sekali
+     * tetap harus punya daftar ekspresi. Mengosongkannya membuatnya tidak pernah
+     * dapat muncul, sehingga memperburuk keadaan alih-alih memperbaikinya.
+     */
+    const hasil = karakterDenganEkspresiTampil(DUA_KARAKTER, MANIFEST_SEBAGIAN);
+
+    expect(hasil[1]?.expressions).toEqual(['datar']);
+  });
+
+  it('tidak mengubah daftar karakter lain yang sudah benar', () => {
+    const hasil = karakterDenganEkspresiTampil(KARAKTER, MANIFEST_SEBAGIAN);
+    // Karakter uji hanya punya `senyum` yang berpotret, dan `kesal` dibuang.
+    expect(hasil[0]?.npcId).toBe('npc_rina');
+    expect(hasil[0]?.name).toBe('Rina');
+    expect(hasil[0]?.expressions).toEqual(['senyum']);
+  });
+
+  it('tidak menjatuhkan seluruh giliran saat manifes tidak memuat nama ekspresi', () => {
+    // Manifes lama dapat tidak punya kolom `expression` sama sekali. Itu berarti
+    // "tidak ada potret", bukan alasan melempar galat.
+    const manifesCacat = {
+      cover: null,
+      backgrounds: [],
+      portraits: [{ assetId: 'p_lama', label: 'lama', uri: '', npcId: 'npc_rina' }],
+    } as unknown as AssetManifest;
+
+    expect(() => karakterDenganEkspresiTampil(KARAKTER, manifesCacat)).not.toThrow();
   });
 });

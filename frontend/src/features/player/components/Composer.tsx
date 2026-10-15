@@ -68,7 +68,20 @@ export function Composer({
 
       <View style={styles.row}>
         <View style={styles.meta}>
-          <Text variant="caption" tone={isTooLong ? 'danger' : 'secondary'}>
+          {/*
+            * Dua nada: `danger` untuk peringatan kesalahan ("terlalu panjang"),
+            * `secondary` untuk pesan biasa. Keduanya ditulis `onMedia` —
+            * label Komposer mengabaikan token tema (`colors.bgSurface` untuk
+            * latar input, dsb) karena duduk di atas ilustrasi panggung. Pada
+            * tema terang, `inkSecondary` gelap dan lenyap ke dalam gambar; di
+            * tema gelap ia agak abu-abu. `onMedia` bernilai putih pada kedua
+            * tema — tetap terbaca.
+            */}
+          <Text
+            variant="caption"
+            tone={isTooLong ? 'danger' : 'secondary'}
+            style={styles.metaText}
+          >
             {isTooLong
               ? t('player.customTooLong')
               : t('player.charactersLeft', { count: remaining })}
@@ -107,5 +120,16 @@ const styles = StyleSheet.create({
   },
   meta: {
     flex: 1,
+  },
+  /**
+   * Bayangan tipis: keterangan Komposer duduk di atas ilustrasi panggung yang
+   * digelapkan gradasi, bukan di atas latar aplikasi. Untuk teks bertone
+   * `danger` (merah) maupun `secondary` (abu-abu) di tema terang, bayangan
+   * meningkatkan pemisahan dari latar tanpa menggelapkan seluruh komposisi.
+   */
+  metaText: {
+    textShadowColor: 'rgba(0, 0, 0, 0.85)',
+    textShadowOffset: { width: 0, height: 1 },
+    textShadowRadius: 3,
   },
 });

@@ -93,17 +93,51 @@ describe('validasi beat terhadap manifest dunia', () => {
     expect(issues.map((issue) => issue.code)).toContain('RELATION_MISSING_REASON');
   });
 
-  it('menolak status hubungan yang tidak dikenal', () => {
+  it('menerima status hubungan yang tidak ada di daftar bawaan', () => {
+    /*
+     * Status hubungan sekarang DATA: admin dapat menambah status kesembilan,
+     * dan aplikasi pemain menerimanya tanpa dibangun ulang.
+     *
+     * Bentuk lama menolak apa pun yang tidak ada di delapan nilai yang ditulis
+     * di kode. Sejak itu, penolakan tersebut berubah menjadi kerusakan senyap —
+     * server menyimpan statusnya dengan benar, aplikasi menandainya tidak sah,
+     * dan pemain melihat hubungannya tidak pernah berubah.
+     *
+     * Yang dapat diperiksa klien hanyalah bahwa nilainya ADA dan tidak kosong;
+     * keabsahannya terhadap kosakata dunia ditegakkan server, yang memegang
+     * salinan kosakata itu.
+     *
+     * BUKTI MUTASI: kembalikan `isRelationStatus` ke pemeriksaan daftar bawaan,
+     * lalu uji ini memerah.
+     */
     const issues = validateSingleEvent(
       {
         type: 'relationshipDelta',
         npcId: 'npc_elysia',
-        status: 'marah_sekali' as never,
+        status: 'rel_marah_sekali',
         reasonPublic: 'Alasan.',
       },
       'b-x',
       worldBoskuMantan,
     );
+
+    expect(issues.map((issue) => issue.code)).not.toContain('RELATION_UNKNOWN_STATUS');
+  });
+
+  it('menolak status hubungan yang KOSONG', () => {
+    // Kosong bukan status: ia tidak punya label, dan kartunya akan tampil
+    // sebagai lencana hampa.
+    const issues = validateSingleEvent(
+      {
+        type: 'relationshipDelta',
+        npcId: 'npc_elysia',
+        status: '   ',
+        reasonPublic: 'Alasan.',
+      },
+      'b-x',
+      worldBoskuMantan,
+    );
+
     expect(issues.map((issue) => issue.code)).toContain('RELATION_UNKNOWN_STATUS');
   });
 

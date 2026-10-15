@@ -16,6 +16,7 @@ import type { GenresRepository } from '../genresRepository';
 import type { CharactersRepository } from '../charactersRepository';
 import type { LocationsRepository } from '../locationsRepository';
 import type { ProvidersRepository } from '../providersRepository';
+import type { RelationsRepository } from '../relationsRepository';
 import type { MediaRepository } from '../../repositories/mediaRepository';
 
 export type AdminPageContext = {
@@ -45,6 +46,17 @@ export type AdminPageContext = {
    * tinggal di `world_characters`.
    */
   characters: CharactersRepository;
+  /**
+   * Master status hubungan.
+   *
+   * Berdiri sendiri dengan alasan yang sama seperti genre dan karakter: daftar
+   * status hubungan bukan milik satu dunia, jadi menambah atau menyuntingnya
+   * tidak boleh membuat versi dunia baru. Yang khas dunia adalah PILIHANNYA —
+   * hubungan awal tiap karakter, dan kosakata yang dibekukan saat versi itu
+   * terbit. Keduanya tetap tinggal di `world_characters` dan
+   * `world_relationship_definitions`.
+   */
+  relations: RelationsRepository;
   /**
    * Master lokasi — kategori (era/setting), tempat, dan latar belakangnya.
    *

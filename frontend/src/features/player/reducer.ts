@@ -64,6 +64,56 @@ export function appendBeats(existing: Beat[], incoming: Beat[]): Beat[] {
   return [...existing, ...fresh];
 }
 
+function personalizeText(text: string, personaName: string): string {
+  return text.replace(/@user(?![\p{L}\p{N}_])/gu, () => personaName);
+}
+
+function personalizeBeat(beat: Beat, personaName: string): Beat {
+  const event = beat.event;
+  switch (event.type) {
+    case 'narrate':
+    case 'say':
+      return { ...beat, event: { ...event, text: personalizeText(event.text, personaName) } };
+    case 'presentChoices':
+      return {
+        ...beat,
+        event: {
+          ...event,
+          prompt: personalizeText(event.prompt, personaName),
+          options: event.options.map((option) => ({
+            ...option,
+            label: personalizeText(option.label, personaName),
+            description: personalizeText(option.description, personaName),
+          })) as typeof event.options,
+        },
+      };
+    case 'relationshipDelta':
+    case 'endArc':
+      return {
+        ...beat,
+        event: { ...event, reasonPublic: personalizeText(event.reasonPublic, personaName) },
+      };
+    case 'memoryWrite':
+      return {
+        ...beat,
+        event: { ...event, summary: personalizeText(event.summary, personaName) },
+      };
+    default:
+      return { ...beat, event: { ...event } };
+  }
+}
+
+function personalizeBeats(beats: Beat[], personaName: string): Beat[] {
+  return beats.map((beat) => personalizeBeat(beat, personaName));
+}
+
+function personalizeRelations(relations: RelationEntry[], personaName: string): RelationEntry[] {
+  return relations.map((relation) => ({
+    ...relation,
+    reasonPublic: personalizeText(relation.reasonPublic, personaName),
+  }));
+}
+
 function applyScene(scene: PresentedScene, event: StoryEvent): PresentedScene {
   switch (event.type) {
     case 'setBackground':
@@ -262,8 +312,9 @@ export function playerReducer(state: PlaybackState, action: PlayerAction): Playb
         worldId: action.payload.worldId,
         worldVersion: action.payload.worldVersion,
         personaName: action.payload.personaName,
-        beats: action.payload.beats,
-        relations: action.payload.relations,
+        beats: personalizeBeats(action.payload.beats, action.payload.personaName),
+        relations: personalizeRelations(action.payload.relations, action.payload.personaName),
+        relationVocabulary: action.payload.relationVocabulary ?? [],
         memory: action.payload.memory,
         simulator: action.payload.simulator,
         status: 'idle',
@@ -316,12 +367,24 @@ export function playerReducer(state: PlaybackState, action: PlayerAction): Playb
       return { ...state, draft: action.text };
 
     case 'SUBMIT_START':
+      /*
+       * Auto TIDAK dimatikan saat pemain memilih.
+       *
+       * Bentuk sebelumnya menulis `auto: false` di sini, sehingga Auto mati
+       * setiap kali pemain memilih opsi dan harus dinyalakan ulang — berkali-kali
+       * dalam satu sesi. Keputusan pemilik produk: **"kalau user menyalakan maka
+       * nyala terus sampai user matikan."**
+       *
+       * Yang menahan laju selama giliran berjalan bukan flag ini, melainkan
+       * `shouldRun` di `usePlayerEngine`: ia mensyaratkan `status === 'idle'`
+       * dan `decision === null`. Jadi Auto tetap menyala tetapi tidak memajukan
+       * apa pun sampai giliran baru benar-benar tiba.
+       */
       return {
         ...state,
         status: 'submitting',
         error: null,
         activeOperationId: action.operationId,
-        auto: false,
       };
 
     case 'TURN_COMMITTED': {
@@ -337,7 +400,10 @@ export function playerReducer(state: PlaybackState, action: PlayerAction): Playb
         return { ...state, status: 'idle', activeOperationId: null };
       }
 
-      const beats = appendBeats(state.beats, envelope.beats);
+      const beats = appendBeats(
+        state.beats,
+        personalizeBeats(envelope.beats, state.personaName),
+      );
       const next = consume({
         ...state,
         beats,
@@ -381,9 +447,19 @@ export function playerReducer(state: PlaybackState, action: PlayerAction): Playb
       return { ...state, notices: state.notices.filter((notice) => notice.id !== action.id) };
 
     case 'SET_AUTO': {
-      // Auto tidak pernah aktif saat keputusan menunggu pilihan (FR-20).
-      const enabled = action.enabled && state.decision === null;
-      return { ...state, auto: enabled };
+      /*
+       * Auto dapat dinyalakan KAPAN SAJA, termasuk saat keputusan menunggu.
+       *
+       * Bentuk sebelumnya menulis `action.enabled && state.decision === null`,
+       * yang membuat tombolnya diam tanpa penjelasan ketika ditekan di depan
+       * sebuah keputusan — dan pemain menyimpulkan tombolnya rusak.
+       *
+       * Menyalakannya di depan keputusan kini masuk akal: Auto TIDAK memajukan
+       * apa pun selama keputusan ada (`shouldRun` mensyaratkan
+       * `decision === null`), lalu melanjutkan sendiri setelah pemain memilih.
+       * Itu persis yang diminta pemilik produk: menyala terus sampai dimatikan.
+       */
+      return { ...state, auto: action.enabled };
     }
 
     case 'SET_AUTO_DELAY':

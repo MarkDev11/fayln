@@ -3,8 +3,8 @@ import { StyleSheet, View } from 'react-native';
 
 import { Text } from './Text';
 
-import { relationLabelKey, relationTone } from '@/domain/labels';
-import type { RelationStatus } from '@/domain/types';
+import { relationLabel, relationTone } from '@/domain/labels';
+import type { RelationStatus, RelationVocabularyEntry } from '@/domain/types';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/theme/ThemeProvider';
 import { radius, space } from '@/theme/tokens';
@@ -12,6 +12,13 @@ import { radius, space } from '@/theme/tokens';
 export type NPCRelationChipProps = {
   npcName: string;
   status: RelationStatus | 'unknown';
+  /**
+   * Kosakata hubungan versi dunia ini, bila sudah termuat.
+   *
+   * Opsional supaya kartu tetap dapat dirender sebelum sesi tiba — dan saat itu
+   * yang dipakai adalah label bawaan, bukan id mentah.
+   */
+  vocabulary?: readonly RelationVocabularyEntry[];
   testID?: string;
 };
 
@@ -21,10 +28,16 @@ export type NPCRelationChipProps = {
  * Selalu memuat teks status, bukan hanya warna (NFR-01). Nama NPC disertakan agar
  * kartu tetap bermakna bagi pembaca layar.
  */
-export function NPCRelationChip({ npcName, status, testID }: NPCRelationChipProps) {
+export function NPCRelationChip({
+  npcName,
+  status,
+  vocabulary = [],
+  testID,
+}: NPCRelationChipProps) {
   const { colors } = useTheme();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const tone = relationTone(status);
+  const label = relationLabel(status, vocabulary, locale, t);
 
   const toneColor: Record<ReturnType<typeof relationTone>, string> = {
     success: colors.success,
@@ -39,7 +52,7 @@ export function NPCRelationChip({ npcName, status, testID }: NPCRelationChipProp
     <View
       testID={testID}
       accessible
-      accessibilityLabel={`${npcName}, ${t(relationLabelKey(status))}`}
+      accessibilityLabel={`${npcName}, ${label}`}
       style={[styles.row, { borderColor: colors.line }]}
     >
       <Text variant="small" weight="600" numberOfLines={1} style={styles.name}>
@@ -47,7 +60,7 @@ export function NPCRelationChip({ npcName, status, testID }: NPCRelationChipProp
       </Text>
       <View style={[styles.statusPill, { borderColor: color }]}>
         <Text variant="caption" weight="600" style={{ color }}>
-          {t(relationLabelKey(status))}
+          {label}
         </Text>
       </View>
     </View>

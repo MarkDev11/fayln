@@ -35,7 +35,30 @@
  * jalan ikut membangun dunia, bukan hanya latar yang berganti nama.
  */
 
-import type { ResponseLocale } from '../contracts/types';
+import type { RelationStatus, ResponseLocale } from '../contracts/types';
+
+/**
+ * Satu definisi hubungan sebagaimana ditulis ke prompt.
+ *
+ * Bentuknya sengaja lebih kecil daripada baris tabelnya: prompt hanya butuh ID
+ * untuk ditulis model dan ARTI untuk dipahaminya. Label pemain tidak pernah
+ * masuk ke sini — model tidak boleh menuliskan label sebagai status, dan
+ * menyediakannya hanya menambah cara untuk salah.
+ */
+export type PromptRelationDefinition = {
+  relationId: string;
+  /** Apa keadaan ini berarti bagi tokohnya. */
+  meaning: string;
+  /**
+   * Contoh sikap yang TERLIHAT. Boleh string kosong bila admin tidak mengisinya.
+   *
+   * Mengapa ini ada di sini: model generik yang hanya diberi nama keadaan
+   * ("waspada") menghasilkan perbedaan gaya yang tipis. Yang mengubah cara
+   * sebuah adegan terbaca adalah detail konkret — jarak, panjang kalimat, apa
+   * yang ditolak dilakukan.
+   */
+  behaviourHint: string;
+};
 
 /** Batas beat dalam satu adegan. Diputuskan pemilik produk: 10. */
 export const MAX_SCENE_BEATS = 10;
@@ -64,9 +87,16 @@ export function cadanganPertanyaan(locale?: ResponseLocale): string {
   return CADANGAN_PERTANYAAN[locale ?? 'id-ID'];
 }
 
-/** Satu karakter yang boleh dipakai model, beserta ekspresinya. */
-export type PromptCharacter = {
+/** Keadaan hubungan satu tokoh, apa adanya untuk prompt. */
+export type PromptRelation = {
   npcId: string;
+  name: string;
+  status: RelationStatus;
+  reasonPublic: string;
+};
+
+/** Satu karakter yang boleh dipakai model, beserta ekspresinya. */
+export type PromptCharacter = {  npcId: string;
   name: string;
   role: string;
   soul: string;
@@ -100,8 +130,34 @@ export type StoryPromptInput = {
    * bukan galat melainkan model yang melupakan tokohnya sendiri.
    */
   storySoFar: string | null;
-  /** Beberapa adegan terakhir apa adanya, untuk kesinambungan gaya dan detail. */
+  /**
+   * Beberapa adegan terakhir apa adanya, untuk kesinambungan gaya dan detail.
+   */
   recentBeats: string[];
+  /**
+   * Keadaan hubungan tiap tokoh SAAT INI, dari perjalanan pemain.
+   *
+   * Tanpa ini model diminta memutuskan apakah seorang tokoh tersinggung, TANPA
+   * diberi tahu bagaimana hubungan mereka sekarang — sehingga `waspada` tidak
+   * punya arah: tidak ada yang tahu apakah itu MEMBAIK atau MEMBURUK dari
+   * sebelumnya. Ditemukan saat menelusuri keluhan pemilik produk "cek fitur
+   * hubungan sudah full fungsional apa belum": ternyata prompt bahkan tidak
+   * memuat kosakata status yang sah.
+   */
+  relations: PromptRelation[];
+  /**
+   * Kosakata status yang SAH untuk dunia perjalanan ini.
+   *
+   * Isinya salinan yang dibekukan pada versi dunia, bukan master yang sedang
+   * berlaku. Menyunting arti sebuah status di panel karena itu tidak mengubah
+   * cara tokoh bersikap di perjalanan yang sudah berjalan.
+   *
+   * WAJIB — bukan `?`. Daftar bawaan sebagai cadangan akan membuat kelalaian
+   * pemanggil tidak terlihat: prompt tetap tersusun, hanya statusnya kembali
+   * terbatas pada delapan nilai lama, dan hubungan berhenti berubah tanpa satu
+   * pun galat.
+   */
+  relationVocabulary: PromptRelationDefinition[];
   /** Yang dilakukan pemain pada giliran sebelumnya, bila ada. */
   playerAction: string | null;
   /**
@@ -124,6 +180,22 @@ export type StoryPromptInput = {
  * kurang tepat.
  */
 export function buildStoryUserPrompt(input: StoryPromptInput): string {
+  /*
+   * Kosakata wajib ADA — bukan wajib berisi.
+   *
+   * Dua keadaan yang berbeda dan tidak boleh diperlakukan sama:
+   *
+   *   - `undefined` = pemanggil lupa mengisinya. Itu cacat pemrograman, dan
+   *     membiarkannya lewat berarti prompt tetap tersusun dengan daftar kosong
+   *     sehingga seluruh perubahan hubungan dibuang tanpa satu pun galat.
+   *   - `[]` = dunia yang memang tidak punya status sah. Itu keadaan yang sah
+   *     (seluruh definisi dinonaktifkan dan tidak ada karakter yang memakainya),
+   *     dan mesin cerita harus tetap berjalan.
+   */
+  if (!Array.isArray(input.relationVocabulary)) {
+    throw new Error('buildStoryUserPrompt: relationVocabulary wajib diisi pemanggil.');
+  }
+
   const bagian: string[] = [];
 
   bagian.push(`DUNIA: ${input.worldTitle}`);
@@ -240,6 +312,142 @@ export function buildStoryUserPrompt(input: StoryPromptInput): string {
     bagian.push('');
   }
 
+  /*
+   * ---------------------------------------------------------------------------
+   * HUBUNGAN SAAT INI — keadaan, bukan hiasan
+   * ---------------------------------------------------------------------------
+   * Sampai sekarang prompt TIDAK PERNAH memuat bagian ini: tidak ada keadaan
+   * hubungan, dan tidak ada daftar status yang sah. Model diminta memutuskan
+   * apakah seorang tokoh tersinggung atau menyukai tindakan pemain, tanpa tahu
+   * bagaimana hubungan mereka sekarang — dan tanpa tahu kata apa yang boleh
+   * dipakai. Nilai `status` yang ditulisnya pun lolos tanpa diperiksa.
+   *
+   * Akibatnya fitur hubungan tidak berfungsi: model menebak, menebakannya
+   * tersimpan sebagai nilai yang tidak dikenal, dan di layar pemain statusnya
+   * tampil "Belum diketahui".
+   *
+   * Bagian ini memberi model DUA hal yang sebelumnya tidak ada: keadaan sekarang
+   * per tokoh, dan kosakata tertutup beserta artinya. Yang menentukan MAKNA tetap
+   * model; yang menentukan NILAI yang sah adalah sistem.
+   */
+  bagian.push('HUBUNGAN SAAT INI — inilah keadaan yang sebenarnya berlaku:');
+  if (input.relations.length === 0) {
+    bagian.push('  (belum ada tokoh yang berhubungan dengan pemain)');
+  } else {
+    for (const relation of input.relations) {
+      const alasan = relation.reasonPublic.trim();
+      bagian.push(
+        `  ${relation.npcId} (${relation.name}): "${relation.status}"` +
+          (alasan.length > 0 ? ` — sejak itu: ${alasan}` : ''),
+      );
+    }
+  }
+  bagian.push('');
+  /*
+   * Kosakata status datang dari KOSAKATA DUNIA, bukan dari daftar di dalam kode.
+   *
+   * Daftar yang ditulis di sini dulu adalah delapan nilai harfiah. Ia cocok
+   * dengan basis data pada hari ia ditulis, lalu berhenti cocok begitu admin
+   * menambah status kesembilan lewat panel: model tetap diberi tahu delapan
+   * nilai lama, menulis salah satunya, dan perubahan yang sebenarnya dimaksud
+   * hilang tanpa satu pun galat.
+   */
+  bagian.push('Nilai "status" yang SAH untuk dunia ini — tidak ada nilai lain:');
+  if (input.relationVocabulary.length === 0) {
+    /*
+     * Dunia tanpa satu pun status sah. Mesin cerita tetap harus berjalan, tetapi
+     * meminta model menulis perubahan hubungan di sini hanya menghasilkan nilai
+     * yang pasti dibuang. Lebih baik dilarang secara terbuka daripada dibuang
+     * diam-diam.
+     */
+    bagian.push('  (tidak ada) — JANGAN menulis "relationshipDelta" di dunia ini.');
+  } else {
+    for (const definisi of input.relationVocabulary) {
+      bagian.push(`  "${definisi.relationId}" = ${definisi.meaning.trim()}`);
+      const contoh = (definisi.behaviourHint ?? '').trim();
+      if (contoh.length > 0) {
+        // Contoh sikap ditulis di barisnya sendiri supaya terbaca sebagai
+        // petunjuk pemeranan, bukan sebagai lanjutan definisinya.
+        bagian.push(`      terlihat sebagai: ${contoh}`);
+      }
+    }
+  }
+  bagian.push('');
+
+  /*
+   * ---------------------------------------------------------------------------
+   * HUBUNGAN HARUS TERLIHAT, BUKAN HANYA TERCATAT
+   * ---------------------------------------------------------------------------
+   * Sebelum bagian ini ada, seluruh instruksi tentang hubungan hanya berbunyi
+   * "tulis relationshipDelta bila perasaan tokoh berubah". Model mematuhinya —
+   * statusnya berubah, tercatat, tampil di layar — tetapi TIDAK ADA satu pun
+   * kalimat yang menyuruh tokoh BERSIKAP berbeda karenanya.
+   *
+   * Akibatnya hubungan menjadi angka yang bergerak dan tidak mengubah apa pun:
+   * tokoh yang "waspada" tetap bicara sehangat sebelumnya, dan pemain tidak
+   * merasakan akibat keputusannya. Itu yang membuat fitur ini terasa mati
+   * walaupun datanya benar.
+   *
+   * Aturan di bawah membalik urutannya: sikapnya yang utama, catatannya yang
+   * menyusul. "Tunjukkan, jangan umumkan" — status adalah ringkasan bagi pemain,
+   * bukan naskah yang dibacakan tokoh.
+   */
+  bagian.push('BAGAIMANA HUBUNGAN ITU HARUS TERLIHAT:');
+  /*
+   * Contohnya sengaja TIDAK menyebut id tertentu.
+   *
+   * Bentuk sebelumnya menulis "waspada menjaga jarak, dekat mencari alasan untuk
+   * bicara". Itu benar selama daftarnya tetap delapan nilai bawaan. Begitu admin
+   * menambah atau mengganti statusnya, contoh itu menunjuk nilai yang tidak ada
+   * lagi di daftar di atas — dan model menerima dua daftar yang saling
+   * bertentangan, lalu memilih yang mana saja.
+   */
+  bagian.push('  f. Setiap tokoh bersikap sesuai statusnya SEKARANG, menurut arti yang');
+  bagian.push('     tertulis di daftar di atas. Sikapnya harus berbeda antara satu status');
+  bagian.push('     dan status lainnya — jarak bicara, panjang jawaban, apa yang ia mau');
+  bagian.push('     bagikan, dan apakah ia mencari atau menghindari pemain.');
+  bagian.push('  g. Perubahan hubungan harus TERASA pada adegan-adegan berikutnya, bukan');
+  bagian.push('     hanya tercatat. Pembaca harus dapat menebak statusnya dari cara');
+  bagian.push('     tokoh itu bicara dan apa yang ia lakukan atau menolak lakukan.');
+  bagian.push('  h. JANGAN mengumumkan statusnya. Tidak ada tokoh yang menyebut nama');
+  bagian.push('     statusnya sendiri. Tunjukkan lewat sikap, pilihan kata, dan jarak');
+  bagian.push('     fisik. Status adalah ringkasan bagi pemain, bukan dialog.');
+  bagian.push('  i. Hubungan yang sudah berubah TIDAK kembali sendiri tanpa sebab.');
+  bagian.push('     Jangan memulihkannya hanya karena adegan baru dimulai.');
+  /*
+   * Perubahan BERTAHAP.
+   *
+   * Tanpa aturan ini, satu adegan dapat melompat dari status paling jauh ke
+   * status paling dekat. Tokohnya lalu tampak tidak punya pendirian: kemarin
+   * menghindari pemain, hari ini mencintainya, tanpa adegan yang menjelaskan
+   * perpindahannya. Perubahan yang besar harus mendapat beberapa adegan, bukan
+   * satu.
+   *
+   * Aturannya sengaja TIDAK menyebut "satu tingkat", karena daftar statusnya
+   * dibuat admin dan bukan tangga bernomor — tidak ada urutan yang dapat
+   * dipakai untuk menghitung tingkat. Yang dapat diminta hanyalah sifatnya:
+   * bertahap, dan beralasan.
+   */
+  bagian.push('  j. Perubahan hubungan BERTAHAP. Jangan melompat dari satu ujung ke');
+  bagian.push('     ujung lain dalam satu adegan. Perubahan besar terjadi lewat');
+  bagian.push('     beberapa adegan, masing-masing dengan sebab yang terlihat.');
+  bagian.push('');
+
+  bagian.push('Aturan hubungan:');
+  bagian.push('  a. Tulis "relationshipDelta" HANYA bila tindakan pemain benar-benar');
+  bagian.push('     mengubah perasaan seorang tokoh. Bukan setiap adegan, dan bukan');
+  bagian.push('     sebagai hiasan.');
+  bagian.push('  b. "status" harus salah satu dari daftar di atas, ditulis PERSIS.');
+  bagian.push('  c. "status" adalah keadaan BARU, bukan selisihnya. Bila hubungan');
+  bagian.push('     sekarang "normal" dan tokoh menjadi tersinggung, tulis "waspada"');
+  bagian.push('     atau "tegang" — jangan "normal" lagi.');
+  bagian.push('  d. "reasonPublic" wajib: satu kalimat yang boleh dibaca pemain dan');
+  bagian.push('     menjelaskan MENGAPA perasaannya berubah. Jangan membocorkan apa');
+  bagian.push('     pun yang tidak pemain ketahui.');
+  bagian.push('  e. Jangan menulis dua "relationshipDelta" untuk tokoh yang sama dalam');
+  bagian.push('     satu adegan — pakai keadaan AKHIRnya.');
+  bagian.push('');
+
   bagian.push('TUGAS:');
   if (input.playerAction) {
     bagian.push(`Pemain memilih/melakukan: ${input.playerAction}`);
@@ -353,8 +561,24 @@ export const STORY_SYSTEM_PROMPT = [
   '4. Show a character before they speak. A voice with no face is confusing.',
   `5. Keep every "text" under ${String(MAX_BEAT_WORDS)} words. This is read on a phone; a`,
   '   long block is unreadable, no matter how good the prose is.',
-  '6. "relationshipDelta" is OPTIONAL and rare. Use it only when this scene really',
-  '   changed how someone feels, not as decoration.',
+  /*
+   * Dulu berbunyi "OPTIONAL and rare".
+   *
+   * Kata "rare" membuat model MENAHAN DIRI dari hal yang justru menjadi inti
+   * fitur ini: hubungan yang bergerak karena keputusan pemain. Terukur dari
+   * perilakunya: status hampir tidak pernah berubah, sehingga pemain tidak
+   * pernah melihat fiturnya bekerja — dan itu terbaca sebagai fitur mati,
+   * bukan sebagai fitur yang jarang dipakai.
+   *
+   * Yang dijaga tetap sama: JANGAN mengarang perubahan yang tidak terjadi.
+   * Yang berubah hanya nada — dari "jangan sering-sering" menjadi "lakukan bila
+   * memang terjadi".
+   */
+  '6. Write "relationshipDelta" WHENEVER the player\'s action genuinely changed how',
+  '   someone feels about them — that is this feature working, not noise. Equally',
+  '   important: NEVER invent a change that did not happen. And once a relationship',
+  '   has changed, it MUST show in how that character behaves from then on; see the',
+  '   relationship section of the brief.',
   '',
   '=============================================================',
   'USING THE ASSETS — use them, do not invent them',
@@ -377,6 +601,54 @@ export const STORY_SYSTEM_PROMPT = [
   '11. Reuse the same background while the scene stays in one place. Changing the',
   '    background means the characters MOVED — do not do it casually. If the scene',
   '    does move, you MUST bridge it (see MOVING THROUGH THE WORLD below).',
+  '',
+  /*
+   * ---------------------------------------------------------------------------
+   * MENGAPA BAGIAN "KEEPING THE STAGE IN SYNC WITH THE STORY" ADA
+   * ---------------------------------------------------------------------------
+   * Keluhan pemilik produk, dua-duanya dari layar yang sama:
+   *
+   *   1. Narasinya sudah menulis "Rina pergi", tetapi potret Rina TETAP di layar
+   *      sepanjang adegan — seolah ia masih ada di ruangan itu.
+   *   2. Narasinya menulis "tatapan sinis", tetapi potretnya masih memakai
+   *      senyum dari awal adegan.
+   *
+   * Akarnya sama dan ada di sini: `showCharacter`/`hideCharacter` hanya
+   * didefinisikan sebagai BENTUK keluaran (di daftar bentuk di atas), dan aturan
+   * 10 hanya menyuruh MEMILIH ekspresi. Tidak ada satu pun aturan yang MEWAJIBKAN
+   * peristiwa visual keluar ketika narasinya sendiri sudah berubah. Model patuh
+   * pada bentuk, lalu berhenti di situ: prosa bergerak, lapisan visual tidak.
+   *
+   * Aturan di bawah membalik urutannya — narasi yang berubah WAJIB disertai
+   * peristiwa yang menampilkannya. Sengaja TIDAK menyebut id ekspresi mana pun
+   * dan TIDAK mengandaikan urutan: daftar ekspresi ditulis admin, bebas teks,
+   * dan bukan tangga bernomor. Yang dapat diminta hanyalah sifatnya: bila
+   * gambaran seorang tokoh berubah, tampilannya harus ikut berubah.
+   */
+  '=============================================================',
+  'KEEPING THE STAGE IN SYNC WITH THE STORY',
+  '=============================================================',
+  '',
+  '12. The narration and the visible stage must NEVER disagree. Whenever your own',
+  '    prose says the stage changed, the SAME scene must carry the event that',
+  '    changes it. Writing the change and omitting the event leaves a stale',
+  '    picture on screen while the words move on — the story says one thing and',
+  '    the screen shows another.',
+  '13. If a character LEAVES, exits, or is no longer present — named or',
+  '    described — the scene MUST emit hideCharacter for that character. "Rina',
+  '    pergi" without a hideCharacter leaves her portrait standing in a room she',
+  '    has left.',
+  '14. If a character who is NOT currently on stage appears, enters, arrives, or',
+  '    speaks, the scene MUST emit showCharacter for them before (or at) their',
+  '    first line. This includes a character who left earlier and now returns.',
+  '15. If your prose describes a CHANGE in how a character looks, feels, or',
+  '    holds themselves, the scene MUST emit showCharacter again for that',
+  '    character, with an expression chosen from THAT character\'s own list. The',
+  '    expression you choose MUST differ from the one currently on stage WHEN',
+  '    the description genuinely differs — do not write that the face changed and',
+  '    then re-show the same one. Choose by MEANING (what this moment is doing),',
+  '    never by order or position: the expressions are authored labels, not a',
+  '    ladder, and there is no "next" expression.',
   '',
   '=============================================================',
   'MOVING THROUGH THE WORLD — you are a dungeon master, not a fast-travel menu',
@@ -464,6 +736,34 @@ export const STORY_SYSTEM_PROMPT = [
   '    says what it means or risks (one sentence).',
   '42. Never put a question inside the narration and also in "prompt". The',
   '    narration tells; the decision asks.',
+  '',
+  '=============================================================',
+  'KEEPING THE PICTURE IN STEP WITH THE WORDS',
+  '=============================================================',
+  '',
+  'The player SEES two layers at once: your prose, and the pictures the system',
+  'draws from your events. Those two layers must tell the same story. A picture',
+  'that contradicts the sentence next to it is worse than no picture at all —',
+  'the player reads it as a broken game, not as a subtle scene.',
+  '',
+  '43. If your narration says a character LEAVES — walks out, hangs up, is no',
+  '    longer in the room, is left behind — you MUST emit',
+  '    { "type": "hideCharacter", "npcId": "..." } for that character in the SAME',
+  '    scene. Prose alone does not remove anyone from the screen.',
+  '44. If a character who is NOT currently on screen appears, arrives, or speaks,',
+  '    you MUST emit showCharacter for them BEFORE their first line. A character',
+  '    the player cannot see must not talk.',
+  '45. If your prose describes how a character now LOOKS — their expression, mood',
+  '    on their face, the way they hold themselves — you MUST emit showCharacter',
+  '    again for that character with an "expression" that matches what you just',
+  '    wrote. Reusing the previous expression while the text describes a change',
+  '    is a contradiction: the player reads "a sardonic look" and sees a smile.',
+  '    Choose the closest expression from that character\'s valid list. Never',
+  '    invent an expression name, and never use another character\'s expression.',
+  '46. Only describe a visual change you are also able to express as an event. If',
+  '    the character\'s valid expression list has nothing that fits, then do NOT',
+  '    write a sentence describing their face — describe their action or their',
+  '    words instead. You may always write what a character DOES or SAYS.',
   '',
   '=============================================================',
   'NEVER',

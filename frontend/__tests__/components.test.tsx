@@ -1,6 +1,8 @@
 import { render, screen } from '@testing-library/react-native';
 import React from 'react';
+import { StyleSheet } from 'react-native';
 
+import { Icon } from '@/components/Icon';
 import { NPCRelationChip } from '@/components/NPCRelationChip';
 import { StateView } from '@/components/StateView';
 import { StoryCard } from '@/components/StoryCard';
@@ -120,5 +122,116 @@ describe('StateView', () => {
     );
 
     expect(screen.queryByRole('button')).toBeNull();
+  });
+});
+
+describe('Icon — chevron', () => {
+  /**
+   * Chevron harus berbentuk `>` / `<`, BUKAN tanda silang.
+   *
+   * Bentuk lama memberi kedua batang `marginLeft` yang sama dan wadahnya
+   * memakai `alignItems` bawaan (`stretch`), sehingga kedua batang punya pusat X
+   * yang sama — `rotate ±45°` pada pusat yang sama menghasilkan `×`. Terlihat
+   * pada tombol bulat di kaki panggung pemain.
+   *
+   * Yang diperiksa: kedua batang punya `top` yang BERBEDA (chevron menumpuk
+   * vertikal; silang tidak), dan tidak ada satu pun yang memakai `marginLeft`
+   * sebagai penentu posisi horizontal.
+   *
+   * BUKTI MUTASI: kembalikan `marginLeft: size * 0.1` pada kedua batang dan
+   * hapus `top`-nya, lalu uji ini memerah.
+   */
+  it('menggambar chevron, bukan tanda silang', async () => {
+    await render(
+      <TestProviders>
+        <Icon name="chevronRight" size={24} color="#FFFFFF" />
+      </TestProviders>,
+    );
+
+    const batang: Record<string, unknown>[] = [];
+    const telusuri = (simpul: unknown) => {
+      if (!simpul || typeof simpul !== 'object') {
+        return;
+      }
+      const n = simpul as { props?: { style?: unknown }; children?: unknown[] };
+      if (n.props?.style) {
+        const gaya = StyleSheet.flatten(n.props.style) as Record<string, unknown>;
+        if (gaya.backgroundColor === '#FFFFFF' && gaya.height === 2) {
+          batang.push(gaya);
+        }
+      }
+      for (const anak of n.children ?? []) {
+        telusuri(anak);
+      }
+    };
+    telusuri(screen.root);
+
+    expect(batang).toHaveLength(2);
+
+    // Chevron menumpuk: satu batang di atas, satu di bawah.
+    const tops = batang.map((g) => Number(g.top));
+    expect(tops[0]).not.toBe(tops[1]);
+    // Dan tidak ada yang diposisikan lewat margin — itu sumber silangnya dulu.
+    for (const g of batang) {
+      expect(g.marginLeft).toBeUndefined();
+    }
+  });
+});
+
+describe('Icon — hati', () => {
+  /**
+   * Hati harus punya LEKUKAN (notch) di puncaknya, bukan tetesan air.
+   *
+   * Bentuk lama menaruh titik atas persegi di y = 0.066s — DI ATAS bibir kedua
+   * bulatan (0.16s) — sehingga persegi itu menutup celah di antara bulatan dan
+   * bentuknya menjadi teardrop. Ditemukan oleh peninjau visual yang menyebutnya
+   * "chunky and asymmetric".
+   *
+   * Yang diperiksa: persegi mulai DI BAWAH puncak bulatan, dan kedua bulatan
+   * benar-benar terpisah secara horizontal (itulah celah lekukannya).
+   *
+   * BUKTI MUTASI: ubah `top: size * 0.36` pada persegi menjadi `size * 0.16`,
+   * lalu uji ini memerah.
+   */
+  it('menggambar hati dengan lekukan, bukan tetesan air', async () => {
+    await render(
+      <TestProviders>
+        <Icon name="heart" size={20} color="#FFFFFF" />
+      </TestProviders>,
+    );
+
+    const bentuk: Record<string, unknown>[] = [];
+    const telusuri = (simpul: unknown) => {
+      if (!simpul || typeof simpul !== 'object') {
+        return;
+      }
+      const n = simpul as { props?: { style?: unknown }; children?: unknown[] };
+      if (n.props?.style) {
+        const gaya = StyleSheet.flatten(n.props.style) as Record<string, unknown>;
+        if (gaya.backgroundColor === '#FFFFFF') {
+          bentuk.push(gaya);
+        }
+      }
+      for (const anak of n.children ?? []) {
+        telusuri(anak);
+      }
+    };
+    telusuri(screen.root);
+
+    expect(bentuk).toHaveLength(3);
+
+    const bulatan = bentuk.filter((g) => Number(g.borderRadius ?? 0) > 0);
+    const persegi = bentuk.filter((g) => Number(g.borderRadius ?? 0) === 0);
+    expect(bulatan).toHaveLength(2);
+    expect(persegi).toHaveLength(1);
+
+    // Persegi harus mulai DI BAWAH puncak bulatan — kalau tidak, celahnya tertutup.
+    const puncakBulatan = Math.min(...bulatan.map((g) => Number(g.top)));
+    expect(Number(persegi[0]?.top)).toBeGreaterThan(puncakBulatan);
+
+    // Dan kedua bulatan benar-benar terpisah horizontal.
+    const kiri = Math.min(...bulatan.map((g) => Number(g.left)));
+    const kanan = Math.max(...bulatan.map((g) => Number(g.left)));
+    expect(kanan).toBeGreaterThan(kiri);
   });
 });

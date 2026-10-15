@@ -24,6 +24,7 @@ import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
+import { RelationsRepository } from '../src/admin/relationsRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ProvidersRepository } from '../src/admin/providersRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
@@ -114,6 +115,7 @@ async function build(): Promise<FastifyInstance> {
     models: new ModelsRepository(ctx.db),
     drafts,
     genres: new GenresRepository(ctx.db),
+    relations: new RelationsRepository(ctx.db),
     characters,
     locations: new LocationsRepository(ctx.db),
     providers: new ProvidersRepository(ctx.db),
@@ -488,7 +490,7 @@ async function tambahKarakter(
   if (!created.ok) {
     throw new Error(`karakter master gagal dibuat: ${created.reason}`);
   }
-  await post(cookie, '/admin/worlds-wizard/3/npc', {
+  await post(cookie, '/admin/worlds-wizard/3/npc', { initialRelation: 'normal',
     worldId,
     characterId: created.characterId,
     role: '',
@@ -712,7 +714,7 @@ describe('langkah 3: karakter dari master', () => {
     const worldId = await step3(cookie);
     const characterId = await masterCharacter(cookie, 'Elysia', ['dasar', 'marah']);
 
-    const response = await post(cookie, '/admin/worlds-wizard/3/npc', { worldId, characterId, role: 'bosmu' });
+    const response = await post(cookie, '/admin/worlds-wizard/3/npc', { initialRelation: 'normal', worldId, characterId, role: 'bosmu' });
     expect(String(response.headers.location ?? ''), JSON.stringify({ status: response.statusCode, body: response.body.slice(0, 200) })).toContain('notice=picked');
 
     const npcs = await drafts.listNpcs(worldId, 1);
@@ -732,10 +734,10 @@ describe('langkah 3: karakter dari master', () => {
     const worldId = await step3(cookie);
     const characterId = await masterCharacter(cookie, 'Elysia', ['dasar']);
 
-    await post(cookie, '/admin/worlds-wizard/3/npc', { worldId, characterId, role: 'bosmu' });
+    await post(cookie, '/admin/worlds-wizard/3/npc', { initialRelation: 'normal', worldId, characterId, role: 'bosmu' });
     const [npc] = await drafts.listNpcs(worldId, 1);
 
-    await post(cookie, '/admin/worlds-wizard/3/npc/save', {
+    await post(cookie, '/admin/worlds-wizard/3/npc/save', { initialRelation: 'normal',
       worldId,
       npcId: npc!.npcId,
       name: 'Bu Ratna',
@@ -759,10 +761,10 @@ describe('langkah 3: karakter dari master', () => {
     const worldId = await step3(cookie);
     const characterId = await masterCharacter(cookie, 'Elysia', ['dasar']);
 
-    await post(cookie, '/admin/worlds-wizard/3/npc', { worldId, characterId, role: 'bosmu' });
+    await post(cookie, '/admin/worlds-wizard/3/npc', { initialRelation: 'normal', worldId, characterId, role: 'bosmu' });
     const [npc] = await drafts.listNpcs(worldId, 1);
 
-    await post(cookie, '/admin/worlds-wizard/3/npc/save', {
+    await post(cookie, '/admin/worlds-wizard/3/npc/save', { initialRelation: 'normal',
       worldId,
       npcId: npc!.npcId,
       name: 'Elysia',
@@ -779,7 +781,7 @@ describe('langkah 3: karakter dari master', () => {
     const cookie = await login();
     const worldId = await step3(cookie);
 
-    const response = await post(cookie, '/admin/worlds-wizard/3/npc', {
+    const response = await post(cookie, '/admin/worlds-wizard/3/npc', { initialRelation: 'normal',
       worldId,
       characterId: 'char_tidak_ada',
       role: '',
@@ -794,7 +796,7 @@ describe('langkah 3: karakter dari master', () => {
     const worldId = await step3(cookie);
     const characterId = await masterCharacter(cookie, 'Elysia', ['dasar']);
 
-    await post(cookie, '/admin/worlds-wizard/3/npc', { worldId, characterId, role: 'bosmu' });
+    await post(cookie, '/admin/worlds-wizard/3/npc', { initialRelation: 'normal', worldId, characterId, role: 'bosmu' });
     const [npc] = await drafts.listNpcs(worldId, 1);
 
     await post(cookie, '/admin/worlds-wizard/3/npc/delete', { worldId, npcId: npc!.npcId });
@@ -830,7 +832,7 @@ describe('langkah 3: karakter dari master', () => {
       'ekspresi yang sangat panjang sekali dua',
     ]);
 
-    const response = await post(cookie, '/admin/worlds-wizard/3/npc', {
+    const response = await post(cookie, '/admin/worlds-wizard/3/npc', { initialRelation: 'normal',
       worldId,
       characterId,
       role: 'bosmu',
@@ -1074,7 +1076,7 @@ describe('perlindungan dan render halaman wizard', () => {
       ['/admin/worlds-wizard/2/backgrounds/pick', { worldId: 'w_x', pick: 'loc_x|cat_y' }],
       ['/admin/worlds-wizard/2/background', { worldId: 'w_x', assetId: 'bg_x' }],
       ['/admin/worlds-wizard/3', { worldId: 'w_x', intent: 'next' }],
-      ['/admin/worlds-wizard/3/npc', { worldId: 'w_x', name: 'X' }],
+      ['/admin/worlds-wizard/3/npc', { initialRelation: 'normal', worldId: 'w_x', name: 'X' }],
       ['/admin/worlds-wizard/3/npc/delete', { worldId: 'w_x', npcId: 'npc_x' }],
     ];
 

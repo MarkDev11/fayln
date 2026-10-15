@@ -8,7 +8,8 @@ import { Button } from '@/components/Button';
 import { Icon } from '@/components/Icon';
 import { Text } from '@/components/Text';
 
-import { relationLabelKey } from '@/domain/labels';
+import { relationLabel } from '@/domain/labels';
+import type { RelationVocabularyEntry } from '@/domain/types';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/theme/ThemeProvider';
 import { radius, space } from '@/theme/tokens';
@@ -27,6 +28,13 @@ export type LogDrawerProps = {
   cursor: number;
   npcNameById: Record<string, string>;
   onClose: () => void;
+  /**
+   * Kosakata hubungan versi dunia ini.
+   *
+   * Opsional supaya komponen tetap dapat dirender tanpa sesi (mis. dari riwayat
+   * yang dipulihkan); saat itu label bawaan yang dipakai, bukan id mentah.
+   */
+  relationVocabulary?: readonly RelationVocabularyEntry[];
   testID?: string;
 };
 
@@ -44,9 +52,17 @@ type LogEntry = {
  * tidak membocorkan kelanjutan yang belum tayang (FR-56). Membuka riwayat tidak
  * memanggil AI dan tidak mengubah hubungan (FR-22).
  */
-export function LogDrawer({ visible, beats, cursor, npcNameById, onClose, testID }: LogDrawerProps) {
+export function LogDrawer({
+  visible,
+  beats,
+  cursor,
+  npcNameById,
+  onClose,
+  relationVocabulary = [],
+  testID,
+}: LogDrawerProps) {
   const { colors } = useTheme();
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const insets = useSafeAreaInsets();
 
   const entries = useMemo<LogEntry[]>(() => {
@@ -73,7 +89,7 @@ export function LogDrawer({ visible, beats, cursor, npcNameById, onClose, testID
           speaker: null,
           text: t('notice.relationChanged', {
             name,
-            status: t(relationLabelKey(event.status)),
+            status: relationLabel(event.status, relationVocabulary, locale, t),
           }),
         });
       }

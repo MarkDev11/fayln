@@ -26,6 +26,7 @@ import {
   locationsList,
 } from './pages/locationPages';
 import { genresList } from './pages/genrePages';
+import { relationsList } from './pages/relationPages';
 import { wizardStep1, wizardStep2, wizardStep3 } from './pages/wizardPages';
 import { WIZARD_CSS, WIZARD_JS } from './wizardClient';
 import { modelForm, modelsList, providerForm, providersList } from './pages/modelPages';
@@ -93,6 +94,7 @@ type AdminPages = {
   locationsForm: (ctx: AdminPageContext, locationId: string | null) => Promise<SafeHtml>;
   locationCategoriesList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   genresList: (ctx: AdminPageContext) => Promise<SafeHtml>;
+  relationsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   assetsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   wizardStep1: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
   wizardStep2: (ctx: AdminPageContext, worldId: string) => Promise<SafeHtml>;
@@ -120,6 +122,7 @@ const DEFAULT_PAGES: AdminPages = {
   locationsForm,
   locationCategoriesList,
   genresList,
+  relationsList,
   assetsList,
   wizardStep1,
   wizardStep2,
@@ -243,6 +246,43 @@ const genreBody = z.object({
   genreId: z.string().trim().min(2).max(32),
   labelId: z.string().trim().max(60).optional().default(''),
   labelEn: z.string().trim().max(60).optional().default(''),
+  active: z.enum(['true', 'false']).optional().default('true'),
+});
+
+/**
+ * Master status hubungan.
+ *
+ * `meaning` WAJIB di sini, bukan opsional dengan nilai bawaan. Kalimat itulah
+ * satu-satunya yang memberi tahu mesin cerita bagaimana tokoh harus bersikap;
+ * status tanpa arti akan diperankan model secara acak, dan hasilnya terlihat
+ * seperti cerita yang tidak nyambung, bukan seperti data yang kurang.
+ *
+ * `relationId` TIDAK ada di badan "tambah": id dibuat sistem dari labelnya.
+ */
+const relationBody = z.object({
+  labelId: z.string().trim().min(1).max(60),
+  labelEn: z.string().trim().max(60).optional().default(''),
+  meaning: z.string().trim().min(1).max(600),
+  /** Contoh sikap. Opsional: status tanpa contoh tetap sah. */
+  behaviourHint: z.string().trim().max(400).optional().default(''),
+  active: z.enum(['true', 'false']).optional().default('true'),
+});
+
+const relationUpdateBody = z.object({
+  relationId: z.string().trim().min(1).max(64),
+  labelId: z.string().trim().min(1).max(60),
+  labelEn: z.string().trim().max(60).optional().default(''),
+  /*
+   * OPSIONAL — dan sengaja berbeda dari `relationBody`.
+   *
+   * Halaman mengirim dua formulir per baris: satu untuk label dan keadaan, satu
+   * lagi untuk arti. Mewajibkan `meaning` di sini membuat formulir yang pertama
+   * SELALU ditolak, karena ia tidak punya kolom arti. Bila tidak dikirim,
+   * repositori mempertahankan arti yang sudah ada.
+   */
+  meaning: z.string().trim().max(600).optional(),
+  /** Tidak dikirim saat hanya mengubah label; nilai lama dipertahankan. */
+  behaviourHint: z.string().trim().max(400).optional(),
   active: z.enum(['true', 'false']).optional().default('true'),
 });
 
@@ -584,6 +624,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
   app.get('/admin/genres', async (request, reply) =>
     send(reply, request, 'Genre', await pages.genresList(ctx), 'genres'),
+  );
+
+  app.get('/admin/relations', async (request, reply) =>
+    send(reply, request, 'Hubungan', await pages.relationsList(ctx), 'relations'),
   );
 
   app.get('/admin/assets', async (request, reply) =>
@@ -1138,6 +1182,147 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     return reply.redirect('/admin/genres?notice=saved', 302);
   });
 
+  /*
+   * Master status hubungan.
+   *
+   * Empat route dengan bentuk yang sama seperti genre: tambah, ubah, hapus,
+   * geser. Bedanya satu hal penting — di sini `relationId` DIBUAT SISTEM, bukan
+   * diketik admin. Karena itu tidak ada route "tambah" yang menerima id, dan
+   * route ubah/hapus hanya menerima id yang sudah ada.
+   */
+  app.post('/admin/relations', async (request, reply) => {
+    const session = request.adminSession;
+    const parsed = relationBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.redirect('/admin/relations?notice=relation-invalid', 302);
+    }
+
+    const result = await ctx.relations.create({
+      labelId: parsed.data.labelId,
+      labelEn: parsed.data.labelEn,
+      meaning: parsed.data.meaning,
+      behaviourHint: parsed.data.behaviourHint,
+      active: parsed.data.active === 'true',
+    });
+
+    if (!result.ok) {
+      return reply.redirect('/admin/relations?notice=relation-invalid', 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'relation.create',
+      targetKind: 'relation',
+      targetId: result.relationId ?? parsed.data.labelId,
+      detail: { labelId: parsed.data.labelId, active: parsed.data.active === 'true' },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/relations?notice=created', 302);
+  });
+
+  /** Mengubah label, arti, dan keaktifan. Id TIDAK diubah — lihat catatan di halaman. */
+  app.post('/admin/relations/update', async (request, reply) => {
+    const session = request.adminSession;
+    const parsed = relationUpdateBody.safeParse(request.body);
+    if (!parsed.success) {
+      return reply.redirect('/admin/relations?notice=relation-invalid', 302);
+    }
+
+    const result = await ctx.relations.update(parsed.data.relationId, {
+      labelId: parsed.data.labelId,
+      labelEn: parsed.data.labelEn,
+      meaning: parsed.data.meaning,
+      behaviourHint: parsed.data.behaviourHint,
+      active: parsed.data.active === 'true',
+    });
+
+    if (!result.ok) {
+      return reply.redirect('/admin/relations?notice=not-found', 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'relation.update',
+      targetKind: 'relation',
+      targetId: parsed.data.relationId,
+      detail: { labelId: parsed.data.labelId, active: parsed.data.active === 'true' },
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/relations?notice=saved', 302);
+  });
+
+  /**
+   * Menghapus status hubungan.
+   *
+   * Yang masih dipakai cerita ditolak, dan pesannya menyebut jalan keluarnya
+   * (nonaktifkan) — bukan sekadar "tidak dapat dihapus". Yang dihitung sebagai
+   * "dipakai" jauh lebih luas daripada "dipakai sebuah dunia": hubungan awal
+   * karakter, kosakata versi yang sudah terbit, status awal perjalanan pemain,
+   * dan status di dalam beat yang sudah tercatat.
+   */
+  app.post('/admin/relations/delete', async (request, reply) => {
+    const session = request.adminSession;
+    const body = z.object({ relationId: z.string().trim().min(1) }).safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/relations?notice=relation-invalid', 302);
+    }
+
+    /*
+     * Penolakan basis data diterjemahkan, tidak dibiarkan menjadi 500.
+     *
+     * `remove()` memeriksa pemakaian SEBELUM menghapus, tetapi ada jendela di
+     * antaranya: admin merender halaman saat definisinya belum dipakai, lalu
+     * sebuah dunia diterbitkan — dan terbit itu membekukan definisi tersebut ke
+     * kosakata versinya. Kunci asing RESTRICT lalu menolak `DELETE`, dan tanpa
+     * penangan di sini penolakannya berakhir sebagai HTTP 500 dengan halaman
+     * galat yang tidak menjelaskan apa pun.
+     *
+     * Tidak ada data yang rusak saat itu terjadi — yang rusak hanya pesannya.
+     */
+    let result: Awaited<ReturnType<typeof ctx.relations.remove>>;
+    try {
+      result = await ctx.relations.remove(body.data.relationId);
+    } catch (galat) {
+      const kode = String((galat as { code?: unknown })?.code ?? '');
+      if (kode === '23503') {
+        return reply.redirect('/admin/relations?notice=relation-in-use', 302);
+      }
+      throw galat;
+    }
+
+    if (!result.ok) {
+      const notice = result.reason === 'in-use' ? 'relation-in-use' : 'not-found';
+      return reply.redirect(`/admin/relations?notice=${notice}`, 302);
+    }
+
+    await admins.recordAudit({
+      adminId: session?.adminId ?? null,
+      username: session?.username ?? '',
+      action: 'relation.delete',
+      targetKind: 'relation',
+      targetId: body.data.relationId,
+      ipAddress: request.ip,
+    });
+
+    return reply.redirect('/admin/relations?notice=deleted', 302);
+  });
+
+  app.post('/admin/relations/move', async (request, reply) => {
+    const body = z
+      .object({ relationId: z.string().trim().min(1), direction: z.enum(['up', 'down']) })
+      .safeParse(request.body);
+    if (!body.success) {
+      return reply.redirect('/admin/relations?notice=relation-invalid', 302);
+    }
+
+    await ctx.relations.move(body.data.relationId, body.data.direction);
+    return reply.redirect('/admin/relations?notice=saved', 302);
+  });
+
   /* ---------------------------------------------------------------- */
   /* Wizard "Dunia baru"                                               */
   /* ---------------------------------------------------------------- */
@@ -1392,6 +1577,15 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
         worldId: z.string().trim().min(1),
         characterId: z.string().trim().min(1),
         role: z.string().trim().max(120).optional().default(''),
+        /*
+         * Hubungan awal WAJIB dipilih, dan tidak punya nilai bawaan.
+         *
+         * Sebelumnya bidang ini tidak ada sama sekali dan nilainya ditulis mati
+         * `'normal'`, sehingga setiap dunia dimulai dengan hubungan yang sama —
+         * mesin cerita tidak punya sikap awal untuk diperankan. Nilai bawaan di
+         * sini akan mengembalikan kebiasaan itu diam-diam, jadi tidak ada.
+         */
+        initialRelation: z.string().trim().min(1).max(64),
       })
       .safeParse(request.body);
     if (!body.success) {
@@ -1404,6 +1598,19 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
     }
 
     const base = `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3`;
+
+    /*
+     * Statusnya diperiksa terhadap MASTER, bukan terhadap daftar di dalam kode.
+     *
+     * Halaman sudah menyajikan pilihannya, tetapi halaman bukan pengaman: tab
+     * yang terbuka sebelum statusnya dinonaktifkan akan mengirim id lama. Yang
+     * ditolak di sini menjadi pesan yang menyebut sebabnya, bukan kegagalan
+     * kunci asing yang tidak menjelaskan apa pun.
+     */
+    const statusSah = await ctx.relations.existingIds([body.data.initialRelation]);
+    if (statusSah.length === 0) {
+      return reply.redirect(`${base}?notice=relation-unknown`, 302);
+    }
 
     const karakter = await ctx.characters.find(body.data.characterId);
     if (!karakter) {
@@ -1421,6 +1628,7 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
         role: body.data.role,
         background: '',
         soul: '',
+        initialRelation: body.data.initialRelation,
       },
     );
 
@@ -1442,9 +1650,9 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
   });
 
   /*
-   * Menyimpan nama, peran, background, dan soul satu karakter.
+   * Menyimpan nama, peran, background, soul, dan hubungan awal satu karakter.
    *
-   * Hanya empat hal ini yang boleh diubah, karena hanya inilah yang milik DUNIA.
+   * Hanya inilah yang boleh diubah, karena hanya inilah yang milik DUNIA.
    * Potret dan ekspresinya berasal dari master: mengubahnya di sini akan membuat
    * dunia ini berbeda dari master tanpa cara menyelaraskan keduanya lagi.
    */
@@ -1458,6 +1666,15 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
         role: z.string().trim().max(120).optional().default(''),
         background: z.string().trim().max(4000).optional().default(''),
         soul: z.string().trim().max(4000).optional().default(''),
+        /*
+         * WAJIB, tanpa nilai bawaan.
+         *
+         * Bidang yang opsional dengan cadangan `'normal'` akan mengembalikan
+         * perilaku lama secara diam-diam: formulir yang terkirim tanpa bidang ini
+         * menimpa hubungan awal karakter menjadi netral, dan admin tidak melihat
+         * apa pun berubah.
+         */
+        initialRelation: z.string().trim().min(1).max(64),
       })
       .safeParse(request.body);
     if (!body.success) {
@@ -1469,11 +1686,21 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
       return reply.redirect('/admin/worlds?notice=not-draft', 302);
     }
 
+    const base = `/admin/worlds/${encodeURIComponent(draft.worldId)}/wizard/3`;
+
+    // Diperiksa terhadap MASTER: tab yang terbuka sebelum statusnya dinonaktifkan
+    // akan mengirim id lama, dan penolakannya harus menyebut sebabnya.
+    const statusSah = await ctx.relations.existingIds([body.data.initialRelation]);
+    if (statusSah.length === 0) {
+      return reply.redirect(`${base}?notice=relation-unknown`, 302);
+    }
+
     const disimpan = await ctx.drafts.updateNpcText(draft.worldId, draft.worldVersion, body.data.npcId, {
       name: body.data.name,
       role: body.data.role,
       background: body.data.background,
       soul: body.data.soul,
+      initialRelation: body.data.initialRelation,
     });
 
     if (!disimpan) {
@@ -2662,6 +2889,28 @@ function readNotice(request: FastifyRequest): { kind: 'ok' | 'error'; text: stri
         'atau garis bawah (2–32 karakter).',
     },
     'genre-exists': { kind: 'error', text: 'ID genre itu sudah dipakai.' },
+    'relation-invalid': {
+      kind: 'error',
+      text: 'Label dan arti status hubungan wajib diisi (arti maksimal 600 karakter).',
+    },
+    'relation-unknown': {
+      kind: 'error',
+      text:
+        'Status hubungan yang dipilih tidak ada di master. Kemungkinan halaman ini ' +
+        'dibuka sebelum statusnya dihapus atau diganti nama. Muat ulang halaman ini, ' +
+        'lalu pilih kembali.',
+    },
+    'relation-in-use': {
+      kind: 'error',
+      // Menyebutkan jalan keluarnya, bukan hanya penolakannya: admin yang
+      // membaca "tidak dapat dihapus" tanpa alternatif akan mencoba lagi.
+      text:
+        'Status hubungan ini sudah dipakai cerita — sebagai hubungan awal karakter, ' +
+        'di dalam kosakata dunia yang sudah terbit, atau di dalam beat perjalanan ' +
+        'pemain. Menghapusnya membuat cerita lama kehilangan status yang sedang ' +
+        'dipakainya. Ubah keadaannya menjadi "tidak ditawarkan": status hilang dari ' +
+        'pilihan saat membuat dunia, tetapi seluruh cerita lama tetap utuh.',
+    },
     'genre-in-use': {
       kind: 'error',
       // Menyebutkan jalan keluarnya, bukan hanya penolakannya: admin yang

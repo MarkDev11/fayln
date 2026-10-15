@@ -128,7 +128,24 @@ export type WorldDetailDTO = WorldCatalogItem & {
 /* Hubungan                                                            */
 /* ------------------------------------------------------------------ */
 
-export const RELATION_STATUSES = [
+/**
+ * Delapan status hubungan BAWAAN — bukan lagi daftar yang menutup.
+ *
+ * Sejak 13 Oktober 2026 daftar yang sah tinggal di basis data, diatur admin, dan
+ * dibekukan per versi dunia. Server mengirimnya di setiap sesi sebagai
+ * `relationVocabulary`.
+ *
+ * Konstanta ini tetap ada karena satu hal saja: LABEL BAWAAN. Delapan id ini
+ * sudah tersimpan di perjalanan lama, dan terjemahannya sudah ada di kamus
+ * (`relation.normal`, dst). Tanpa daftar ini, perjalanan lama yang dibuka sebelum
+ * kosakatanya sempat dimuat akan menampilkan id mentah.
+ *
+ * Yang TIDAK boleh lagi dilakukan: memakainya untuk memutuskan status mana yang
+ * SAH. Itu persis kesalahan yang membuat status kesembilan mustahil — server
+ * menyimpannya dengan benar, lalu aplikasi menolaknya di sini dan pemain melihat
+ * "Belum diketahui" tanpa satu pun galat.
+ */
+export const DEFAULT_RELATION_STATUSES = [
   'normal',
   'hangat',
   'waspada',
@@ -138,16 +155,40 @@ export const RELATION_STATUSES = [
   'sayang',
   'cinta',
 ] as const;
-export type RelationStatus = (typeof RELATION_STATUSES)[number];
-
-export function isRelationStatus(value: unknown): value is RelationStatus {
-  return typeof value === 'string' && (RELATION_STATUSES as readonly string[]).includes(value);
-}
 
 /**
- * Status tak dikenal tidak boleh membuat UI kosong.
- * Admin boleh menambah status baru; pemain melihat label netral.
+ * Status hubungan adalah ID BEBAS, bukan gabungan harfiah.
+ *
+ * Admin dapat menambah status baru lewat panel tanpa membangun ulang aplikasi.
+ * Tipe yang menutup daftarnya akan menuntut penyuntingan kode setiap kali itu
+ * terjadi — dan itulah bentuk lama yang digantikan.
  */
+export type RelationStatus = string;
+
+/** Satu definisi hubungan sebagaimana dikirim server untuk sebuah versi dunia. */
+export type RelationVocabularyEntry = {
+  relationId: string;
+  labelId: string;
+  labelEn: string;
+  /** Arahan untuk mesin cerita. Tidak pernah ditampilkan ke pemain. */
+  meaning: string;
+  /** Contoh sikap: apa yang TERLIHAT di layar. Boleh kosong. */
+  behaviourHint: string;
+  position: number;
+};
+
+/**
+ * Status yang benar-benar KOSONG saja yang dianggap tidak diketahui.
+ *
+ * Bentuk lamanya menolak apa pun yang tidak ada di delapan nilai bawaan. Sejak
+ * status menjadi data, penolakan itu berubah menjadi kerusakan senyap: status
+ * yang sah menurut server diubah menjadi "unknown" di sini, dan pemain melihat
+ * hubungannya tidak pernah berubah.
+ */
+export function isRelationStatus(value: unknown): value is RelationStatus {
+  return typeof value === 'string' && value.trim().length > 0;
+}
+
 export function coerceRelationStatus(value: unknown): RelationStatus | 'unknown' {
   return isRelationStatus(value) ? value : 'unknown';
 }

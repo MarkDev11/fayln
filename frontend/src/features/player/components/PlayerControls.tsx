@@ -2,7 +2,7 @@ import React from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
 
 import { Icon, type IconName } from '@/components/Icon';
-import { Text } from '@/components/Text';
+import { Text, type TextTone } from '@/components/Text';
 
 import { useTheme } from '@/theme/ThemeProvider';
 import { space, touchTarget } from '@/theme/tokens';
@@ -18,6 +18,15 @@ export type ControlItem = {
 
 export type PlayerControlsProps = {
   items: ControlItem[];
+  /**
+   * Nada warna label dan ikon.
+   *
+   * Bawaannya `'primary'` — untuk kontrol yang duduk di atas permukaan aplikasi.
+   * Layar pemain memakai `'onMedia'`, karena baris ini menumpang di atas
+   * ILUSTRASI: dengan `'primary'`, labelnya bernilai GELAP pada tema terang dan
+   * lenyap begitu adegannya berlatar gelap.
+   */
+  tone?: TextTone;
   testID?: string;
 };
 
@@ -41,8 +50,18 @@ export type PlayerControlsProps = {
  * tidak ada latar per item. Ikon tetap ada karena ia yang membuat baris ini
  * dapat dipindai sekilas — tetapi ukurannya tidak lagi mengalahkan teks.
  */
-export function PlayerControls({ items, testID }: PlayerControlsProps) {
+export function PlayerControls({ items, tone = 'primary', testID }: PlayerControlsProps) {
   const { colors } = useTheme();
+
+  /*
+   * Warna ikon mengikuti nada yang diminta.
+   *
+   * `colors.inkSecondary` bernilai gelap pada tema terang; di atas ilustrasi
+   * gelap, ikonnya hilang. `onMedia` bernilai putih pada kedua tema.
+   */
+  const iconColor = tone === 'onMedia' ? colors.onMedia : colors.inkSecondary;
+  const activeIconColor = tone === 'onMedia' ? colors.onMedia : colors.accent;
+  const dividerColor = tone === 'onMedia' ? 'rgba(255, 255, 255, 0.35)' : colors.line;
 
   return (
     <View testID={testID} style={styles.row}>
@@ -57,7 +76,7 @@ export function PlayerControls({ items, testID }: PlayerControlsProps) {
              * ini murni hiasan; pembaca layar tidak boleh berhenti padanya.
              */
             <View
-              style={[styles.divider, { backgroundColor: colors.line }]}
+              style={[styles.divider, { backgroundColor: dividerColor }]}
               accessibilityElementsHidden
               importantForAccessibility="no-hide-descendants"
             />
@@ -76,15 +95,15 @@ export function PlayerControls({ items, testID }: PlayerControlsProps) {
             <Icon
               name={item.icon}
               size={15}
-              color={item.active ? colors.accent : colors.inkSecondary}
+              color={item.active ? activeIconColor : iconColor}
             />
             {/*
               * Teks tebal, dan TIDAK lagi bergantung pada `tone` untuk mode aktif.
               * Sebelumnya label aktif memakai `tone="accent"` — kalau token warna
               * aksen tidak terdefinisi, labelnya menghilang tanpa galat. Yang
-              * diwarnai sekarang hanya ikon; teksnya selalu warna utama.
+              * diwarnai sekarang hanya ikon; teksnya selalu mengikuti nada baris.
               */}
-            <Text variant="caption" weight="700" tone="primary">
+            <Text variant="caption" weight="700" tone={tone}>
               {item.label}
             </Text>
           </Pressable>

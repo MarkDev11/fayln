@@ -267,6 +267,24 @@ export const id = {
 
   'player.tapHint': 'Ketuk sekali untuk menyelesaikan teks, ketuk lagi untuk melanjutkan.',
   'player.tapToContinue': 'Ketuk untuk lanjut',
+  /*
+   * Label HUD panggung.
+   *
+   * Referensi pemilik produk menampilkan blok "Waktu" di kepala panggung. Data
+   * waktu cerita tidak ada di fayLN — tabel `worlds` hanya menyimpan id dan
+   * tanggal dibuat. Karena itu yang ditampilkan adalah TEMPAT adegan, yang
+   * datanya benar-benar ada (label latar dari manifes aset dunia).
+   */
+  'player.relationLabel': 'Hubungan',
+  'player.locationLabel': 'Tempat',
+  'player.locationUnknown': 'Tempat tidak diketahui',
+  'player.advance': 'Lanjutkan cerita',
+  'player.expressionNeutral': 'netral',
+  'player.stageBackgroundLabel': 'Latar',
+  'player.stageBackgroundUnavailable': 'Latar belum tersedia',
+  'player.stageBackgroundPlaceholder': 'Latar belum tersedia.',
+  'player.stageCharacterLabel': 'Karakter',
+  'player.stageCharacterLoading': 'Karakter',
   'player.optionLabel': 'Pilihan {index}',
   'player.auto': 'Auto',
   'player.autoOn': 'Auto aktif',
@@ -274,6 +292,14 @@ export const id = {
   'player.autoStopDecision': 'Auto berhenti karena ada pilihan yang menunggu.',
   'player.autoStopError': 'Auto berhenti karena terjadi gangguan.',
   'player.autoStoppedBackground': 'Auto dijeda karena aplikasi tidak aktif.',
+  /*
+   * Pengatur kecepatan Auto.
+   *
+   * `{seconds}` ditulis sebagai angka desimal tanpa satuan ("1", "2", "5") dan
+   * satuannya ada di label — supaya chip-nya tetap sempit dan bisa berjajar.
+   */
+  'player.autoDelayLabel': 'Jeda Auto',
+  'player.autoDelayOption': '{seconds} dtk',
   'player.log': 'Riwayat',
   'player.characters': 'Tokoh',
   'player.pause': 'Jeda',

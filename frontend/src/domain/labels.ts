@@ -11,10 +11,19 @@ import type {
   GenreId,
   GenreOption,
   RelationStatus,
+  RelationVocabularyEntry,
   WorldStatus,
 } from './types';
 
-const relationKeys: Record<RelationStatus, TranslationKey> = {
+/**
+ * Label BAWAAN untuk delapan status lama.
+ *
+ * Ini hanya cadangan. Sejak status hubungan menjadi data, label yang benar
+ * datang bersama sesi di `relationVocabulary` — dan itulah yang dipakai lebih
+ * dahulu. Peta ini menjaga perjalanan lama tetap terbaca, dan menjaga kunci
+ * terjemahan yang sudah ada tidak menjadi yatim.
+ */
+const relationKeys: Record<string, TranslationKey> = {
   normal: 'relation.normal',
   hangat: 'relation.hangat',
   waspada: 'relation.waspada',
@@ -26,14 +35,61 @@ const relationKeys: Record<RelationStatus, TranslationKey> = {
 };
 
 /**
- * Status tak dikenal — termasuk status baru buatan admin — jatuh ke label netral,
- * bukan menampilkan string mentah atau membuat kartu kosong.
+ * Kunci terjemahan cadangan untuk sebuah status, atau `null` bila status itu
+ * hanya ada di kosakata dunia.
+ *
+ * `null` di sini BUKAN kegagalan: ia berarti labelnya harus diambil dari
+ * kosakata, dan pemanggil yang memutuskan itu.
  */
-export function relationLabelKey(status: RelationStatus | 'unknown'): TranslationKey {
+export function relationLabelKey(status: RelationStatus | 'unknown'): TranslationKey | null {
   if (status === 'unknown') {
     return 'relation.unknown';
   }
-  return relationKeys[status] ?? 'relation.unknown';
+  return relationKeys[status] ?? null;
+}
+
+/**
+ * Label yang ditampilkan untuk sebuah status hubungan.
+ *
+ * ---------------------------------------------------------------------------
+ * URUTANNYA PENTING, DAN INI ALASANNYA
+ * ---------------------------------------------------------------------------
+ * 1. KOSAKATA DUNIA. Inilah label yang benar untuk status apa pun, termasuk
+ *    status kesembilan yang dibuat admin. Ia datang bersama sesi.
+ * 2. KUNCI TERJEMAHAN BAWAAN. Untuk delapan status lama, dan untuk keadaan
+ *    kosakata belum termuat (mis. kartu dirender sebelum sesi tiba).
+ * 3. ID MENTAH. Status yang sah tetapi tidak ada di kosakata maupun daftar
+ *    bawaan tetap ditampilkan apa adanya.
+ *
+ * Langkah ketiga sengaja BUKAN "Belum diketahui". Menampilkan id mentah memang
+ * kurang enak dibaca, tetapi ia dapat ditelusuri; sedangkan "Belum diketahui"
+ * memberi tahu pemain bahwa ada yang rusak tanpa mengatakan apa — dan itu
+ * menyembunyikan satu-satunya petunjuk yang ada.
+ */
+export function relationLabel(
+  status: RelationStatus | 'unknown',
+  vocabulary: readonly RelationVocabularyEntry[],
+  locale: UiLocale,
+  t: TranslateFn,
+): string {
+  if (status === 'unknown') {
+    return t('relation.unknown');
+  }
+
+  const definisi = vocabulary.find((item) => item.relationId === status);
+  if (definisi) {
+    const label = locale === 'en-US' ? definisi.labelEn || definisi.labelId : definisi.labelId;
+    if (label.trim().length > 0) {
+      return label;
+    }
+  }
+
+  const kunci = relationLabelKey(status);
+  if (kunci) {
+    return t(kunci);
+  }
+
+  return status;
 }
 
 /** Nada warna untuk status hubungan. Warna hanya pelengkap; teks selalu ada. */

@@ -256,6 +256,16 @@ const NAV: NavItem[] = [
     ),
   },
   {
+    href: '/admin/relations',
+    label: 'Hubungan',
+    key: 'relations',
+    from: '#ff6482',
+    to: '#c9295a',
+    icon: navIcon(
+      '<path d="M8 13.4S2.6 10.2 2.6 6.6A2.9 2.9 0 0 1 8 5.2a2.9 2.9 0 0 1 5.4 1.4c0 3.6-5.4 6.8-5.4 6.8z"/>',
+    ),
+  },
+  {
     href: '/admin/assets',
     label: 'Aset',
     key: 'assets',

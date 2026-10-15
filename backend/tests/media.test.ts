@@ -16,6 +16,7 @@ import { AdminRepository } from '../src/admin/adminRepository';
 import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
+import { RelationsRepository } from '../src/admin/relationsRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ProvidersRepository } from '../src/admin/providersRepository';
@@ -143,6 +144,7 @@ async function build(): Promise<FastifyInstance> {
     models: new ModelsRepository(ctx.db),
     drafts: new WorldDraftRepository(ctx.db),
     genres: new GenresRepository(ctx.db),
+    relations: new RelationsRepository(ctx.db),
     characters: new CharactersRepository(ctx.db),
     locations: new LocationsRepository(ctx.db),
     providers: new ProvidersRepository(ctx.db),

@@ -29,9 +29,9 @@
 
 import { randomUUID } from 'node:crypto';
 
+import { freezeRelationVocabulary } from './relationsRepository';
 import type { Database, DbClient } from '../db/pool';
 import type { ContentRating, GenreId, RelationStatus, ResponseLocale } from '../contracts/types';
-import { RELATION_STATUSES } from '../contracts/types';
 
 /**
  * Batas jumlah latar belakang per versi dunia.
@@ -1011,7 +1011,25 @@ export class WorldDraftRepository {
     worldId: string,
     worldVersion: number,
     characterId: string,
-    input: { name: string; role: string; background: string; soul: string },
+    input: {
+      name: string;
+      role: string;
+      background: string;
+      soul: string;
+      /**
+       * Hubungan AWAL tokoh ini terhadap pemain, dipilih admin dari master.
+       *
+       * Sebelumnya tidak ada bidang ini, dan nilainya ditulis mati `'normal'`.
+       * Akibatnya seluruh dunia dimulai dengan hubungan yang sama, dan mesin
+       * cerita tidak punya sikap awal untuk diperankan — padahal justru sikap
+       * awal itu yang membuat tokoh terasa punya pendirian pada adegan pertama.
+       *
+       * WAJIB diisi pemanggil. Nilai bawaan di sini akan mengembalikan kebiasaan
+       * lama secara diam-diam, dan itu kelas kegagalan yang paling mahal di
+       * proyek ini: benar di layar, salah di data, tanpa galat di mana pun.
+       */
+      initialRelation: string;
+    },
   ): Promise<
     { ok: true; npcId: string; portraits: number } | { ok: false; reason: 'not-found' | 'limit' }
   > {
@@ -1058,7 +1076,7 @@ export class WorldDraftRepository {
           clamp(input.role, MAX_NAME),
           clamp(input.background, MAX_BACKSTORY),
           clamp(input.soul, MAX_SOUL),
-          'normal',
+          input.initialRelation,
           defaultAssetId,
           positionRows[0]?.next_position ?? 1,
           characterId,
@@ -1128,11 +1146,11 @@ export class WorldDraftRepository {
     worldId: string,
     worldVersion: number,
     npcId: string,
-    input: { name: string; role: string; background: string; soul: string },
+    input: { name: string; role: string; background: string; soul: string; initialRelation: string },
   ): Promise<boolean> {
     const { rowCount } = await this.db.query(
       `UPDATE world_characters
-       SET name = $4, role = $5, public_backstory = $6, soul = $7
+       SET name = $4, role = $5, public_backstory = $6, soul = $7, initial_relation = $8
        WHERE world_id = $1 AND world_version = $2 AND npc_id = $3`,
       [
         worldId,
@@ -1142,6 +1160,7 @@ export class WorldDraftRepository {
         clamp(input.role, MAX_NAME),
         clamp(input.background, MAX_BACKSTORY),
         clamp(input.soul, MAX_SOUL),
+        input.initialRelation,
       ],
     );
 
@@ -1205,13 +1224,38 @@ export class WorldDraftRepository {
    * di riwayat — perbedaan yang tidak ada gunanya.
    */
   async publishDraft(worldId: string, worldVersion: number): Promise<boolean> {
-    const { rowCount } = await this.db.query(
-      `UPDATE world_versions
-       SET status = 'published', published_at = now()
-       WHERE world_id = $1 AND world_version = $2 AND status = 'draft'`,
-      [worldId, worldVersion],
-    );
-    return rowCount > 0;
+    return this.db.transaction(async (client) => {
+      const { rowCount } = await client.query(
+        `UPDATE world_versions
+         SET status = 'published', published_at = now()
+         WHERE world_id = $1 AND world_version = $2 AND status = 'draft'`,
+        [worldId, worldVersion],
+      );
+
+      if (rowCount === 0) {
+        /*
+         * Versi ini BUKAN draf lagi — sudah terbit, atau ditarik.
+         *
+         * Kosakatanya sengaja TIDAK disentuh. Membekukannya lagi akan menulis
+         * ulang arti yang sedang dipakai perjalanan yang sudah berjalan, tepat
+         * pada perbuatan yang tampak paling tidak berbahaya: menekan "terbitkan"
+         * dua kali.
+         */
+        return false;
+      }
+
+      /*
+       * Kosakata versi ini dibekukan TEPAT saat ia menjadi dapat dimainkan.
+       *
+       * Sebelum baris ini, versi draf membawa salinan dari versi sebelumnya —
+       * cukup untuk disunting, tetapi belum tentu memuat status yang baru
+       * ditambahkan ke master. Menerbitkan adalah saat yang benar untuk
+       * menyegarkannya: sesudah ini kosakatanya tidak berubah lagi, sehingga
+       * penyuntingan master berikutnya tidak menyentuh perjalanan yang sudah ada.
+       */
+      await freezeRelationVocabulary(client, worldId, worldVersion);
+      return true;
+    });
   }
 
   /* ---------------------------------------------------------------- */
@@ -1467,11 +1511,6 @@ function normaliseLikelihood(value: string | null): string | null {
   return value;
 }
 
-/** Hubungan awal harus salah satu dari daftar; yang lain jatuh ke `normal`. */
-export function isRelationStatus(value: string): value is RelationStatus {
-  return (RELATION_STATUSES as readonly string[]).includes(value);
-}
-
 function slug(value: string): string {
   return value
     .toLowerCase()
@@ -1533,3 +1572,18 @@ async function groupedStrings(
   }
   return grouped;
 }
+
+/*
+ * CATATAN — penjaga yang DIBUANG, bukan fungsi di bawahnya.
+ *
+ * `isRelationStatus()` pernah hidup di berkas ini. Ia memeriksa keanggotaan
+ * pada delapan nilai yang ditulis di dalam kode, dan ia tidak punya satu pun
+ * pemanggil — "desain ada, kode tidak". Ia dibuang bersama master hubungan:
+ * yang sah sekarang ditentukan isi tabel `relation_definitions` (lihat
+ * `RelationsRepository.existingIds`), bukan daftar di dalam kode.
+ *
+ * Catatan ini sengaja diletakkan di akhir berkas, bukan menempel pada fungsi
+ * lain. Bentuk sebelumnya menempel tepat di atas `slug()`, sehingga terbaca
+ * sebagai dokumen `slug()` — komentar yang menjelaskan fungsi yang salah lebih
+ * buruk daripada tidak ada komentar.
+ */

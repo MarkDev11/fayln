@@ -13,6 +13,7 @@ import type {
   JourneySummary,
   MemorySnapshot,
   RelationEntry,
+  RelationVocabularyEntry,
   TurnResultEnvelope,
   UsageDTO,
   WorldCatalogItem,
@@ -107,6 +108,15 @@ export type JourneySession = {
   /** Seluruh beat yang sudah di-commit, terurut menaik. */
   beats: Beat[];
   relationsBaseline: RelationEntry[];
+  /**
+   * Kosakata hubungan yang berlaku untuk versi dunia perjalanan ini.
+   *
+   * Dikirim server supaya label status ditentukan DATA, bukan daftar tetap di
+   * aplikasi. Tanpa ini, status yang sah tersimpan dengan benar di server tetapi
+   * tampil sebagai id mentah (atau "Belum diketahui") di layar pemain — dan tidak
+   * ada satu pun galat yang menunjuk ke sana.
+   */
+  relationVocabulary: RelationVocabularyEntry[];
   memory: MemorySnapshot;
   /** Perkiraan posisi baca menurut server; frontend tetap memakai autosave lokal. */
   committedCursor: number;
