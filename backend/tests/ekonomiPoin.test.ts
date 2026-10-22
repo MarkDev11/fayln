@@ -97,6 +97,30 @@ describe('streak klaim harian', () => {
     // atau hapus bonus → uji ini memerah di hari ke-7.
   });
 
+  it('sebelum klaim, streak menyebut hari yang AKAN berlaku — bukan 0', async () => {
+    const { usage, akun } = await siapkan();
+
+    // Pemain baru: klaim pertama akan menjadi hari ke-1.
+    const baru = await usage.usage(akun, wib(1, 9));
+    expect(baru.claimableToday).toBe(true);
+    expect(baru.streakDay).toBe(1);
+
+    /*
+     * Pemain yang sudah 6 hari beruntun dan belum mengklaim hari ini: popup
+     * harus menyebut 7 supaya titik bonus +300 menyala SEBELUM klaim. Nilai 0
+     * menyembunyikan justru momen yang paling menarik.
+     *
+     * BUKTI MUTASI: kembalikan `streakDay` menjadi `claim ? … : 0` → uji ini
+     * memerah (0, bukan 7).
+     */
+    for (let hari = 1; hari <= 6; hari += 1) {
+      await usage.claim(akun, wib(hari, 10));
+    }
+    const hariKetujuh = await usage.usage(akun, wib(7, 9));
+    expect(hariKetujuh.claimableToday).toBe(true);
+    expect(hariKetujuh.streakDay).toBe(7);
+  });
+
   it('bolong satu hari mengembalikan streak ke 1', async () => {
     const { usage, akun } = await siapkan();
 

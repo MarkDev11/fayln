@@ -99,9 +99,20 @@ export class UsageRepository {
 
   async usage(accountId: string, at: Date = new Date()): Promise<UsageDTO> {
     const dateKey = jakartaDateKey(at);
-    const [day, claim, multiplier] = await Promise.all([
+    /*
+     * Klaim kemarin ikut dibaca supaya `streakDay` dapat menyebut hari yang
+     * AKAN berlaku hari ini, bukan 0.
+     *
+     * Mengapa bukan 0: popup klaim menyalakan titik streak dan menandai hari
+     * ke-7 (+300). Pemain yang sudah 6 hari beruntun tapi belum mengklaim hari
+     * ini akan melihat "Streak 0 hari" dan tidak tahu bahwa klaim berikutnya
+     * membawa bonus — justru momen yang seharusnya paling menarik.
+     */
+    const yesterdayKey = jakartaDateKey(new Date(at.getTime() - 24 * 60 * 60 * 1000));
+    const [day, claim, kemarin, multiplier] = await Promise.all([
       this.readDay(this.db, accountId, dateKey),
       this.readClaim(this.db, accountId, dateKey),
+      this.readClaim(this.db, accountId, yesterdayKey),
       this.quotaMultiplier(),
     ]);
 
@@ -110,7 +121,11 @@ export class UsageRepository {
     const awarded = claim
       ? Number.parseInt(claim.base_points, 10) + Number.parseInt(claim.bonus_points, 10)
       : 0;
-    const streakDay = claim ? Number.parseInt(claim.streak_day, 10) : 0;
+    const streakDay = claim
+      ? Number.parseInt(claim.streak_day, 10)
+      : kemarin
+        ? Number.parseInt(kemarin.streak_day, 10) + 1
+        : 1;
 
     return {
       tier: day?.tier === 'paid' ? 'paid' : 'free',
