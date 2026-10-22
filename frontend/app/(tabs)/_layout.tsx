@@ -1,7 +1,7 @@
 import { Tabs } from 'expo-router';
 import React from 'react';
 
-import { Icon } from '@/components/Icon';
+import { TabIcon } from '@/components/TabIcon';
 import { useI18n } from '@/i18n';
 import { useTheme } from '@/theme/ThemeProvider';
 
@@ -36,7 +36,7 @@ export default function TabsLayout() {
           title: t('tabs.home'),
           tabBarAccessibilityLabel: t('tabs.home'),
           tabBarIcon: ({ color, focused }) => (
-            <Icon name="home" size={24} color={color} strokeWidth={focused ? 2.4 : 2} />
+            <TabIcon name="home" size={24} color={color} focused={focused} testID="tab-icon-home" />
           ),
         }}
       />
@@ -49,7 +49,7 @@ export default function TabsLayout() {
           // perpustakaan cerita yang tersimpan, dan balon bicara memberi kesan
           // fitur obrolan yang tidak ada di fayLN.
           tabBarIcon: ({ color, focused }) => (
-            <Icon name="book" size={24} color={color} strokeWidth={focused ? 2.4 : 2} />
+            <TabIcon name="journey" size={24} color={color} focused={focused} testID="tab-icon-journey" />
           ),
         }}
       />
@@ -59,7 +59,7 @@ export default function TabsLayout() {
           title: t('tabs.settings'),
           tabBarAccessibilityLabel: t('tabs.settings'),
           tabBarIcon: ({ color, focused }) => (
-            <Icon name="settings" size={24} color={color} strokeWidth={focused ? 2.4 : 2} />
+            <TabIcon name="settings" size={24} color={color} focused={focused} testID="tab-icon-settings" />
           ),
         }}
       />
