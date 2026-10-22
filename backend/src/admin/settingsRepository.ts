@@ -8,6 +8,7 @@
  */
 
 import type { Database } from '../db/pool';
+import { jakartaDateKey } from '../repositories/usageRepository';
 
 export type KnownSetting = {
   key: string;
@@ -53,21 +54,23 @@ export const KNOWN_SETTINGS: KnownSetting[] = [
   },
   {
     key: 'promo.free_tier_multiplier',
-    label: 'Pengali kuota Free selama promosi',
+    label: 'Pengali poin harian Free selama promosi',
     description:
-      'Angka desimal. 1 = tanpa perubahan, 2 = kuota Free dua kali lipat. Berlaku saat dibaca, tanpa mengubah baris pemakaian.',
+      'Angka desimal. 1 = tanpa perubahan, 2 = poin harian Free dua kali lipat. Berlaku saat klaim harian dilakukan, tanpa mengubah baris pemakaian.',
     fallback: 1,
   },
   {
     key: 'promo.paid_tier_multiplier',
-    label: 'Pengali kuota Paid selama promosi',
-    description: 'Sama seperti pengali Free, tetapi untuk tier Paid.',
+    label: 'Pengali poin harian Paid selama promosi',
+    description:
+      'Sama seperti pengali Free, tetapi untuk tier Paid. Belum berpengaruh: jatah poin paket berbayar ditunda sampai fitur bayarnya dibuat (docs/17).',
     fallback: 1,
   },
   {
     key: 'signup.bonus_tokens',
     label: 'Token bonus pendaftaran',
-    description: 'Bonus yang diberikan sekali saat akun baru pertama kali terlihat. 0 = tidak ada.',
+    description:
+      'Bonus yang diberikan sekali saat akun baru pertama kali terlihat. 0 = tidak ada. Catatan: belum ada pembaca sejak ekonomi poin (docs/17) — nilai ini tidak menambah poin harian.',
     fallback: 0,
   },
 ];
@@ -173,7 +176,12 @@ export class SettingsRepository {
   async todayUsage(): Promise<
     { tier: string; accounts: number; spentTokens: string; reservedTokens: string }[]
   > {
-    const today = new Date().toISOString().slice(0, 10);
+    /*
+     * Hari dihitung dalam WIB, sama dengan jalur pemain (docs/17 bagian 3
+     * butir 5). Angka `spent_tokens` berarti poin sejak ekonomi poin —
+     * labelnya di panel sudah diganti "Poin terpakai".
+     */
+    const today = jakartaDateKey();
     const { rows } = await this.db.query<{
       tier: string;
       accounts: number;

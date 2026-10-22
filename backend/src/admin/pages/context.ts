@@ -80,18 +80,26 @@ export type AdminPageContext = {
   /** Berkas gambar unggahan; dipakai halaman Aset untuk menghitung pemakaian. */
   media: MediaRepository;
   /**
-   * Batas paket yang sedang berlaku, dibaca dari konfigurasi server.
+   * Batas konteks per paket, dibaca dari konfigurasi server.
    *
-   * Halaman model memakainya untuk menerjemahkan "biaya per giliran" menjadi
-   * "≈ N giliran per hari" — angka yang dapat dibayangkan, dan yang membuat
-   * salah isi langsung terlihat. Jatahnya SENGAJA tidak ditulis ulang di
-   * halaman: angka yang ditulis ulang akan berbeda dari yang benar-benar
-   * ditegakkan begitu seseorang menyetel variabel lingkungannya, dan halaman
-   * yang menyebut jatah keliru lebih buruk daripada halaman yang tidak
-   * menyebutnya sama sekali.
+   * Satu-satunya pengaturan token yang masih ada di jalur pemain: batas
+   * konteks tidak berkaitan dengan ekonomi poin (docs/17).
    */
   plan: {
-    free: { dailyTokens: number; contextTokens: number };
-    paid: { dailyTokens: number; contextTokens: number };
+    free: { contextTokens: number };
+    paid: { contextTokens: number };
+  };
+  /**
+   * Aturan ekonomi poin harian (docs/17), dibaca dari konfigurasi server.
+   *
+   * Halaman yang menyebut jatah poin wajib membacanya dari sini, bukan
+   * menuliskan angkanya: angka yang ditulis ulang akan berbeda dari yang
+   * benar-benar ditegakkan begitu seseorang menyetel variabel lingkungannya.
+   */
+  points: {
+    dailyPoints: number;
+    sceneCost: number;
+    streakBonusPoints: number;
+    streakCycleDays: number;
   };
 };

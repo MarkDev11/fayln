@@ -239,6 +239,7 @@ export const EVENT_TYPES = [
   'narrate',
   'presentChoices',
   'relationshipDelta',
+  'playerInput',
   'setFlag',
   'memoryWrite',
   'endArc',
@@ -264,6 +265,7 @@ export type StoryEvent =
       options: [ChoiceOption, ChoiceOption, ChoiceOption];
     }
   | { type: 'relationshipDelta'; npcId: string; status: RelationStatus; reasonPublic: string }
+  | { type: 'playerInput'; inputKind: 'choice' | 'custom'; text: string }
   | { type: 'setFlag'; key: string; value: string | number | boolean }
   | { type: 'memoryWrite'; summary: string; sourceTurnIds: string[] }
   | { type: 'endArc'; reasonPublic: string };
@@ -399,12 +401,46 @@ export type Tier = (typeof TIERS)[number];
 
 export type UsageDTO = {
   tier: Tier;
+  /**
+   * Poin yang sudah terpakai hari ini (docs/17).
+   *
+   * Kolom `usage_days.spent_tokens` dipakai ulang sebagai POIN sejak ekonomi
+   * poin: 10 per giliran sukses. Angka historis sebelum cutover masih token;
+   * cutover bersih diizinkan karena pemain aktif saat ini akun uji.
+   */
   spent: number;
   reserved: number;
+  /**
+   * Poin yang dapat dipakai SEKARANG.
+   *
+   * Nol sebelum klaim harian: saldo hari itu memang nol sampai popup daily
+   * login diklaim (docs/17 bagian 3 butir 1). Dihitung dari baris klaim
+   * hari ini dikurangi pemakaian, bukan dari batas paket.
+   */
   available: number;
+  /** Jatah poin harian yang sedang berlaku (konfigurasi × pengali promosi). */
   allowanceLimit: number;
+  /** Apakah klaim harian belum dilakukan hari ini. */
+  claimableToday: boolean;
+  /** Hari ke-n rentetan klaim beruntun; 0 bila belum pernah klaim hari ini. */
+  streakDay: number;
+  /** Biaya poin satu giliran; adegan pembuka gratis. */
+  sceneCost: number;
   resetAt: string;
   isEstimate: boolean;
+};
+
+/** Hasil klaim poin harian (docs/17 bagian 4.1). */
+export type ClaimResultDTO = {
+  /** Poin dasar yang diberikan KLAIM INI; 0 bila hari itu sudah pernah diklaim. */
+  awarded: number;
+  /** Bonus streak klaim ini; 0 bila bukan hari kelipatan siklus. */
+  bonus: number;
+  /** Hari ke-n rentetan setelah klaim ini. */
+  streakDay: number;
+  /** Sisa poin yang dapat dipakai sekarang. */
+  available: number;
+  resetAt: string;
 };
 
 export type EntitlementDTO = {

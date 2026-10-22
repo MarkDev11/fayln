@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { act, render } from '@testing-library/react-native';
 
 import { MockStoryGateway } from '@/data/mock/MockStoryGateway';
@@ -40,6 +40,7 @@ class GatewayPerekam extends MockStoryGateway {
 let mesin: PlayerEngine | null = null;
 
 function Harness({ session }: { session: JourneySession }) {
+  const store = useMemo(() => new InMemoryPlaybackStore(), []);
   mesin = usePlayerEngine({
     journeyId: session.journeyId,
     worldId: session.world.worldId,
@@ -57,7 +58,7 @@ function Harness({ session }: { session: JourneySession }) {
      * "NativeDatabase is not a constructor" — galat yang tidak ada hubungannya
      * dengan yang sedang diuji.
      */
-    store: new InMemoryPlaybackStore(),
+    store,
   });
   return null;
 }

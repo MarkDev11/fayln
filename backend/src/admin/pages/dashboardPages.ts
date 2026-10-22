@@ -51,8 +51,10 @@ export async function dashboard(ctx: AdminPageContext): Promise<SafeHtml> {
   </div>`;
 
   const usage = await ctx.settings.todayUsage();
+  // Kolom `spent_tokens` berarti POIN sejak docs/17 (10 per giliran sukses),
+  // bukan token — labelnya mengikuti makna yang ditegakkan sistem.
   const usageTable = table(
-    ['Tier', 'Akun', 'Token terpakai', 'Token cadangan'],
+    ['Tier', 'Akun', 'Poin terpakai', 'Poin cadangan'],
     usage.map(
       (row) =>
         `<tr><td>${esc(row.tier)}</td><td>${esc(row.accounts)}</td>` +

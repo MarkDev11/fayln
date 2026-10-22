@@ -1,5 +1,5 @@
 import { StoryGatewayError } from '@/data/gateway';
-import { MockStoryGateway, FREE_DAILY_ALLOWANCE } from '@/data/mock/MockStoryGateway';
+import { MockStoryGateway, FREE_DAILY_POINTS } from '@/data/mock/MockStoryGateway';
 import { FIXTURE_SEED, allWorlds, catalogFixtures, findWorld } from '@/data/mock/fixtures';
 import { validateBeats } from '@/domain/validation';
 import { worldBoskuMantan } from '@/data/mock/fixtures';
@@ -238,13 +238,13 @@ describe('MockStoryGateway', () => {
       const gateway = instant();
       const usage = await gateway.fetchUsage();
       expect(usage.tier).toBe('free');
-      expect(usage.allowanceLimit).toBe(FREE_DAILY_ALLOWANCE);
+      expect(usage.allowanceLimit).toBe(FREE_DAILY_POINTS);
       expect(usage.isEstimate).toBe(true);
       expect(new Date(usage.resetAt).getTime()).toBeGreaterThan(Date.now());
     });
 
     it('menolak giliran ketika kuota tidak mencukupi (AC-24)', async () => {
-      const gateway = new MockStoryGateway({ instant: true, initialSpent: FREE_DAILY_ALLOWANCE });
+      const gateway = new MockStoryGateway({ instant: true, initialSpent: FREE_DAILY_POINTS });
       const created = await gateway.createJourney({
         clientOperationId: 'op-habis',
         worldId: 'w_bosku-mantan',

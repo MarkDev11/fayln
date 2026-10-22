@@ -1,8 +1,8 @@
 /**
  * Endpoint kuota dan laporan.
  *
- * Kuota dibaca dengan menghitung hari UTC saat permintaan masuk. Tidak ada
- * pekerjaan terjadwal yang mereset apa pun (docs/14 bagian 5).
+ * Hari dihitung dalam WIB saat permintaan masuk (docs/17 bagian 3 butir 5).
+ * Tidak ada pekerjaan terjadwal yang mereset apa pun (docs/14 bagian 5).
  */
 
 import { randomUUID } from 'node:crypto';
@@ -23,6 +23,19 @@ export function registerUsageAndReportRoutes(app: FastifyInstance, deps: UsageRo
   app.get('/v1/usage', async (request) => {
     const accountId = resolveAccountId(request);
     return deps.usage.usage(accountId);
+  });
+
+  /*
+   * Klaim poin harian (docs/17 bagian 4.1).
+   *
+   * Idempoten: klaim ulang pada hari yang sama mengembalikan keadaan saat ini
+   * dengan `awarded: 0`, bukan galat — percobaan ulang dari klien yang
+   * kehilangan balasan pertama harus selalu aman.
+   */
+  app.post('/v1/usage/claim', async (request, reply) => {
+    const accountId = resolveAccountId(request);
+    const result = await deps.usage.claim(accountId);
+    return reply.status(201).send(result);
   });
 
   app.post('/v1/reports', async (request, reply) => {

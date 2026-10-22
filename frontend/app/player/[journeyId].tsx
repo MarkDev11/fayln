@@ -1,5 +1,5 @@
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useRouter } from 'expo-router';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
@@ -10,6 +10,7 @@ import { Button } from '@/components/Button';
 import { ConfirmDialog } from '@/components/ConfirmDialog';
 import { Icon } from '@/components/Icon';
 import { Screen } from '@/components/Screen';
+import { SimulatorBadge } from '@/components/SimulatorBadge';
 import { StateView } from '@/components/StateView';
 import { Text } from '@/components/Text';
 
@@ -45,32 +46,50 @@ export default function PlayerScreen() {
   const router = useRouter();
 
   const [session, setSession] = useState<JourneySession | null>(null);
+  const [initialCursor, setInitialCursor] = useState(0);
   const [personaName, setPersonaName] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const loadRequestRef = useRef(0);
 
   const load = useCallback(async () => {
+    const requestId = ++loadRequestRef.current;
     setLoading(true);
     setLoadError(null);
+    setSession(null);
+    setInitialCursor(0);
     try {
       const [result, detail] = await Promise.all([
         gateway.openJourneySession(journeyId),
         gateway.fetchJourneyDetail(journeyId),
       ]);
+      if (requestId !== loadRequestRef.current) {
+        return;
+      }
+      setInitialCursor(detail.lastReadSequence);
       setSession(result);
       setPersonaName(detail.personaName);
     } catch {
-      setLoadError(t('state.errorBody'));
+      if (requestId === loadRequestRef.current) {
+        setLoadError(t('state.errorBody'));
+      }
     } finally {
-      setLoading(false);
+      if (requestId === loadRequestRef.current) {
+        setLoading(false);
+      }
     }
   }, [gateway, journeyId, t]);
 
-  useEffect(() => {
-    void load();
-  }, [load]);
+  useFocusEffect(
+    useCallback(() => {
+      void load();
+      return () => {
+        loadRequestRef.current += 1;
+      };
+    }, [load]),
+  );
 
-  if (loading) {
+  if (loading || (session !== null && session.journeyId !== journeyId)) {
     return (
       <Screen testID="player-loading">
         <View style={styles.center}>
@@ -107,15 +126,24 @@ export default function PlayerScreen() {
     );
   }
 
-  return <PlayerView session={session} personaName={personaName} />;
+  return (
+    <PlayerView
+      key={session.journeyId}
+      session={session}
+      personaName={personaName}
+      initialCursor={initialCursor}
+    />
+  );
 }
 
 function PlayerView({
   session,
   personaName,
+  initialCursor,
 }: {
   session: JourneySession;
   personaName: string;
+  initialCursor: number;
 }) {
   const { t } = useI18n();
   const insets = useSafeAreaInsets();
@@ -142,6 +170,7 @@ function PlayerView({
     worldVersion: session.world.worldVersion,
     personaName,
     initialBeats: session.beats,
+    initialCursor,
     initialRelations: session.relationsBaseline,
     memory: session.memory,
     simulator: session.simulator,
@@ -398,6 +427,7 @@ function PlayerView({
             relationVocabulary={state.relationVocabulary}
             testID="player-hud"
           />
+          {state.simulator ? <SimulatorBadge simulator={state.simulator} /> : null}
 
           {/*
            * Kendali cerita tetap di PALING ATAS, di barisnya sendiri.

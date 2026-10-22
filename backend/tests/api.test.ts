@@ -59,6 +59,37 @@ function operationId(label: string): string {
   return `op-test-${label}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
+/**
+ * Membuat akun uji lalu MENGKLAIM poin hariannya.
+ *
+ * docs/17: tanpa klaim, saldo hari itu nol dan setiap giliran dijawab 402.
+ * Klaim di sini adalah bagian dari persiapan akun — sama seperti login — bukan
+ * pelonggaran aturan. Perilaku "belum klaim ditolak" diuji tersendiri di blok
+ * kuota, memakai akun yang sengaja TIDAK melewati helper ini.
+ *
+ * Helper ini ada karena hook bersarang pernah membuat akun baru tanpa klaim,
+ * dan akibatnya delapan uji jatuh dengan 402 yang tidak ada hubungannya dengan
+ * yang sedang diuji.
+ */
+async function createClaimedAccount(
+  target: FastifyInstance = app,
+  options: { email?: string } = {},
+): Promise<{ accountId: string; token: string; email: string }> {
+  const akun = await createTestAccount(target, ctx.db, options);
+  auth = akun;
+
+  const klaim = await target.inject({
+    method: 'POST',
+    url: '/v1/usage/claim',
+    headers: bearer(akun.token),
+  });
+  if (klaim.statusCode !== 201) {
+    throw new Error(`klaim harian gagal disiapkan: HTTP ${String(klaim.statusCode)}`);
+  }
+
+  return akun;
+}
+
 function testConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfig {
   return parseConfig({
     NODE_ENV: 'test',
@@ -66,7 +97,6 @@ function testConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfig {
     PORT: '8080',
     LOG_LEVEL: 'error',
     RUN_MIGRATIONS_ON_START: 'false',
-    FREE_DAILY_TOKENS: '100000',
     RATE_LIMIT_MAX: '1000',
     ...overrides,
   } as NodeJS.ProcessEnv);
@@ -77,7 +107,7 @@ async function buildTestApp(
   engine: StoryEngine = new DeterministicStoryEngine(),
   resolveAssetUri: (path: string) => string = (path) => path,
 ): Promise<FastifyInstance> {
-  const usage = new UsageRepository(ctx.db, config.plan);
+  const usage = new UsageRepository(ctx.db, config.points);
   const catalog = new CatalogRepository(ctx.db, resolveAssetUri);
   const journeys = new JourneyRepository(ctx.db, resolveAssetUri);
   const operations = new OperationRepository(ctx.db);
@@ -108,7 +138,7 @@ async function buildTestApp(
 beforeEach(async () => {
   ctx = await createTestDatabase();
   app = await buildTestApp();
-  auth = await createTestAccount(app, ctx.db);
+  await createClaimedAccount();
 });
 
 afterEach(async () => {
@@ -607,7 +637,7 @@ describe('pilihan pemain sampai ke mesin cerita', () => {
     await app.close();
     mesin = new MesinPerekam();
     app = await buildTestApp(testConfig(), mesin);
-    auth = await createTestAccount(app, ctx.db);
+    await createClaimedAccount();
   });
 
   /** Membuat perjalanan dan mengembalikan keputusan pembukanya. */
@@ -702,6 +732,257 @@ describe('pilihan pemain sampai ke mesin cerita', () => {
     expect(mesin.konteks[0]?.customText).toBe('aku duduk diam dan memperhatikan');
   });
 
+  it('melanjutkan sesi turn demi turn dan memakai masukan terbaru, bukan mengulang pilihan lama', async () => {
+    const { journeyId, keputusan } = await playToDecision();
+    const initialResponse = await inject({
+      method: 'GET',
+      url: `/v1/journeys/${journeyId}/session`,
+    });
+    expect(initialResponse.statusCode).toBe(200);
+
+    type ApiBeat = {
+      beatId: string;
+      turnId: string;
+      sequence: number;
+      event: {
+        type: string;
+        decisionId?: string;
+        options?: { optionId: string; label: string }[];
+        inputKind?: 'choice' | 'custom';
+        text?: string;
+      };
+    };
+    type TurnResponse = {
+      turnId: string;
+      simulator: boolean;
+      modelId: string;
+      beats: ApiBeat[];
+    };
+    const initial = initialResponse.json() as { beats: ApiBeat[]; simulator: boolean };
+    const openingCount = initial.beats.length;
+    const openingTurnIds = new Set(initial.beats.map((beat) => beat.turnId));
+    const firstOption = keputusan?.options?.[1];
+    expect(firstOption).toBeDefined();
+    if (!firstOption || !keputusan) {
+      throw new Error('Keputusan pembuka harus menyediakan opsi kedua.');
+    }
+
+    const firstResponse = await inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('lanjut-1'),
+        decisionId: keputusan.decisionId,
+        selection: { optionId: firstOption.optionId },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(firstResponse.statusCode).toBe(201);
+    const firstTurn = firstResponse.json() as TurnResponse;
+    expect(firstTurn.simulator).toBe(true);
+    expect(firstTurn.modelId).toBe('simulator/deterministic-v1');
+    expect(new Set(firstTurn.beats.map((beat) => beat.turnId))).toEqual(new Set([firstTurn.turnId]));
+    expect(firstTurn.beats.map((beat) => beat.sequence)).toEqual(
+      firstTurn.beats.map((_, index) => index + 1),
+    );
+    const firstPlayerInput = firstTurn.beats.find((beat) => beat.event.type === 'playerInput');
+    const firstAiResponse = firstTurn.beats.find(
+      (beat) => beat.event.type === 'narrate' || beat.event.type === 'say',
+    );
+    expect(firstPlayerInput).toBeDefined();
+    expect(firstAiResponse).toBeDefined();
+    expect(firstPlayerInput?.event.inputKind).toBe('choice');
+    expect(firstPlayerInput?.event.text).toBe(firstOption.label);
+    expect(firstPlayerInput?.sequence).toBe(1);
+    if (firstPlayerInput && firstAiResponse) {
+      expect(firstTurn.beats.indexOf(firstPlayerInput)).toBeLessThan(
+        firstTurn.beats.indexOf(firstAiResponse),
+      );
+    }
+
+    // Posisi baca yang tersimpan menandai pembuka sudah dibaca, sedangkan beat
+    // turn terbaru masih belum dibaca. Inilah cursor yang Continue Journey pakai.
+    const lastOpeningBeat = initial.beats.at(-1);
+    expect(lastOpeningBeat).toBeDefined();
+    const progressResponse = await inject({
+      method: 'PUT',
+      url: `/v1/journeys/${journeyId}/progress`,
+      payload: {
+        lastReadSequence: openingCount,
+        lastReadBeatId: lastOpeningBeat?.beatId ?? '',
+        decisionCount: 1,
+        hasUnreadBeats: true,
+      },
+    });
+    expect(progressResponse.statusCode).toBe(204);
+    const savedDetailResponse = await inject({
+      method: 'GET',
+      url: `/v1/journeys/${journeyId}`,
+    });
+    expect((savedDetailResponse.json() as { lastReadSequence: number }).lastReadSequence).toBe(
+      openingCount,
+    );
+
+    const reopenedAfterFirst = await inject({
+
+      method: 'GET',
+      url: `/v1/journeys/${journeyId}/session`,
+    });
+    const sessionAfterFirst = reopenedAfterFirst.json() as {
+      beats: ApiBeat[];
+      simulator: boolean;
+    };
+    expect(sessionAfterFirst.simulator).toBe(true);
+    expect(sessionAfterFirst.beats.map((beat) => beat.beatId)).toEqual([
+      ...initial.beats.map((beat) => beat.beatId),
+      ...firstTurn.beats.map((beat) => beat.beatId),
+    ]);
+    expect(new Set(sessionAfterFirst.beats.map((beat) => beat.beatId)).size).toBe(
+      sessionAfterFirst.beats.length,
+    );
+    expect(
+      sessionAfterFirst.beats.find((beat) => beat.beatId === firstPlayerInput?.beatId)?.event.text,
+    ).toBe(firstOption.label);
+
+    const decisionAfterFirst = [...sessionAfterFirst.beats]
+      .reverse()
+      .find((beat) => beat.event.type === 'presentChoices');
+    expect(decisionAfterFirst?.turnId).toBe(firstTurn.turnId);
+    expect(decisionAfterFirst?.event.decisionId).toBe('d002');
+    expect(decisionAfterFirst?.event.options?.length).toBeGreaterThan(0);
+    const secondOption = decisionAfterFirst?.event.options?.[2];
+    expect(secondOption).toBeDefined();
+    if (!decisionAfterFirst?.event.decisionId || !secondOption) {
+      throw new Error('Sesi yang dibuka kembali harus memuat keputusan turn terbaru.');
+    }
+
+    const secondResponse = await inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('lanjut-2'),
+        decisionId: decisionAfterFirst.event.decisionId,
+        selection: { optionId: secondOption.optionId },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(secondResponse.statusCode).toBe(201);
+    const secondTurn = secondResponse.json() as TurnResponse;
+    expect(secondTurn.simulator).toBe(true);
+    const secondPlayerInput = secondTurn.beats.find((beat) => beat.event.type === 'playerInput');
+    const secondAiResponse = secondTurn.beats.find(
+      (beat) => beat.event.type === 'narrate' || beat.event.type === 'say',
+    );
+    expect(secondPlayerInput?.event.inputKind).toBe('choice');
+    expect(secondPlayerInput?.event.text).toBe(secondOption.label);
+    expect(secondPlayerInput?.sequence).toBe(1);
+    expect(secondPlayerInput?.beatId).not.toBe(firstPlayerInput?.beatId);
+    expect(secondAiResponse).toBeDefined();
+    if (secondPlayerInput && secondAiResponse) {
+      expect(secondTurn.beats.indexOf(secondPlayerInput)).toBeLessThan(
+        secondTurn.beats.indexOf(secondAiResponse),
+      );
+    }
+
+    // Konteks mesin untuk turn kedua wajib memuat pilihan layar kedua, sementara
+    // narasi turn pertama tetap hanya menjadi riwayat, bukan intent yang dipakai ulang.
+    expect(mesin.konteks).toHaveLength(2);
+    expect(mesin.konteks[0]?.optionId).toBe(firstOption.optionId);
+    expect(mesin.konteks[0]?.optionLabel).toBe(firstOption.label);
+    expect(mesin.konteks[1]?.optionId).toBe(secondOption.optionId);
+    expect(mesin.konteks[1]?.optionLabel).toBe(secondOption.label);
+    expect(mesin.konteks[1]?.optionLabel).not.toBe(mesin.konteks[0]?.optionLabel);
+    expect(mesin.konteks[1]?.customText).toBeUndefined();
+    expect((mesin.konteks[1]?.recentBeats ?? []).join(' ')).toContain(firstOption.label);
+
+    const reopenedAfterSecond = await inject({
+      method: 'GET',
+      url: `/v1/journeys/${journeyId}/session`,
+    });
+    const sessionAfterSecond = reopenedAfterSecond.json() as { beats: ApiBeat[] };
+    const decisionAfterSecond = [...sessionAfterSecond.beats]
+      .reverse()
+      .find((beat) => beat.event.type === 'presentChoices');
+    expect(decisionAfterSecond?.turnId).toBe(secondTurn.turnId);
+    expect(decisionAfterSecond?.event.decisionId).toBeTruthy();
+    expect(decisionAfterSecond?.event.decisionId).not.toBe(decisionAfterFirst.event.decisionId);
+    if (!decisionAfterSecond?.event.decisionId) {
+      throw new Error('Turn kedua harus menyajikan keputusan berikutnya.');
+    }
+
+    const customText = 'aku meminta jadwal onboarding yang jelas untuk hari ini';
+    const customResponse = await inject({
+      method: 'POST',
+      url: `/v1/journeys/${journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('lanjut-custom'),
+        decisionId: decisionAfterSecond.event.decisionId,
+        customText,
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(customResponse.statusCode).toBe(201);
+    const customTurn = customResponse.json() as TurnResponse;
+    expect(customTurn.simulator).toBe(true);
+    const customPlayerInput = customTurn.beats.find((beat) => beat.event.type === 'playerInput');
+    const customAiResponse = customTurn.beats.find(
+      (beat) => beat.event.type === 'narrate' || beat.event.type === 'say',
+    );
+    expect(customPlayerInput).toBeDefined();
+    expect(customPlayerInput?.event.inputKind).toBe('custom');
+    expect(customPlayerInput?.event.text).toBe(customText);
+    expect(customPlayerInput?.sequence).toBe(1);
+    expect(customAiResponse).toBeDefined();
+    if (customPlayerInput && customAiResponse) {
+      expect(customTurn.beats.indexOf(customPlayerInput)).toBeLessThan(
+        customTurn.beats.indexOf(customAiResponse),
+      );
+    }
+    expect(mesin.konteks).toHaveLength(3);
+    expect(mesin.konteks[2]?.customText).toBe(customText);
+    expect(mesin.konteks[2]?.optionId).toBeUndefined();
+    expect(mesin.konteks[2]?.optionLabel).toBeUndefined();
+
+    const finalSessionResponse = await inject({
+      method: 'GET',
+      url: `/v1/journeys/${journeyId}/session`,
+    });
+    const finalSession = finalSessionResponse.json() as {
+      beats: ApiBeat[];
+      simulator: boolean;
+    };
+    expect(finalSession.simulator).toBe(true);
+    expect(finalSession.beats.map((beat) => beat.beatId)).toEqual([
+      ...initial.beats.map((beat) => beat.beatId),
+      ...firstTurn.beats.map((beat) => beat.beatId),
+      ...secondTurn.beats.map((beat) => beat.beatId),
+      ...customTurn.beats.map((beat) => beat.beatId),
+    ]);
+    expect(new Set(finalSession.beats.map((beat) => beat.beatId)).size).toBe(
+      finalSession.beats.length,
+    );
+    const persistedInputs = finalSession.beats.filter((beat) => beat.event.type === 'playerInput');
+    expect(persistedInputs.map((beat) => beat.event)).toEqual([
+      { type: 'playerInput', inputKind: 'choice', text: firstOption.label },
+      { type: 'playerInput', inputKind: 'choice', text: secondOption.label },
+      { type: 'playerInput', inputKind: 'custom', text: customText },
+    ]);
+    for (const inputBeat of persistedInputs) {
+      const responseBeat = finalSession.beats.find(
+        (beat) =>
+          beat.turnId === inputBeat.turnId &&
+          (beat.event.type === 'narrate' || beat.event.type === 'say'),
+      );
+      expect(responseBeat).toBeDefined();
+      if (responseBeat) {
+        expect(inputBeat.sequence).toBeLessThan(responseBeat.sequence);
+      }
+    }
+    expect(finalSession.beats.slice(0, openingCount).every((beat) => openingTurnIds.has(beat.turnId))).toBe(
+      true,
+    );
+  });
+
   /*
    * Bahasa pilihan pemain harus sampai ke mesin cerita.
    *
@@ -775,7 +1056,7 @@ describe('sampul pada perjalanan', () => {
   beforeEach(async () => {
     await app.close();
     app = await buildTestApp(testConfig(), new DeterministicStoryEngine(), (p) => `${BASE}${p}`);
-    auth = await createTestAccount(app, ctx.db);
+    await createClaimedAccount();
   });
 
   const buat = () =>
@@ -1132,6 +1413,29 @@ describe('daftar dan penghapusan perjalanan', () => {
 });
 
 describe('kuota', () => {
+  /**
+   * Mesin yang BERPERILAKU seperti AI sungguhan dari sisi penagihan.
+   *
+   * `DeterministicStoryEngine` adalah simulator, dan giliran simulator memang
+   * TIDAK ditagih (docs/17 bagian 3 butir 3). Memakai simulator untuk menguji
+   * penagihan berarti menguji jalur yang sengaja gratis — uji akan hijau tanpa
+   * membuktikan apa pun. Kelas ini hanya membalik penandanya dan memberi
+   * `modelId` yang bukan id simulator.
+   */
+  class MesinSepertiAI extends DeterministicStoryEngine {
+    override readonly isSimulator = false;
+
+    override async generateOpening(context: StoryContext) {
+      const hasil = await super.generateOpening(context);
+      return { ...hasil, modelId: 'model-uji' };
+    }
+
+    override async generateTurn(context: StoryContext) {
+      const hasil = await super.generateTurn(context);
+      return { ...hasil, modelId: 'model-uji' };
+    }
+  }
+
   it('melaporkan pemakaian sebagai angka pasti dari server', async () => {
     const response = await inject({ method: 'GET', url: '/v1/usage' });
     expect(response.statusCode).toBe(200);
@@ -1143,17 +1447,25 @@ describe('kuota', () => {
       allowanceLimit: number;
       isEstimate: boolean;
       resetAt: string;
+      claimableToday: boolean;
+      streakDay: number;
+      sceneCost: number;
     };
 
     expect(usage.tier).toBe('free');
-    expect(usage.allowanceLimit).toBe(100_000);
-    expect(usage.available).toBe(100_000);
+    // docs/17: mata uangnya POIN — 100 per hari, bukan 100.000 token.
+    expect(usage.allowanceLimit).toBe(100);
+    expect(usage.available).toBe(100);
+    expect(usage.sceneCost).toBe(10);
+    // Sudah diklaim di persiapan akun; streak hari pertama selalu 1.
+    expect(usage.claimableToday).toBe(false);
+    expect(usage.streakDay).toBe(1);
     // Angka dari server bukan perkiraan; perkiraan adalah istilah untuk sisi klien.
     expect(usage.isEstimate).toBe(false);
     expect(new Date(usage.resetAt).getTime()).toBeGreaterThan(Date.now() - 1000);
   });
 
-  it('menaikkan pemakaian setelah giliran berhasil', async () => {
+  it('tidak menagih adegan pembuka — mulai cerita gratis', async () => {
     const before = await inject({ method: 'GET', url: '/v1/usage' });
     const beforeSpent = (before.json() as { spent: number }).spent;
 
@@ -1161,7 +1473,7 @@ describe('kuota', () => {
       method: 'POST',
       url: '/v1/journeys',
       payload: {
-        clientOperationId: operationId('kuota'),
+        clientOperationId: operationId('pembuka-gratis'),
         worldId: 'w_bosku-mantan',
         persona: { name: 'Arfan', age: 24 },
         responseLocale: 'id-ID',
@@ -1170,18 +1482,131 @@ describe('kuota', () => {
     expect(created.statusCode).toBe(201);
 
     const after = await inject({ method: 'GET', url: '/v1/usage' });
-    expect((after.json() as { spent: number }).spent).toBeGreaterThan(beforeSpent);
+    expect((after.json() as { spent: number }).spent).toBe(beforeSpent);
+  });
+
+  it('menagih TEPAT satu biaya adegan untuk satu giliran berhasil', async () => {
+    /*
+     * Memakai mesin ber-`isSimulator = false`: dengan simulator, penagihan
+     * memang dilewati, sehingga uji ini akan hijau tanpa membuktikan apa pun.
+     */
+    const appAi = await buildTestApp(testConfig(), new MesinSepertiAI());
+    try {
+      const akun = await createClaimedAccount(appAi, { email: 'tagih-ai@contoh.test' });
+
+      const created = await appAi.inject({
+        method: 'POST',
+        url: '/v1/journeys',
+        headers: bearer(akun.token),
+        payload: {
+          clientOperationId: operationId('tagih'),
+          worldId: 'w_bosku-mantan',
+          persona: { name: 'Arfan', age: 24 },
+          responseLocale: 'id-ID',
+        },
+      });
+      expect(created.statusCode).toBe(201);
+      const hasil = created.json() as {
+        journeyId: string;
+        opening: {
+          beats: {
+            event: { type: string; decisionId?: string; options?: { optionId: string }[] };
+          }[];
+        };
+      };
+      const keputusan = hasil.opening.beats.find((b) => b.event.type === 'presentChoices')?.event;
+
+      const giliran = await appAi.inject({
+        method: 'POST',
+        url: `/v1/journeys/${hasil.journeyId}/turns`,
+        headers: bearer(akun.token),
+        payload: {
+          clientOperationId: operationId('tagih-giliran'),
+          decisionId: keputusan?.decisionId,
+          selection: { optionId: keputusan?.options?.[0]?.optionId },
+          responseLocale: 'id-ID',
+        },
+      });
+      expect(giliran.statusCode).toBe(201);
+
+      const usage = await appAi.inject({
+        method: 'GET',
+        url: '/v1/usage',
+        headers: bearer(akun.token),
+      });
+      const body = usage.json() as { spent: number; available: number; sceneCost: number };
+      // Mutasi: mengganti `chargedTotal: sceneCost` dengan biaya token membuat
+      // angka ini jauh di atas 10 dan uji memerah.
+      expect(body.spent).toBe(body.sceneCost);
+      expect(body.available).toBe(100 - body.sceneCost);
+    } finally {
+      await appAi.close();
+    }
+  });
+
+  it('tidak menagih giliran yang jatuh ke simulator cadangan', async () => {
+    /*
+     * App bawaan memakai `DeterministicStoryEngine`, yaitu simulator. Pemain
+     * tidak membayar untuk giliran yang tidak ditulis mesin AI (docs/17 bagian
+     * 3 butir 3). BUKTI MUTASI: hapus pemeriksaan `simulatorTurn` di
+     * `journeyService` → `spent` menjadi 10 dan uji ini memerah.
+     */
+    const created = await inject({
+      method: 'POST',
+      url: '/v1/journeys',
+      payload: {
+        clientOperationId: operationId('simulator'),
+        worldId: 'w_bosku-mantan',
+        persona: { name: 'Arfan', age: 24 },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(created.statusCode).toBe(201);
+    const hasil = created.json() as {
+      journeyId: string;
+      opening: {
+        beats: { event: { type: string; decisionId?: string; options?: { optionId: string }[] } }[];
+      };
+    };
+    const keputusan = hasil.opening.beats.find((b) => b.event.type === 'presentChoices')?.event;
+
+    const giliran = await inject({
+      method: 'POST',
+      url: `/v1/journeys/${hasil.journeyId}/turns`,
+      payload: {
+        clientOperationId: operationId('simulator-giliran'),
+        decisionId: keputusan?.decisionId,
+        selection: { optionId: keputusan?.options?.[0]?.optionId },
+        responseLocale: 'id-ID',
+      },
+    });
+    expect(giliran.statusCode).toBe(201);
+
+    const usage = await inject({ method: 'GET', url: '/v1/usage' });
+    expect((usage.json() as { spent: number }).spent).toBe(0);
+  });
+
+  it('menolak klaim kedua pada hari yang sama tanpa menambah poin', async () => {
+    const kedua = await inject({ method: 'POST', url: '/v1/usage/claim' });
+    expect(kedua.statusCode).toBe(201);
+    const body = kedua.json() as { awarded: number; available: number };
+
+    // Idempoten: bukan galat, tetapi tidak memberi hadiah kedua.
+    expect(body.awarded).toBe(0);
+    expect(body.available).toBe(100);
   });
 
   it('menolak giliran ketika kuota tidak mencukupi', async () => {
-    // Kuota sangat kecil sehingga giliran pertama pun tidak muat.
-    const tightApp = await buildTestApp(testConfig({ FREE_DAILY_TOKENS: '10' }));
-    const tightAuth = await createTestAccount(tightApp, ctx.db, { email: 'sempit@contoh.test' });
-
-    const response = await tightApp.inject({
+    /*
+     * Akun baru TANPA klaim: saldo hari itu nol (docs/17 bagian 3 butir 1).
+     * Adegan pembuka tetap gratis, jadi perjalanan berhasil dibuat — yang
+     * ditolak adalah GILIRAN, bukan pembuatan perjalanan.
+     */
+    const belumKlaim = await createTestAccount(app, ctx.db, { email: 'belum-klaim@contoh.test' });
+    const created = await app.inject({
       method: 'POST',
       url: '/v1/journeys',
-      headers: bearer(tightAuth.token),
+      headers: bearer(belumKlaim.token),
       payload: {
         clientOperationId: operationId('sempit'),
         worldId: 'w_bosku-mantan',
@@ -1189,11 +1614,29 @@ describe('kuota', () => {
         responseLocale: 'id-ID',
       },
     });
+    expect(created.statusCode).toBe(201);
+    const hasil = created.json() as {
+      journeyId: string;
+      opening: {
+        beats: { event: { type: string; decisionId?: string; options?: { optionId: string }[] } }[];
+      };
+    };
+    const keputusan = hasil.opening.beats.find((b) => b.event.type === 'presentChoices')?.event;
+
+    const response = await app.inject({
+      method: 'POST',
+      url: `/v1/journeys/${hasil.journeyId}/turns`,
+      headers: bearer(belumKlaim.token),
+      payload: {
+        clientOperationId: operationId('sempit-giliran'),
+        decisionId: keputusan?.decisionId,
+        selection: { optionId: keputusan?.options?.[0]?.optionId },
+        responseLocale: 'id-ID',
+      },
+    });
 
     expect(response.statusCode).toBe(402);
     expect(response.json()).toMatchObject({ code: 'QUOTA_EXHAUSTED' });
-
-    await tightApp.close();
   });
 });
 
@@ -1304,7 +1747,7 @@ describe('penanda nama diganti sistem', () => {
   beforeEach(async () => {
     await app.close();
     app = await buildTestApp(testConfig(), new MesinBerpenanda());
-    auth = await createTestAccount(app, ctx.db);
+    await createClaimedAccount();
   });
 
   it('pemain tidak pernah melihat "@user" mentah — pembuka MAUPUN giliran', async () => {
@@ -1413,7 +1856,7 @@ describe('keadaan hubungan sampai ke mesin cerita', () => {
     await app.close();
     mesin = new MesinPerekamRelasi();
     app = await buildTestApp(testConfig(), mesin);
-    auth = await createTestAccount(app, ctx.db);
+    await createClaimedAccount();
   });
 
   it('pembuka membawa hubungan AWAL yang ditetapkan dunia', async () => {

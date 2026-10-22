@@ -93,14 +93,13 @@ function testConfig(): AppConfig {
     PORT: '8080',
     LOG_LEVEL: 'error',
     RUN_MIGRATIONS_ON_START: 'false',
-    FREE_DAILY_TOKENS: '100000',
     RATE_LIMIT_MAX: '1000',
   } as NodeJS.ProcessEnv);
 }
 
 async function buildTestApp(): Promise<FastifyInstance> {
   const config = testConfig();
-  const usage = new UsageRepository(ctx.db, config.plan);
+  const usage = new UsageRepository(ctx.db, config.points);
   const catalogRepo = new CatalogRepository(ctx.db);
   const journeys = new JourneyRepository(ctx.db);
   const operations = new OperationRepository(ctx.db);
@@ -123,6 +122,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     providers: new ProvidersRepository(ctx.db),
 
     plan: testConfig().plan,
+    points: testConfig().points,
     media: new MediaRepository(ctx.db),
   };
 
@@ -1378,17 +1378,25 @@ describe('provider: keadaan kosong dan berisi', () => {
 
     const body = await sweep(cookie, '/admin/models-form');
 
-    const jatahFree = formatNumber(testConfig().plan.free.dailyTokens);
-    const jatahPaid = formatNumber(testConfig().plan.paid.dailyTokens);
+    // docs/17: jatah kini POIN (100/hari), bukan token. Angkanya dibaca dari
+    // konfigurasi server, jadi uji memakai nilai konfigurasi — bukan angka tulis.
+    const jatahFree = formatNumber(testConfig().points.dailyPoints);
 
     expect(body, 'jatah Free tidak muncul di pilihan tier').toContain(jatahFree);
-    expect(body, 'jatah Paid tidak muncul di pilihan tier').toContain(jatahPaid);
+    expect(body, 'jatah Free tidak menyebut satuan poin').toContain('poin/hari');
     // Angka tetap yang dulu dipakai tidak boleh kembali.
     expect(body, 'jatah masih ditulis tetap di halaman').not.toContain('64.000 token/hari');
 
-    // Skrip menghitung "≈ N giliran per hari" dari angka ini, jadi angkanya
-    // harus ikut pada opsinya — bukan pada halamannya.
-    expect(body, 'jatah tidak menempel pada opsi tier').toContain('data-daily-tokens=');
+    /*
+     * Paket berbayar BELUM ada; halaman harus mengatakannya terus terang alih-alih
+     * menampilkan angka karangan. Menampilkan "1.000.000 token" dulu membuat
+     * pemilik produk mengira tier itu sudah berjalan.
+     */
+    expect(body, 'paket berbayar tidak dinyatakan ditunda').toContain('ditunda');
+
+    // Skrip menghitung jatah dari angka ini, jadi angkanya harus menempel pada
+    // opsinya — bukan pada halamannya.
+    expect(body, 'jatah tidak menempel pada opsi tier').toContain('data-daily-points=');
   });
 
   it('tidak lagi meminta perkiraan token per giliran', async () => {

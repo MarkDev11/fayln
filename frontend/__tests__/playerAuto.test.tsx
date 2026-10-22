@@ -1,5 +1,5 @@
 import { act, render } from '@testing-library/react-native';
-import React from 'react';
+import React, { useMemo } from 'react';
 
 import { MockStoryGateway } from '@/data/mock/MockStoryGateway';
 import { worldBoskuMantan } from '@/data/mock/fixtures';
@@ -31,6 +31,7 @@ const instant = () => new MockStoryGateway({ instant: true });
 let mesin: PlayerEngine | null = null;
 
 function Harness({ session, suspended }: { session: JourneySession; suspended: boolean }) {
+  const store = useMemo(() => new InMemoryPlaybackStore(), []);
   mesin = usePlayerEngine({
     journeyId: session.journeyId,
     worldId: session.world.worldId,
@@ -43,7 +44,7 @@ function Harness({ session, suspended }: { session: JourneySession; suspended: b
     responseLocale: session.responseLocale,
     suspended,
     autoEnabled: true,
-    store: new InMemoryPlaybackStore(),
+    store,
   });
   return null;
 }

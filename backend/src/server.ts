@@ -284,10 +284,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     service: 'fayln-backend',
     version: SERVICE_VERSION,
     identityMode: CURRENT_IDENTITY_MODE,
+    /*
+     * Batas konteks per paket (token) — satu-satunya sisa pengaturan token di
+     * jalur pemain. Jatah harian kini berupa POIN yang diklaim lewat
+     * /v1/usage/claim (docs/17), bukan jatah token otomatis.
+     */
     plans: {
       free: deps.config.plan.free,
       paid: deps.config.plan.paid,
     },
+    points: deps.config.points,
     storyEngine: {
       /*
        * Dibaca dari MESIN yang terpasang, bukan dari konstanta.

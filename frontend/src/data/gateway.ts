@@ -7,6 +7,7 @@
 
 import type {
   Beat,
+  ClaimResultDTO,
   GenreId,
   GenreOption,
   JourneyDetailDTO,
@@ -243,6 +244,15 @@ export interface StoryGateway {
   submitCustom(input: SubmitCustomInput): Promise<TurnResultEnvelope>;
 
   fetchUsage(): Promise<UsageDTO>;
+
+  /**
+   * Klaim poin harian (docs/17).
+   *
+   * Tanpa klaim, saldo hari itu 0. Idempoten per hari WIB: klaim ulang di hari
+   * yang sama mengembalikan `awarded: 0` TANPA galat, supaya percobaan ulang
+   * setelah kegagalan jaringan tidak pernah menagih atau menggandakan hadiah.
+   */
+  claim(): Promise<ClaimResultDTO>;
 
   /**
    * Mengirim laporan masalah.

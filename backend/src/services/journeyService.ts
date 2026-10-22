@@ -9,6 +9,12 @@
  *   2. Kuota diperiksa SEBELUM cerita dibuat, bukan sesudah.
  *   3. Keluaran mesin divalidasi terhadap dunia SEBELUM disimpan (FR-55).
  *   4. Penagihan memakai operation_id yang sama, sehingga tidak dapat ganda.
+ *
+ * Ekonomi poin (docs/17): adegan PEMBUKA gratis; giliran ditagih tepat
+ * SCENE_POINT_COST poin, hanya bila giliran benar-benar ditulis mesin AI.
+ * Giliran yang jatuh ke simulator cadangan dan giliran yang gagal
+ * (SUBMIT_FAILED) tidak ditagih — pemain tidak membayar untuk barang yang
+ * tidak jadi.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -31,6 +37,7 @@ import type { UsageRepository } from '../repositories/usageRepository';
 import {
   gantiPenandaBeats,
   karakterDenganEkspresiTampil,
+  SIMULATOR_MODEL_ID,
   validateEngineBeats,
   type StoryContext,
   type StoryEngine,
@@ -59,6 +66,9 @@ function ringkasBeatTerakhir(beats: Beat[], jumlah = 12): string[] {
         break;
       case 'say':
         baris.push(`${e.npcId}: ${e.text}`);
+        break;
+      case 'playerInput':
+        baris.push(`[pemain ${e.inputKind === 'choice' ? 'memilih' : 'menulis'}: ${e.text}]`);
         break;
       case 'setBackground':
         baris.push(`[latar berpindah ke ${e.assetId}]`);
@@ -189,7 +199,9 @@ export class JourneyService {
       throw notFound('Cerita tidak ditemukan.');
     }
 
-    await this.assertQuotaAvailable(command.accountId);
+    // Adegan pembuka GRATIS (docs/17 bagian 3 butir 3): membuat perjalanan
+    // tidak menuntut poin. Pemeriksaan kuota ada di giliran, bukan di sini —
+    // pemain yang belum klaim hari ini tetap boleh memulai cerita.
 
     const claimed = await this.deps.operations.claim({
       operationId: command.operationId,
@@ -391,7 +403,13 @@ export class JourneyService {
         beats: generated.beats,
       });
 
-      await this.charge(command.accountId, command.operationId, generated.usage);
+      /*
+       * Adegan pembuka TIDAK ditagih (docs/17 bagian 3 butir 3).
+       *
+       * Token pemakaian mesin tetap dicatat di envelope untuk analitik, tetapi
+       * tidak ada pemanggilan `charge` di jalur ini. Memasang kembali tagihan
+       * di sini harus membuat tests/ekonomi-poin.test.ts memerah.
+       */
 
       const envelope = await this.buildEnvelope({
         accountId: command.accountId,
@@ -402,6 +420,7 @@ export class JourneyService {
         modelId: generated.modelId,
         modelVersion: generated.modelVersion,
         usage: generated.usage,
+        simulator: this.deps.engine.isSimulator || generated.modelId === SIMULATOR_MODEL_ID,
       });
 
       await this.deps.operations.complete(command.operationId, envelope);
@@ -572,6 +591,9 @@ export class JourneyService {
         pending.event.type === 'presentChoices'
           ? pending.event.options.find((opsi) => opsi.optionId === command.optionId)
           : undefined;
+      if (command.optionId !== undefined && !opsiTerpilih) {
+        throw conflict('Pilihan ini tidak lagi berlaku. Muat ulang perjalanan, lalu pilih lagi.');
+      }
 
       /*
        * Ringkasan terakhir yang ditulis mesin sendiri (`memoryWrite`).
@@ -651,16 +673,64 @@ export class JourneyService {
         });
       }
 
+      const playerInputText = opsiTerpilih?.label ?? command.customText;
+      if (playerInputText === undefined) {
+        throw conflict('Masukan pemain tidak tersedia. Muat ulang perjalanan, lalu coba lagi.');
+      }
+
+      const committedBeats: Beat[] = [
+        {
+          beatId: `${turnId}-b001`,
+          turnId,
+          sequence: 1,
+          event: {
+            type: 'playerInput',
+            inputKind: command.optionId ? 'choice' : 'custom',
+            text: playerInputText,
+          },
+        },
+        ...generated.beats.map((beat, index) => {
+          const sequence = index + 2;
+          return {
+            ...beat,
+            beatId: `${turnId}-b${String(sequence).padStart(3, '0')}`,
+            turnId,
+            sequence,
+          };
+        }),
+      ];
+
       const revision = await this.deps.journeys.appendTurn({
         turnId,
         journeyId: command.journeyId,
         operationId: command.operationId,
         inputKind: command.optionId ? 'option' : 'custom',
         inputOptionId: command.optionId ?? null,
-        beats: generated.beats,
+        beats: committedBeats,
       });
 
-      await this.charge(command.accountId, command.operationId, generated.usage);
+      /*
+       * Tagih hanya bila giliran ini benar-benar ditulis MESIN AI (docs/17
+       * bagian 3 butir 3).
+       *
+       * Dua keadaan sengaja tidak ditagih:
+       *   - mesin yang terpasang simulator (mode uji/rudi);
+       *   - mesin AI menyerahkan giliran ini ke simulator cadangan
+       *     (modelId === SIMULATOR_MODEL_ID).
+       * Pemain tidak membayar untuk barang yang tidak jadi. Jalur yang gagal
+       * (SUBMIT_FAILED) tidak pernah sampai ke sini — galat dilempar sebelum
+       * penagihan, sehingga tidak ditagih juga.
+       */
+      const simulatorTurn =
+        this.deps.engine.isSimulator || generated.modelId === SIMULATOR_MODEL_ID;
+      if (!simulatorTurn) {
+        await this.charge(command.accountId, command.operationId, {
+          promptTokens: generated.usage.promptTokens,
+          completionTokens: generated.usage.completionTokens,
+          // Tepat biaya poin satu adegan — bukan estimasi token mesin.
+          chargedTotal: this.deps.usage.sceneCost,
+        });
+      }
 
       const envelope = await this.buildEnvelope({
         accountId: command.accountId,
@@ -671,6 +741,7 @@ export class JourneyService {
         modelId: generated.modelId,
         modelVersion: generated.modelVersion,
         usage: generated.usage,
+        simulator: this.deps.engine.isSimulator || generated.modelId === SIMULATOR_MODEL_ID,
       });
 
       await this.deps.operations.complete(command.operationId, envelope);
@@ -713,19 +784,21 @@ export class JourneyService {
   }
 
   /**
-   * Memastikan kuota cukup untuk SATU giliran sebelum cerita disusun.
+   * Memastikan poin cukup untuk SATU giliran sebelum cerita disusun (FR-50).
    *
-   * Memeriksa `available > 0` saja tidak cukup: dengan sisa 10 token, generasi
-   * tetap berjalan lalu menagih jauh melebihi batas paket. Karena itu biaya satu
-   * giliran diperkirakan lebih dahulu (FR-50).
+   * Sejak ekonomi poin (docs/17), biaya satu giliran adalah ANGKA PASTI dari
+   * konfigurasi (`SCENE_POINT_COST`, bawaan 10), bukan estimasi token mesin.
+   * Tanpa klaim harian, `available` memang 0 — dan pesannya mengarahkan
+   * pemain ke popup klaim, bukan sekadar "coba lagi besok".
    */
   private async assertQuotaAvailable(accountId: string): Promise<void> {
     const usage = await this.deps.usage.usage(accountId, this.deps.now());
-    const estimate = this.deps.engine.estimatedTurnCost;
 
-    if (usage.available < estimate) {
+    if (usage.available < usage.sceneCost) {
       throw quotaExhausted(
-        'Sisa kuota harianmu tidak cukup untuk melanjutkan cerita. Riwayat dan pengaturan tetap bisa dibuka, dan kuota diperbarui otomatis.',
+        usage.claimableToday
+          ? 'Sisa poinmu belum cukup untuk melanjutkan cerita. Klaim poin harianmu dulu dari Beranda — gratis, sekali sehari.'
+          : 'Sisa poin harianmu sudah habis. Riwayat dan pengaturan tetap bisa dibuka; poin baru bisa diklaim besok.',
       );
     }
   }
@@ -755,6 +828,8 @@ export class JourneyService {
     modelId: string;
     modelVersion: string;
     usage: { promptTokens: number; completionTokens: number; chargedTotal: number };
+    /** Sumber giliran aktual; AI dapat menyerahkan giliran tertentu ke simulator. */
+    simulator?: boolean;
   }): Promise<TurnResultEnvelope> {
     const allBeats = await this.deps.journeys.beats(input.journeyId);
     const beats: Beat[] = allBeats.filter((beat) => beat.turnId === input.turnId);
@@ -778,7 +853,7 @@ export class JourneyService {
       },
       modelId: input.modelId,
       modelVersion: input.modelVersion,
-      simulator: this.deps.engine.isSimulator,
+      simulator: input.simulator ?? this.deps.engine.isSimulator,
     };
   }
 

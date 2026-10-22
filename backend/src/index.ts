@@ -99,7 +99,16 @@ async function main(): Promise<void> {
     }
   }
 
-  const usage = new UsageRepository(db, config.plan);
+  /*
+   * Pengali kuota promosi dibaca dari pengaturan admin SAAT KLAIM, sehingga
+   * mengubahnya langsung berlaku untuk klaim berikutnya tanpa deploy dan
+   * tanpa menyentuh baris pemakaian pemain. Diumpan sebagai fungsi sempit:
+   * repositori kuota tidak boleh bergantung pada repositori panel admin.
+   */
+  const settingsRepository = new SettingsRepository(db);
+  const usage = new UsageRepository(db, config.points, () =>
+    settingsRepository.quotaMultiplier('free'),
+  );
 
   // Akun diadakan saat pertama kali terlihat. Klien membuat ID perangkat sendiri,
   // jadi baris `accounts`-nya belum ada sampai hook identitas membuatkannya.
@@ -237,7 +246,7 @@ async function main(): Promise<void> {
   const mediaRepository = new MediaRepository(db);
   const adminPages: AdminPageContext = {
     admins: adminRepository,
-    settings: new SettingsRepository(db),
+    settings: settingsRepository,
     // Katalog admin TIDAK memakai resolver URI: panel menampilkan jalur apa
     // adanya sebagai teks, bukan gambar. Menyuntikkan resolver yang sama akan
     // mengubah kolom teks menjadi alamat lengkap tanpa manfaat.
@@ -253,6 +262,7 @@ async function main(): Promise<void> {
     providers: new ProvidersRepository(db),
 
     plan: config.plan,
+    points: config.points,
     media: mediaRepository,
   };
 

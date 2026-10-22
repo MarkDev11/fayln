@@ -20,11 +20,12 @@ export type QuotaSheetProps = {
 };
 
 /**
- * Lembar pemakaian kuota ringkas (C1).
+ * Lembar pemakaian poin ringkas (C1, docs/17).
  *
- * Menjawab tiga hal saja: sisa hari ini, kapan reset, dan bahwa membaca ulang
- * tidak memakai token. Rincian `spent`/`reserved` sengaja TIDAK ditampilkan —
- * bagi pemain Free keduanya tidak menjelaskan apa pun, dan menampilkannya akan
+ * Menjawab hal yang perlu diketahui pemain: sisa poin hari ini, biaya satu
+ * adegan, kapan reset (WIB), streak berjalan, dan bahwa membaca ulang tidak
+ * memakai poin. Rincian `spent`/`reserved` sengaja TIDAK ditampilkan — bagi
+ * pemain Free keduanya tidak menjelaskan apa pun, dan menampilkannya akan
  * membuat lembar ini menjadi salinan mini layar Pengaturan (anti-slop). Tidak
  * ada tautan ke layar lain dari sini.
  *
@@ -39,10 +40,11 @@ export function QuotaSheet({ visible, usage, onClose, testID }: QuotaSheetProps)
   const insets = useSafeAreaInsets();
 
   /**
-   * Waktu reset dalam waktu LOKAL perangkat, bukan ISO mentah.
+   * Waktu reset dalam WIB, bukan ISO mentah dan bukan waktu lokal perangkat.
    *
-   * Memakai `Intl.DateTimeFormat` seperti layar Paket & penggunaan; `formatCount`
-   * tidak dipakai di sini karena itu pemformat angka, bukan tanggal.
+   * Hari ekonomi poin berganti 00.00 WIB (docs/17 §3.5) — menampilkan zona
+   * perangkat akan membuat jam reset "bergerak" antar perangkat padahal
+   * aturannya satu untuk semua pemain.
    */
   const formatReset = (iso: string): string => {
     const date = new Date(iso);
@@ -50,6 +52,7 @@ export function QuotaSheet({ visible, usage, onClose, testID }: QuotaSheetProps)
       return iso;
     }
     return new Intl.DateTimeFormat(locale, {
+      timeZone: 'Asia/Jakarta',
       day: 'numeric',
       month: 'short',
       hour: '2-digit',
@@ -101,11 +104,20 @@ export function QuotaSheet({ visible, usage, onClose, testID }: QuotaSheetProps)
           <Text variant="body">
             {t('home.quotaRemaining', {
               available: formatCount(usage.available),
-              limit: formatCount(usage.allowanceLimit),
             })}
+          </Text>
+          {/*
+            Biaya adegan datang dari `usage.sceneCost`, bukan ditulis mati:
+            bila harganya berubah di server, teks ini ikut tanpa rilis ulang.
+          */}
+          <Text variant="caption" tone="secondary">
+            {t('home.quotaSceneCost', { cost: formatCount(usage.sceneCost) })}
           </Text>
           <Text variant="caption" tone="secondary">
             {t('home.quotaResetAt', { when: formatReset(usage.resetAt) })}
+          </Text>
+          <Text variant="caption" tone="secondary">
+            {t('home.quotaStreak', { days: formatCount(usage.streakDay) })}
           </Text>
           <Text variant="caption" tone="secondary">
             {t('home.quotaRereadFree')}

@@ -17,6 +17,7 @@
 
 import type {
   Beat,
+  ClaimResultDTO,
   GenreOption,
   JourneyDetailDTO,
   JourneySummary,
@@ -291,6 +292,17 @@ export class HttpStoryGateway implements StoryGateway {
 
   async fetchUsage(): Promise<UsageDTO> {
     return this.request<UsageDTO>('/v1/usage', { method: 'GET' });
+  }
+
+  /**
+   * Klaim poin harian.
+   *
+   * Tidak membawa `clientOperationId`: idempotensi ditegakkan server berdasar
+   * tanggal klaim (satu baris per akun per hari WIB), bukan berdasar id operasi
+   * klien seperti rute yang membuat perjalanan.
+   */
+  async claim(): Promise<ClaimResultDTO> {
+    return this.request<ClaimResultDTO>('/v1/usage/claim', { method: 'POST' });
   }
 
   async submitReport(input: ReportInput): Promise<ReportResult> {

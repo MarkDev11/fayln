@@ -140,6 +140,25 @@ export function useUsage(): UseQueryResult<UsageDTO, Error> {
 }
 
 /**
+ * Klaim poin harian (docs/17).
+ *
+ * Cache `usage` dibersihkan setelah berhasil supaya badge Beranda dan popup
+ * langsung mencerminkan saldo baru — tanpa ini, `claimableToday` lama tetap
+ * bertahan di cache dan popup muncul lagi meski klaim sudah sukses.
+ */
+export function useClaimDailyPoints() {
+  const gateway = useGateway();
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: () => gateway.claim(),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.usage() });
+    },
+  });
+}
+
+/**
  * Menghapus perjalanan.
  *
  * Cache daftar dan detail dibersihkan setelah berhasil, sehingga daftar tidak

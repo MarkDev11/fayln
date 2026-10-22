@@ -54,7 +54,7 @@ export const id = {
   'home.heroDotOpen': 'Tampilkan dunia {index}',
   'home.searchToggle': 'Buka atau tutup pencarian',
   'home.searchClose': 'Tutup pencarian',
-  'home.tokensLeft': 'Sisa {count} token',
+  'home.tokensLeft': 'Sisa {count} poin',
   'home.emptySearchTitle': 'Tidak ada cerita yang cocok',
   'home.emptySearchBody':
     'Coba kata kunci lain, atau atur ulang filter genre yang sedang aktif.',
@@ -70,11 +70,28 @@ export const id = {
   'home.playingBadge': 'Sedang dimainkan',
   // Alasan blok "Lanjutkan Bermain" didahulukan; dibacakan pembaca layar.
   'home.resumeUnreadHint': 'Ada adegan baru menunggu',
-  'home.quotaOpen': 'Lihat pemakaian token',
+  'home.quotaOpen': 'Lihat pemakaian poin',
   'home.quotaSheetTitle': 'Pemakaian hari ini',
-  'home.quotaRemaining': 'Sisa {available} dari {limit} token',
-  'home.quotaResetAt': 'Reset {when} (waktu lokal)',
-  'home.quotaRereadFree': 'Membaca ulang tidak memakai token',
+  'home.quotaRemaining': 'Sisa {available} poin',
+  'home.quotaResetAt': 'Reset {when} WIB',
+  'home.quotaRereadFree': 'Membaca ulang tidak memakai poin',
+  // Biaya adegan DATANG dari server (usage.sceneCost), bukan ditulis mati —
+  // bila harganya berubah, teksnya ikut berubah tanpa rilis ulang.
+  'home.quotaSceneCost': '1 adegan = {cost} poin',
+  'home.quotaStreak': 'Streak {days} hari',
+
+  // Popup klaim poin harian (docs/17): tanpa klaim, saldo hari itu 0.
+  'claim.greeting': 'Senang kamu kembali!',
+  'claim.title': 'Poin harianmu siap',
+  'claim.body': 'Klaim poin hari ini untuk melanjutkan ceritamu.',
+  'claim.action': 'Klaim {points} Poin',
+  'claim.claiming': 'Mengklaim…',
+  'claim.awarded': '+{points} poin',
+  'claim.awardedBonus': 'Termasuk bonus streak +{bonus} poin',
+  'claim.streakHint': 'Klaim 7 hari beruntun untuk bonus +300 poin',
+  'claim.seventhBonus': '+300',
+  'claim.dayLabel': 'Hari {day}',
+  'claim.close': 'Tutup popup klaim',
 
   'state.offlineTitle': 'Kamu sedang offline',
   'state.offlineBody':
@@ -348,7 +365,7 @@ export const id = {
   'log.unknownSpeaker': 'Tokoh',
   'log.you': 'Kamu',
   'log.empty': 'Belum ada yang tercatat di perjalanan ini.',
-  'log.readOnly': 'Riwayat hanya untuk dibaca. Membuka riwayat tidak memakai kuota.',
+  'log.readOnly': 'Riwayat hanya untuk dibaca. Entri terbaru ada di atas; gulir ke bawah untuk awal cerita. Membuka riwayat tidak memakai kuota.',
 
   'inspector.title': 'Tokoh',
   'inspector.close': 'Tutup daftar tokoh',
@@ -368,9 +385,9 @@ export const id = {
   'gateway.abuseBody':
     'Aktivitas yang tidak wajar membuat pengiriman cerita dijeda. Riwayat dan pengaturan tetap bisa dibuka.',
   'gateway.abuseUntil': 'Coba lagi setelah {time}.',
-  'gateway.quotaTitle': 'Kuota harian habis',
+  'gateway.quotaTitle': 'Poin harian habis',
   'gateway.quotaBody':
-    'Kuota akan diperbarui otomatis. Cerita yang sudah kamu baca tetap tersimpan dan bisa dibuka.',
+    'Klaim poin baru di Beranda — besok, bila hari ini sudah kamu klaim. Cerita yang sudah kamu baca tetap tersimpan dan bisa dibuka.',
   'gateway.contextTitle': 'Konteks penuh',
   'gateway.contextBody':
     'Percakapan sudah sepanjang batas konteks. Cerita lama tetap tersimpan, tetapi tidak lagi dibaca model.',

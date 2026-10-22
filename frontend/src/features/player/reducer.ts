@@ -27,6 +27,7 @@ const INSTANT_EVENTS = new Set<StoryEvent['type']>([
   'showCharacter',
   'hideCharacter',
   'relationshipDelta',
+  'playerInput',
   'setFlag',
   'memoryWrite',
   'endArc',
@@ -184,6 +185,31 @@ function makeNotice(event: StoryEvent, beatId: string): SceneNotice | null {
 }
 
 /**
+ * Menormalkan posisi lanjut dan mempertahankan keputusan yang belum dijawab.
+ *
+ * Cursor setelah `presentChoices` berarti pemain sudah melihat pilihannya, tetapi
+ * bukan berarti ia sudah menjawab. Bila belum ada turn lain setelah keputusan itu,
+ * cursor dikembalikan ke beat pilihan agar reducer menyajikannya lagi.
+ */
+export function normalizeResumeCursor(beats: Beat[], cursor: number): number {
+  const requested = Number.isFinite(cursor) ? Math.trunc(cursor) : 0;
+  const normalized = Math.min(Math.max(0, requested), beats.length);
+  if (normalized === 0) {
+    return 0;
+  }
+
+  const previous = beats[normalized - 1];
+  if (!previous || previous.event.type !== 'presentChoices') {
+    return normalized;
+  }
+
+  const hasResolution = beats
+    .slice(normalized)
+    .some((beat) => beat.turnId !== previous.turnId);
+  return hasResolution ? normalized : normalized - 1;
+}
+
+/**
  * Merekonstruksi panggung dan hubungan dari beat yang sudah dibaca.
  *
  * Dipakai saat memulihkan posisi baca: beat 0..upto diterapkan TANPA menampilkan
@@ -320,10 +346,7 @@ export function playerReducer(state: PlaybackState, action: PlayerAction): Playb
         status: 'idle',
       });
 
-      const startCursor = Math.min(
-        Math.max(0, action.payload.startCursor ?? 0),
-        base.beats.length,
-      );
+      const startCursor = normalizeResumeCursor(base.beats, action.payload.startCursor ?? 0);
 
       // Pulihkan panggung dan hubungan pada posisi baca, tanpa memutar ulang teks.
       const rebuilt = derivePresented(base.beats, startCursor, base.relations);

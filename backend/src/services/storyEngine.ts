@@ -594,7 +594,11 @@ export class DeterministicStoryEngine implements StoryEngine {
   }
 }
 
-/** Beat yang boleh diputar frontend. Dipakai memastikan mesin tidak keluar jalur. */
+/**
+ * Event yang boleh ditulis mesin cerita.
+ * `playerInput` sengaja tidak disertakan: hanya JourneyService yang boleh
+ * membuatnya dari pilihan atau teks yang benar-benar dikirim pemain.
+ */
 export const ALLOWED_EVENT_TYPES: readonly StoryEvent['type'][] = [
   'setBackground',
   'showCharacter',

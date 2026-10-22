@@ -40,7 +40,8 @@ export type LogDrawerProps = {
 
 type LogEntry = {
   key: string;
-  kind: 'narrate' | 'say' | 'system';
+  turnId: string;
+  kind: 'narrate' | 'say' | 'playerInput' | 'system';
   speaker: string | null;
   text: string;
 };
@@ -73,18 +74,34 @@ export function LogDrawer({
     for (const beat of presented) {
       const event = beat.event;
       if (event.type === 'narrate') {
-        result.push({ key: beat.beatId, kind: 'narrate', speaker: null, text: event.text });
+        result.push({
+          key: beat.beatId,
+          turnId: beat.turnId,
+          kind: 'narrate',
+          speaker: null,
+          text: event.text,
+        });
       } else if (event.type === 'say') {
         result.push({
           key: beat.beatId,
+          turnId: beat.turnId,
           kind: 'say',
           speaker: npcNameById[event.npcId] ?? t('log.unknownSpeaker'),
+          text: event.text,
+        });
+      } else if (event.type === 'playerInput') {
+        result.push({
+          key: beat.beatId,
+          turnId: beat.turnId,
+          kind: 'playerInput',
+          speaker: t('log.you'),
           text: event.text,
         });
       } else if (event.type === 'relationshipDelta') {
         const name = npcNameById[event.npcId] ?? t('log.unknownSpeaker');
         result.push({
           key: `${beat.beatId}-system`,
+          turnId: beat.turnId,
           kind: 'system',
           speaker: null,
           text: t('notice.relationChanged', {
@@ -95,8 +112,18 @@ export function LogDrawer({
       }
     }
 
-    // Terbaru di atas agar pemain tidak perlu menggulir jauh.
-    return result.reverse();
+    // Tampilkan giliran terbaru lebih dulu, tetapi pertahankan percakapan
+    // kronologis di dalam setiap giliran: masukan pemain sebelum jawabannya.
+    const groups: LogEntry[][] = [];
+    for (const entry of result) {
+      const currentGroup = groups[groups.length - 1];
+      if (currentGroup?.[0]?.turnId === entry.turnId) {
+        currentGroup.push(entry);
+      } else {
+        groups.push([entry]);
+      }
+    }
+    return groups.reverse().flat();
   }, [beats, cursor, npcNameById, t]);
 
   return (
@@ -155,9 +182,10 @@ export function LogDrawer({
             removeClippedSubviews
             renderItem={({ item }) => (
               <View
+                testID={`log-entry-${item.key}`}
                 style={[
                   styles.entry,
-                  item.kind === 'system'
+                  item.kind === 'system' || item.kind === 'playerInput'
                     ? { backgroundColor: colors.bgMuted, borderColor: colors.accent }
                     : { borderColor: colors.line },
                 ]}
@@ -168,12 +196,20 @@ export function LogDrawer({
                   </Text>
                 ) : (
                   <>
-                    <Text variant="caption" tone="secondary">
-                      {item.kind === 'narrate' ? t('log.narration') : (item.speaker ?? '')}
+                    <Text variant="caption" tone={item.kind === 'playerInput' ? 'accent' : 'secondary'}>
+                      {item.kind === 'narrate'
+                        ? t('log.narration')
+                        : item.kind === 'playerInput'
+                          ? t('log.you')
+                          : (item.speaker ?? '')}
                     </Text>
                     <Text
                       variant="body"
-                      style={item.kind === 'narrate' ? styles.narration : undefined}
+                      style={
+                        item.kind === 'narrate' || item.kind === 'playerInput'
+                          ? styles.narration
+                          : undefined
+                      }
                     >
                       {item.text}
                     </Text>

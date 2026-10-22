@@ -36,6 +36,7 @@ import {
   useUpdatedWorlds,
   useUsage,
 } from '@/data/queries';
+import { DailyClaimPopup } from '@/features/home/DailyClaimPopup';
 import { QuotaSheet } from '@/features/home/QuotaSheet';
 import { JourneyCard } from '@/features/journeys/JourneyCard';
 import { formatCount } from '@/domain/format';
@@ -162,6 +163,15 @@ export default function HomeScreen() {
   const [searchOpen, setSearchOpen] = useState(false);
   /** Lembar pemakaian kuota ringkas (C1) sedang terbuka. */
   const [quotaOpen, setQuotaOpen] = useState(false);
+  /**
+   * Popup klaim poin harian sudah ditutup pemain pada sesi ini.
+   *
+   * Aturan sederhana yang kokoh (docs/17 §4.2): tampilkan selama
+   * `claimableToday` benar dan belum ditutup. Setelah klaim sukses,
+   * `claimableToday` berbalik false dari server, jadi penanda ini hanya
+   * berarti untuk pemain yang MENUTUP popup tanpa mengklaim.
+   */
+  const [claimDismissed, setClaimDismissed] = useState(false);
   /** 0 = tajuk biasa, 1 = bilah pencarian penuh. */
   const searchProgress = useRef(new Animated.Value(0)).current;
   const searchInputRef = useRef<TextInput>(null);
@@ -747,8 +757,10 @@ export default function HomeScreen() {
 
                 <View style={styles.headerActions}>
                   {/*
-                    Sisa kuota token. Tidak dirender selama belum diketahui — angka
-                    yang belum pasti lebih buruk daripada tidak ada angka sama sekali.
+                    Sisa poin harian (docs/17). Tidak dirender selama belum
+                    diketahui — angka yang belum pasti lebih buruk daripada
+                    tidak ada angka sama sekali. Sebelum klaim harian nilainya
+                    0, dan itu jujur: saldo memang belum ada.
                   */}
                   {usage.data ? (
                     /*
@@ -1219,6 +1231,20 @@ export default function HomeScreen() {
           usage={usage.data}
           onClose={closeQuota}
           testID="home-quota-sheet"
+        />
+      ) : null}
+
+      {/*
+        Popup klaim poin harian (docs/17 §3.1). Ditunda selama lembar pemakaian
+        terbuka supaya dua modal tidak bertumpuk — begitu lembar ditutup dan
+        hari itu masih bisa diklaim, popup muncul.
+      */}
+      {usage.data ? (
+        <DailyClaimPopup
+          visible={usage.data.claimableToday && !claimDismissed && !quotaOpen}
+          usage={usage.data}
+          onClose={() => setClaimDismissed(true)}
+          testID="daily-claim-popup"
         />
       ) : null}
     </Screen>

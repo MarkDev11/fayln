@@ -51,8 +51,20 @@ const envSchema = z.object({
 
   RUN_MIGRATIONS_ON_START: booleanish.default(true),
 
-  FREE_DAILY_TOKENS: positiveInt(100_000),
-  PAID_DAILY_TOKENS: positiveInt(1_000_000),
+  /*
+   * Ekonomi poin harian (docs/17).
+   *
+   * FREE_DAILY_TOKENS/PAID_DAILY_TOKENS dipensiunkan dari jalur kuota: pemain
+   * kini mengklaim poin lewat popup daily login, bukan menerima jatah token
+   * otomatis. Pencatatan token internal di `usage_entries` tetap berjalan
+   * untuk analitik biaya. Jatah poin paket berbayar sengaja belum ada —
+   * fitur bayarnya sendiri belum dibuat (docs/17 bagian 3, asumsi pemilik
+   * produk).
+   */
+  FREE_DAILY_POINTS: positiveInt(100),
+  SCENE_POINT_COST: positiveInt(10),
+  STREAK_BONUS_POINTS: positiveInt(300),
+  STREAK_CYCLE_DAYS: positiveInt(7),
   FREE_CONTEXT_TOKENS: positiveInt(64_000),
   PAID_CONTEXT_TOKENS: positiveInt(256_000),
 
@@ -69,9 +81,17 @@ export type AppConfig = {
   corsOrigins: string[];
   publicBaseUrl: string | undefined;
   runMigrationsOnStart: boolean;
+  /** Batas konteks per paket; satu-satunya sisa pengaturan token di jalur pemain. */
   plan: {
-    free: { dailyTokens: number; contextTokens: number };
-    paid: { dailyTokens: number; contextTokens: number };
+    free: { contextTokens: number };
+    paid: { contextTokens: number };
+  };
+  /** Aturan ekonomi poin harian (docs/17). */
+  points: {
+    dailyPoints: number;
+    sceneCost: number;
+    streakBonusPoints: number;
+    streakCycleDays: number;
   };
   rateLimit: { max: number; windowMs: number };
 };
@@ -102,8 +122,14 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
     publicBaseUrl: value.PUBLIC_BASE_URL?.replace(/\/+$/, ''),
     runMigrationsOnStart: value.RUN_MIGRATIONS_ON_START,
     plan: {
-      free: { dailyTokens: value.FREE_DAILY_TOKENS, contextTokens: value.FREE_CONTEXT_TOKENS },
-      paid: { dailyTokens: value.PAID_DAILY_TOKENS, contextTokens: value.PAID_CONTEXT_TOKENS },
+      free: { contextTokens: value.FREE_CONTEXT_TOKENS },
+      paid: { contextTokens: value.PAID_CONTEXT_TOKENS },
+    },
+    points: {
+      dailyPoints: value.FREE_DAILY_POINTS,
+      sceneCost: value.SCENE_POINT_COST,
+      streakBonusPoints: value.STREAK_BONUS_POINTS,
+      streakCycleDays: value.STREAK_CYCLE_DAYS,
     },
     rateLimit: { max: value.RATE_LIMIT_MAX, windowMs: value.RATE_LIMIT_WINDOW_MS },
   };

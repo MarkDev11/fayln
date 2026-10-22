@@ -59,6 +59,7 @@ describe('migrasi', () => {
     '019_latar_pembuka.sql',
     '020_akun_pemain.sql',
     '021_master_hubungan.sql',
+    '022_ekonomi_poin.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
@@ -744,6 +745,43 @@ describe('batasan yang menegakkan aturan domain', () => {
 
     await insertTurn('t_1');
     await expect(insertTurn('t_2')).rejects.toThrow();
+  });
+
+  /**
+   * Klaim poin harian hanya boleh ada SATU per akun per hari (docs/17).
+   *
+   * Ini batasan yang dipercayai ke basis data — sama seperti tolak-tagih-ganda
+   * di `usage_entries`. Jalur klaim memakai `ON CONFLICT DO NOTHING`, yang
+   * sendirinya menuntut kunci unik ini ada; tanpa kunci itu, klaim ganda
+   * akan diam-diam menumpuk hadiah.
+   *
+   * BUKTI MUTASI: ganti kunci utama `daily_point_claims` menjadi hanya
+   * `account_id`, lalu uji ini memerah (klaim kedua diterima).
+   */
+  it('menolak klaim poin kedua untuk hari yang sama (docs/17)', async () => {
+    const insertClaim = (claimDate: string) =>
+      ctx.db.query(
+        `INSERT INTO daily_point_claims (
+           account_id, claim_date, base_points, bonus_points, streak_day
+         ) VALUES ('acc_demo', $1, 100, 0, 1)`,
+        [claimDate],
+      );
+
+    await insertClaim('2026-10-22');
+    await expect(insertClaim('2026-10-22')).rejects.toThrow();
+
+    // Hari yang berbeda tetap sah — batasnya per hari, bukan per akun.
+    await expect(insertClaim('2026-10-23')).resolves.toBeDefined();
+  });
+
+  it('menolak baris klaim dengan streak_day di bawah 1', async () => {
+    await expect(
+      ctx.db.query(
+        `INSERT INTO daily_point_claims (
+           account_id, claim_date, base_points, bonus_points, streak_day
+         ) VALUES ('acc_demo', '2026-10-22', 100, 0, 0)`,
+      ),
+    ).rejects.toThrow();
   });
 });
 

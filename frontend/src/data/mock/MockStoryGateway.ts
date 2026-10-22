@@ -38,6 +38,7 @@ import {
 
 import type {
   Beat,
+  ClaimResultDTO,
   GenreId,
   GenreOption,
   JourneyDetailDTO,
@@ -60,11 +61,29 @@ export const SIMULATOR_MODEL_ID = 'simulator/deterministic-v1';
 
 export const FREE_CONTEXT_WINDOW = 64_000;
 export const PAID_CONTEXT_WINDOW = 256_000;
-export const FREE_DAILY_ALLOWANCE = 100_000;
 
-/** Perkiraan biaya satu giliran pada simulator, bukan tokenisasi model nyata. */
+/*
+ * Ekonomi poin harian (docs/17). Angka-angka ini SENGAJA sama dengan konstanta
+ * backend (`FREE_DAILY_POINTS` dkk.) — bila keduanya berselisih, uji akan lulus
+ * dengan saldo yang tidak pernah dilihat pemain di produksi.
+ */
+export const FREE_DAILY_POINTS = 100;
+export const SCENE_POINT_COST = 10;
+export const STREAK_BONUS_POINTS = 300;
+export const STREAK_CYCLE_DAYS = 7;
+
+/**
+ * Pencatatan token simulator — ANALITIK, bukan tagihan.
+ *
+ * Sejak ekonomi poin, pemain membayar 10 poin per giliran; angka token tetap
+ * dicatat untuk kebutuhan analitik biaya (docs/17 §4.1). Jangan pernah
+ * menampilkannya ke pemain sebagai mata uang.
+ */
 const SIM_PROMPT_TOKENS = 18_240;
 const SIM_COMPLETION_TOKENS = 640;
+
+/** Pergeseran waktu Jakarta (UTC+7, tanpa DST) dalam milidetik. */
+const JAKARTA_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 const SLOW_DELAY_MS = 10_000;
 
@@ -472,8 +491,24 @@ export type MockStoryGatewayOptions = {
   faultMode?: FaultMode;
   /** Menonaktifkan jeda buatan agar pengujian cepat. */
   instant?: boolean;
-  /** Kuota awal; dipakai menguji blokir anggaran (AC-24/AC-25). */
+  /** Poin awal yang sudah terpakai; dipakai menguji blokir anggaran (AC-24/AC-25). */
   initialSpent?: number;
+  /**
+   * Hari ini BELUM diklaim (claimableToday = true, saldo 0).
+   *
+   * Default `false` — hari ini sudah diklaim. Alasannya: hampir semua uji
+   * alur lama mengirim giliran tanpa klaim eksplisit, dan tanpa saldo mereka
+   * akan ditolak `QUOTA_EXHAUSTED` satu per satu. Popup klaim diuji dengan
+   * opsi ini secara eksplisit, sehingga keadaan yang diuji selalu tertulis.
+   */
+  unclaimedToday?: boolean;
+};
+
+/** Satu baris klaim harian; meniru tabel `daily_point_claims` di backend. */
+type DailyClaim = {
+  basePoints: number;
+  bonusPoints: number;
+  streakDay: number;
 };
 
 export class MockStoryGateway implements StoryGateway {
@@ -492,6 +527,13 @@ export class MockStoryGateway implements StoryGateway {
 
   private spent: number;
   private reserved = 0;
+
+  /**
+   * Klaim harian per sesi, berkunci tanggal WIB — meniru indeks unik
+   * `(account_id, claim_date)` di backend: baris kedua untuk hari yang sama
+   * tidak pernah terjadi, dan klaim ulang cukup membaca baris yang ada.
+   */
+  private readonly claims = new Map<string, DailyClaim>();
 
   /** Idempotensi: operationId yang sama selalu menghasilkan envelope yang sama (FR-52). */
   private readonly operations = new Map<string, TurnResultEnvelope>();
@@ -529,6 +571,13 @@ export class MockStoryGateway implements StoryGateway {
     this.faultMode = options.faultMode ?? 'none';
     this.instant = options.instant ?? false;
     this.spent = options.initialSpent ?? 0;
+    if (!options.unclaimedToday) {
+      this.claims.set(this.jakartaDateKey(), {
+        basePoints: FREE_DAILY_POINTS,
+        bonusPoints: 0,
+        streakDay: 1,
+      });
+    }
   }
 
   setFaultMode(mode: FaultMode): void {
@@ -883,10 +932,11 @@ export class MockStoryGateway implements StoryGateway {
       turnId,
       beats,
       revision: 1,
+      // Adegan pembuka GRATIS (docs/17 §3.3) — tidak ada tagihan.
+      chargedPoints: 0,
     });
 
     this.operations.set(input.clientOperationId, envelope);
-    this.charge(envelope);
 
     const relations: RelationEntry[] = world.characters.map((character) => ({
       npcId: character.npcId,
@@ -955,37 +1005,115 @@ export class MockStoryGateway implements StoryGateway {
   /* ---------------- Giliran ---------------- */
 
   async submitChoice(input: SubmitChoiceInput): Promise<TurnResultEnvelope> {
-    return this.runTurn(input.clientOperationId, input.journeyId, () => {
-      switch (input.optionId) {
-        case 'opt1':
-          return buildApologeticBeats('t');
-        case 'opt3':
-          return buildHumorBeats('t');
-        case 'opt2':
-        default:
-          return buildBriefBeats('t');
-      }
-    });
-  }
+    const cached = this.operations.get(input.clientOperationId);
+    if (cached) {
+      return cached;
+    }
+    const inFlight = this.inFlight.get(input.clientOperationId);
+    if (inFlight) {
+      return inFlight;
+    }
 
-  async submitCustom(input: SubmitCustomInput): Promise<TurnResultEnvelope> {
-    return this.runTurn(input.clientOperationId, input.journeyId, () =>
-      buildCustomBeats('t', input.customText),
+    const choiceBeat = [...(this.journeyBeats.get(input.journeyId) ?? [])]
+      .reverse()
+      .find(
+        (beat) => beat.event.type === 'presentChoices' && beat.event.decisionId === input.decisionId,
+      );
+    const selectedOption =
+      choiceBeat?.event.type === 'presentChoices'
+        ? choiceBeat.event.options.find((option) => option.optionId === input.optionId)
+        : undefined;
+    if (!selectedOption) {
+      throw new StoryGatewayError({
+        code: 'CONFLICT',
+        message: 'Pilihan ini tidak lagi berlaku. Muat ulang perjalanan, lalu pilih lagi.',
+        retryable: false,
+      });
+    }
+
+    return this.runTurn(
+      input.clientOperationId,
+      input.journeyId,
+      () => {
+        switch (input.optionId) {
+          case 'opt1':
+            return buildApologeticBeats('t');
+          case 'opt3':
+            return buildHumorBeats('t');
+          case 'opt2':
+          default:
+            return buildBriefBeats('t');
+        }
+      },
+      { inputKind: 'choice', text: selectedOption.label },
     );
   }
 
-  /* ---------------- Kuota ---------------- */
+  async submitCustom(input: SubmitCustomInput): Promise<TurnResultEnvelope> {
+    return this.runTurn(
+      input.clientOperationId,
+      input.journeyId,
+      () => buildCustomBeats('t', input.customText),
+      { inputKind: 'custom', text: input.customText },
+    );
+  }
+
+  /* ---------------- Kuota (poin) ---------------- */
 
   async fetchUsage(): Promise<UsageDTO> {
     await this.delay(30);
+    const today = this.claims.get(this.jakartaDateKey());
+    const yesterday = this.claims.get(this.jakartaDateKey(Date.now() - 24 * 60 * 60 * 1000));
     return {
       tier: 'free',
       spent: this.spent,
       reserved: this.reserved,
-      available: Math.max(0, FREE_DAILY_ALLOWANCE - this.spent - this.reserved),
-      allowanceLimit: FREE_DAILY_ALLOWANCE,
+      available: this.availablePoints(),
+      allowanceLimit: FREE_DAILY_POINTS,
       resetAt: this.nextResetIso(),
       isEstimate: true,
+      claimableToday: today === undefined,
+      /*
+       * Hari streak yang dilaporkan menghitung klaim hari ini bila sudah ada,
+       * atau klaim yang AKAN terjadi hari ini (kemarin + 1) bila belum —
+       * popup butuh angka ini untuk menyalakan titik streak sebelum klaim.
+       */
+      streakDay: today?.streakDay ?? (yesterday?.streakDay ?? 0) + 1,
+      sceneCost: SCENE_POINT_COST,
+    };
+  }
+
+  async claim(): Promise<ClaimResultDTO> {
+    await this.delay(30);
+
+    const todayKey = this.jakartaDateKey();
+    const existing = this.claims.get(todayKey);
+    if (existing) {
+      // Idempoten seperti kontrak server: klaim ulang = tanpa hadiah, tanpa galat.
+      return {
+        awarded: 0,
+        bonus: 0,
+        streakDay: existing.streakDay,
+        available: this.availablePoints(),
+        resetAt: this.nextResetIso(),
+      };
+    }
+
+    const yesterday = this.claims.get(this.jakartaDateKey(Date.now() - 24 * 60 * 60 * 1000));
+    const streakDay = (yesterday?.streakDay ?? 0) + 1;
+    const bonus = streakDay % STREAK_CYCLE_DAYS === 0 ? STREAK_BONUS_POINTS : 0;
+    this.claims.set(todayKey, {
+      basePoints: FREE_DAILY_POINTS,
+      bonusPoints: bonus,
+      streakDay,
+    });
+
+    return {
+      awarded: FREE_DAILY_POINTS,
+      bonus,
+      streakDay,
+      available: this.availablePoints(),
+      resetAt: this.nextResetIso(),
     };
   }
 
@@ -1014,6 +1142,7 @@ export class MockStoryGateway implements StoryGateway {
     operationId: string,
     journeyId: string,
     build: () => Beat[],
+    playerInput: { inputKind: 'choice' | 'custom'; text: string },
   ): Promise<TurnResultEnvelope> {
     const cached = this.operations.get(operationId);
     if (cached) {
@@ -1024,7 +1153,7 @@ export class MockStoryGateway implements StoryGateway {
       return pending;
     }
 
-    const task = this.executeTurn(operationId, journeyId, build);
+    const task = this.executeTurn(operationId, journeyId, build, playerInput);
     this.inFlight.set(operationId, task);
     try {
       return await task;
@@ -1037,6 +1166,7 @@ export class MockStoryGateway implements StoryGateway {
     operationId: string,
     journeyId: string,
     build: () => Beat[],
+    playerInput: { inputKind: 'choice' | 'custom'; text: string },
   ): Promise<TurnResultEnvelope> {
     await this.delay(120);
     this.throwIfFault();
@@ -1050,22 +1180,44 @@ export class MockStoryGateway implements StoryGateway {
       });
     }
 
-    if (this.spent + SIM_PROMPT_TOKENS + SIM_COMPLETION_TOKENS > FREE_DAILY_ALLOWANCE) {
+    if (this.claims.get(this.jakartaDateKey()) === undefined) {
+      // Tanpa klaim, saldo hari itu 0 — pesan mengarah ke popup klaim (docs/17 §3.1).
       throw new StoryGatewayError({
         code: 'QUOTA_EXHAUSTED',
         message:
-          'Kuota harianmu sudah habis. Riwayat dan pengaturan tetap bisa dibuka, dan kuota akan diperbarui otomatis.',
+          'Poin hari ini belum diklaim. Buka Beranda lalu klaim poin harianmu untuk melanjutkan cerita.',
+        retryable: false,
+      });
+    }
+
+    if (this.availablePoints() < SCENE_POINT_COST) {
+      throw new StoryGatewayError({
+        code: 'QUOTA_EXHAUSTED',
+        message:
+          'Poin harianmu sudah habis. Klaim poin baru besok; riwayat dan pengaturan tetap bisa dibuka.',
         retryable: false,
       });
     }
 
     this.turnCounter += 1;
     const turnId = `t${String(this.turnCounter).padStart(3, '0')}`;
-    const beats = build().map((beat, index) => ({
-      ...beat,
-      turnId,
-      beatId: `${turnId}-b${String(index + 1).padStart(3, '0')}`,
-    }));
+    const beats: Beat[] = [
+      {
+        beatId: `${turnId}-b001`,
+        turnId,
+        sequence: 1,
+        event: { type: 'playerInput', ...playerInput },
+      },
+      ...build().map((beat, index) => {
+        const sequence = index + 2;
+        return {
+          ...beat,
+          turnId,
+          sequence,
+          beatId: `${turnId}-b${String(sequence).padStart(3, '0')}`,
+        };
+      }),
+    ];
 
     const envelope = this.envelope({
       operationId,
@@ -1073,6 +1225,9 @@ export class MockStoryGateway implements StoryGateway {
       turnId,
       beats,
       revision: journey.decisionCount + 2,
+      // Giliran sukses ditagih tepat 10 poin (docs/17 §3.3); pracek sudah
+      // dilakukan di atas, jadi saldo di sini pasti mencukupi.
+      chargedPoints: SCENE_POINT_COST,
     });
 
     this.operations.set(operationId, envelope);
@@ -1097,8 +1252,9 @@ export class MockStoryGateway implements StoryGateway {
     turnId: string;
     beats: Beat[];
     revision: number;
+    /** Poin yang ditagih giliran ini; 0 untuk adegan pembuka yang gratis. */
+    chargedPoints: number;
   }): TurnResultEnvelope {
-    const chargedTotal = SIM_PROMPT_TOKENS + SIM_COMPLETION_TOKENS;
     return {
       operationId: options.operationId,
       journeyId: options.journeyId,
@@ -1106,14 +1262,18 @@ export class MockStoryGateway implements StoryGateway {
       revision: options.revision,
       beats: options.beats,
       usage: {
+        // Token tetap dicatat untuk analitik; yang ditagih pemain adalah poin.
         promptTokens: SIM_PROMPT_TOKENS,
         completionTokens: SIM_COMPLETION_TOKENS,
-        chargedTotal,
+        chargedTotal: options.chargedPoints,
       },
       memory: { activeVersion: null, source: 'none' },
       budget: {
-        availableAfter: Math.max(0, FREE_DAILY_ALLOWANCE - this.spent - chargedTotal),
-        allowanceLimit: FREE_DAILY_ALLOWANCE,
+        availableAfter: Math.max(
+          0,
+          this.claimedTotalToday() - this.spent - options.chargedPoints,
+        ),
+        allowanceLimit: FREE_DAILY_POINTS,
         resetAt: this.nextResetIso(),
       },
       modelId: SIMULATOR_MODEL_ID,
@@ -1126,13 +1286,36 @@ export class MockStoryGateway implements StoryGateway {
     this.spent += envelope.usage.chargedTotal;
   }
 
-  /** Reset harian pada 00.00 UTC; UI menampilkan versi waktu lokal. */
+  /** Total poin dari klaim hari ini; 0 bila hari ini belum diklaim. */
+  private claimedTotalToday(): number {
+    const today = this.claims.get(this.jakartaDateKey());
+    return today ? today.basePoints + today.bonusPoints : 0;
+  }
+
+  /** Saldo poin tersedia hari ini. Tidak pernah negatif. */
+  private availablePoints(): number {
+    return Math.max(0, this.claimedTotalToday() - this.spent - this.reserved);
+  }
+
+  /**
+   * Kunci tanggal WIB (Asia/Jakarta, UTC+7 tanpa DST).
+   *
+   * Hari berganti 00.00 WIB, bukan 00.00 UTC (docs/17 §3.5): jam 23.59 dan
+   * 00.01 WIB adalah dua hari klaim yang berbeda.
+   */
+  private jakartaDateKey(ms: number = Date.now()): string {
+    return new Date(ms + JAKARTA_OFFSET_MS).toISOString().slice(0, 10);
+  }
+
+  /** Tengah malam WIB berikutnya, dalam ISO UTC. */
   private nextResetIso(): string {
-    const now = new Date();
-    const next = new Date(
-      Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 0, 0, 0),
+    const jakartaNow = new Date(Date.now() + JAKARTA_OFFSET_MS);
+    const nextMidnightShifted = Date.UTC(
+      jakartaNow.getUTCFullYear(),
+      jakartaNow.getUTCMonth(),
+      jakartaNow.getUTCDate() + 1,
     );
-    return next.toISOString();
+    return new Date(nextMidnightShifted - JAKARTA_OFFSET_MS).toISOString();
   }
 
   /** Stempel waktu yang dijamin menaik untuk setiap pembaruan. */

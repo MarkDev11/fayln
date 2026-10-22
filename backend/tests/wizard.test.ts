@@ -93,14 +93,13 @@ function testConfig(): AppConfig {
     PORT: '8080',
     LOG_LEVEL: 'error',
     RUN_MIGRATIONS_ON_START: 'false',
-    FREE_DAILY_TOKENS: '100000',
     RATE_LIMIT_MAX: '1000',
   } as NodeJS.ProcessEnv);
 }
 
 async function build(): Promise<FastifyInstance> {
   const config = testConfig();
-  const usage = new UsageRepository(ctx.db, config.plan);
+  const usage = new UsageRepository(ctx.db, config.points);
   admins = new AdminRepository(ctx.db);
   drafts = new WorldDraftRepository(ctx.db);
   locations = new LocationsRepository(ctx.db);
@@ -121,6 +120,7 @@ async function build(): Promise<FastifyInstance> {
     providers: new ProvidersRepository(ctx.db),
 
     plan: testConfig().plan,
+    points: testConfig().points,
     media: new MediaRepository(ctx.db),
   };
 

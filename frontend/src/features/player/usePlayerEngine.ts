@@ -22,6 +22,8 @@ export type PlayerEngineOptions = {
   worldVersion: number;
   personaName: string;
   initialBeats: Beat[];
+  /** Posisi baca tersimpan dari detail perjalanan di server. */
+  initialCursor?: number;
   initialRelations: RelationEntry[];
   memory: MemorySnapshot;
   simulator: boolean;
@@ -127,62 +129,61 @@ export function usePlayerEngine(options: PlayerEngineOptions): PlayerEngine {
       }),
   );
 
-  const initialisedRef = useRef(false);
   const intentRef = useRef<SubmissionIntent | null>(null);
   const operationRef = useRef<string | null>(null);
   const autoEnabled = options.autoEnabled ?? true;
 
-  /* ---------------- Pemuatan awal ---------------- */
+  /* ---------------- Pemuatan awal dan pemulihan cursor ---------------- */
 
   useEffect(() => {
-    if (initialisedRef.current) {
-      return;
-    }
-    initialisedRef.current = true;
-    dispatch({
-      type: 'LOADED',
-      payload: {
-        journeyId: options.journeyId,
-        worldId: options.worldId,
-        worldVersion: options.worldVersion,
-        personaName: options.personaName,
-        beats: options.initialBeats,
-        relations: options.initialRelations,
-        memory: options.memory,
-        simulator: options.simulator,
-      },
-    });
+    let cancelled = false;
+
+    void (async () => {
+      // Cursor dan preferensi lokal dimuat sebelum beat pertama disajikan.
+      const saved = await store.load(options.journeyId).catch(() => null);
+      if (cancelled) {
+        return;
+      }
+
+      const localCursor = saved && Number.isFinite(saved.cursor) ? saved.cursor : 0;
+      dispatch({
+        type: 'LOADED',
+        payload: {
+          journeyId: options.journeyId,
+          worldId: options.worldId,
+          worldVersion: options.worldVersion,
+          personaName: options.personaName,
+          beats: options.initialBeats,
+          relations: options.initialRelations,
+          memory: options.memory,
+          simulator: options.simulator,
+          startCursor: Math.max(options.initialCursor ?? 0, localCursor),
+        },
+      });
+
+      if (saved?.autoDelayMs && saved.autoDelayMs > 0) {
+        dispatch({ type: 'SET_AUTO_DELAY', delayMs: saved.autoDelayMs });
+      }
+      if (saved?.draft) {
+        dispatch({ type: 'SET_DRAFT', text: saved.draft });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
   }, [
+    store,
     options.journeyId,
     options.worldId,
     options.worldVersion,
     options.personaName,
     options.initialBeats,
+    options.initialCursor,
     options.initialRelations,
     options.memory,
     options.simulator,
   ]);
-
-  /* ---------------- Pemulihan cursor ---------------- */
-
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const saved = await store.load(options.journeyId);
-      if (cancelled || !saved) {
-        return;
-      }
-      if (saved.autoDelayMs > 0) {
-        dispatch({ type: 'SET_AUTO_DELAY', delayMs: saved.autoDelayMs });
-      }
-      if (saved.draft.length > 0) {
-        dispatch({ type: 'SET_DRAFT', text: saved.draft });
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [store, options.journeyId]);
 
   /* ---------------- Autosave ---------------- */
 

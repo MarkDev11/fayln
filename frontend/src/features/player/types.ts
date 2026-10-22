@@ -134,11 +134,7 @@ export type PlayerAction =
         relationVocabulary?: RelationVocabularyEntry[];
         memory: MemorySnapshot;
         simulator: boolean;
-        /**
-         * Jumlah beat yang sudah dibaca pemain sebelumnya. Beat 0..startCursor
-         * dipakai untuk merekonstruksi panggung dan hubungan TANPA menampilkan
-         * ulang barisnya, lalu pemutaran berlanjut dari sana (AC-17).
-         */
+        /** Jumlah beat yang sudah dibaca sebelumnya, dari progress server/local. */
         startCursor?: number;
       };
     }

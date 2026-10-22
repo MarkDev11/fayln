@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import React from 'react';
 
-import { MockStoryGateway, FREE_DAILY_ALLOWANCE } from '@/data/mock/MockStoryGateway';
+import { MockStoryGateway, FREE_DAILY_POINTS } from '@/data/mock/MockStoryGateway';
 import { worldBoskuMantan } from '@/data/mock/fixtures';
 import { JourneyCard } from '@/features/journeys/JourneyCard';
 import type { JourneySummary } from '@/domain/types';
@@ -146,19 +146,24 @@ describe('AC-20 — menghapus perjalanan', () => {
 });
 
 describe('AC-24/AC-25 — kuota', () => {
-  it('menghitung sisa kuota dari pemakaian', async () => {
-    const gateway = new MockStoryGateway({ instant: true, initialSpent: 40_000 });
+  it('menghitung sisa poin dari pemakaian', async () => {
+    const gateway = new MockStoryGateway({ instant: true, initialSpent: 40 });
     const usage = await gateway.fetchUsage();
 
-    expect(usage.spent).toBe(40_000);
-    expect(usage.available).toBe(FREE_DAILY_ALLOWANCE - 40_000);
+    /*
+     * Ekonomi poin (docs/17): seluruh angka dalam poin. BUKTI MUTASI: kalau
+     * mock masih memakai skala token (100.000), `available` pasti 99.960 dan
+     * uji ini memerah.
+     */
+    expect(usage.spent).toBe(40);
+    expect(usage.available).toBe(FREE_DAILY_POINTS - 40);
     expect(usage.isEstimate).toBe(true);
   });
 
   it('tidak pernah melaporkan sisa negatif', async () => {
     const gateway = new MockStoryGateway({
       instant: true,
-      initialSpent: FREE_DAILY_ALLOWANCE * 2,
+      initialSpent: FREE_DAILY_POINTS * 2,
     });
     const usage = await gateway.fetchUsage();
     expect(usage.available).toBe(0);
@@ -179,6 +184,11 @@ describe('AC-24/AC-25 — kuota', () => {
 
     const after = await gateway.fetchUsage();
     expect(after.spent).toBeGreaterThan(before.spent);
+    /*
+     * Tepat 10: adegan pembuka GRATIS dan giliran ditagih SCENE_POINT_COST
+     * (docs/17 §3.3). BUKTI MUTASI: naikkan SCENE_POINT_COST di mock → merah.
+     */
+    expect(after.spent - before.spent).toBe(10);
   });
 });
 

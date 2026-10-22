@@ -937,8 +937,8 @@ describe('A1 — "Lanjutkan Bermain" naik saat ada adegan belum dibaca', () => {
   });
 });
 
-describe('C1 — lencana token dapat diketuk', () => {
-  it('membuka lembar pemakaian ringkas berisi judul dan sisa token', async () => {
+describe('C1 — lencana poin dapat diketuk', () => {
+  it('membuka lembar pemakaian ringkas berisi judul dan sisa poin', async () => {
     const view = await render(
       <TestProviders gateway={instant()}>
         <HomeScreen />
@@ -955,8 +955,14 @@ describe('C1 — lencana token dapat diketuk', () => {
     await fireEvent.press(badge);
 
     expect(view.getByText('Pemakaian hari ini')).toBeTruthy();
-    // Sisa awal: 100.000 dari 100.000, lewat formatCount (titik ribuan).
-    expect(view.getByText('Sisa 100.000 dari 100.000 token')).toBeTruthy();
+    /*
+     * Sisa awal sesi contoh: 100 dari jatah harian 100 poin — mock sudah
+     * mengklaim hari ini secara bawaan. Ekonomi poin (docs/17): angka kecil,
+     * tanpa pemisah ribuan.
+     */
+    expect(view.getByText('Sisa 100 poin')).toBeTruthy();
+    expect(view.getByText('1 adegan = 10 poin')).toBeTruthy();
+    expect(view.getByText('Streak 1 hari')).toBeTruthy();
   });
 
   it('mengumumkan nama tindakan DAN saldo terformat pada label aksesibilitas', async () => {
@@ -974,8 +980,8 @@ describe('C1 — lencana token dapat diketuk', () => {
      * saja membuat pembaca layar kehilangan saldo yang dulu terbaca — regresi
      * yang uji ini jaga.
      */
-    expect(label).toContain('Lihat pemakaian token');
-    expect(label).toContain('100.000');
+    expect(label).toContain('Lihat pemakaian poin');
+    expect(label).toContain('Sisa 100 poin');
   });
 });
 

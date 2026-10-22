@@ -48,7 +48,7 @@ export const en: Dictionary = {
   'home.heroDotOpen': 'Show world {index}',
   'home.searchToggle': 'Open or close search',
   'home.searchClose': 'Close search',
-  'home.tokensLeft': '{count} tokens left',
+  'home.tokensLeft': '{count} points left',
   'home.emptySearchTitle': 'No matching stories',
   'home.emptySearchBody': 'Try another keyword, or reset the active genre filters.',
   'home.emptyCatalogTitle': 'The catalog is empty',
@@ -59,11 +59,28 @@ export const en: Dictionary = {
   'home.continueCta': 'Continue',
   'home.playingBadge': 'Currently playing',
   'home.resumeUnreadHint': 'New scenes are waiting',
-  'home.quotaOpen': 'View token usage',
+  'home.quotaOpen': 'View point usage',
   'home.quotaSheetTitle': 'Today’s usage',
-  'home.quotaRemaining': '{available} of {limit} tokens left',
-  'home.quotaResetAt': 'Resets {when} (local time)',
-  'home.quotaRereadFree': 'Re-reading does not use tokens',
+  'home.quotaRemaining': '{available} points left',
+  'home.quotaResetAt': 'Resets {when} WIB (UTC+7)',
+  'home.quotaRereadFree': 'Re-reading does not use points',
+  // Scene cost comes FROM the server (usage.sceneCost), not hardcoded — if the
+  // price changes, the text follows without a new release.
+  'home.quotaSceneCost': '1 scene = {cost} points',
+  'home.quotaStreak': '{days}-day streak',
+
+  // Daily point claim popup (docs/17): without a claim, the day’s balance is 0.
+  'claim.greeting': 'Great to see you back!',
+  'claim.title': 'Your daily points are ready',
+  'claim.body': 'Claim today’s points to keep your story going.',
+  'claim.action': 'Claim {points} Points',
+  'claim.claiming': 'Claiming…',
+  'claim.awarded': '+{points} points',
+  'claim.awardedBonus': 'Includes a +{bonus} streak bonus',
+  'claim.streakHint': 'Claim 7 days in a row for a +300 bonus',
+  'claim.seventhBonus': '+300',
+  'claim.dayLabel': 'Day {day}',
+  'claim.close': 'Close claim popup',
 
   'state.offlineTitle': 'You are offline',
   'state.offlineBody':
@@ -327,7 +344,7 @@ export const en: Dictionary = {
   'log.unknownSpeaker': 'Character',
   'log.you': 'You',
   'log.empty': 'Nothing recorded in this journey yet.',
-  'log.readOnly': 'History is read-only. Opening it costs no quota.',
+  'log.readOnly': 'History is read-only. Newest entries are at the top; scroll down for the beginning. Opening it costs no quota.',
 
   'inspector.title': 'Characters',
   'inspector.close': 'Close character list',
@@ -347,9 +364,9 @@ export const en: Dictionary = {
   'gateway.abuseBody':
     'Unusual activity paused story sending. History and settings stay available.',
   'gateway.abuseUntil': 'Try again after {time}.',
-  'gateway.quotaTitle': 'Daily quota is used up',
+  'gateway.quotaTitle': 'Daily points used up',
   'gateway.quotaBody':
-    'Quota refreshes automatically. The story you already read stays saved and readable.',
+    'Claim new points on the Home screen — tomorrow, if you have already claimed today. The story you already read stays saved and readable.',
   'gateway.contextTitle': 'Context is full',
   'gateway.contextBody':
     'The conversation reached its context limit. Old story stays saved but is no longer read by the model.',

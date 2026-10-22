@@ -42,14 +42,13 @@ function testConfig(overrides: Partial<NodeJS.ProcessEnv> = {}): AppConfig {
     PORT: '8080',
     LOG_LEVEL: 'error',
     RUN_MIGRATIONS_ON_START: 'false',
-    FREE_DAILY_TOKENS: '100000',
     RATE_LIMIT_MAX: '1000',
     ...overrides,
   } as NodeJS.ProcessEnv);
 }
 
 async function buildTestApp(config: AppConfig = testConfig()): Promise<FastifyInstance> {
-  const usage = new UsageRepository(ctx.db, config.plan);
+  const usage = new UsageRepository(ctx.db, config.points);
   const catalog = new CatalogRepository(ctx.db);
   const journeys = new JourneyRepository(ctx.db);
   const operations = new OperationRepository(ctx.db);

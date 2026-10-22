@@ -27,12 +27,13 @@ import { radius, space } from '@/theme/tokens';
  * Gerbangnya diletakkan DI SINI, bukan di tiap pemanggil: dengan begitu tidak
  * ada layar yang dapat lupa memeriksanya, termasuk layar yang ditulis nanti.
  */
-export function SimulatorBadge() {
+export function SimulatorBadge({ simulator }: { simulator?: boolean } = {}) {
   const gateway = useGateway();
   const { colors } = useTheme();
   const { t } = useI18n();
+  const isSimulator = simulator ?? gateway.isSimulator;
 
-  if (!gateway.isSimulator) {
+  if (!isSimulator) {
     return null;
   }
 

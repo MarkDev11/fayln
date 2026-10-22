@@ -177,6 +177,20 @@ function validateEvent(
       }
       break;
     }
+    case 'playerInput': {
+      if (event.inputKind !== 'choice' && event.inputKind !== 'custom') {
+        issues.push({ beatId, code: 'UNKNOWN_EVENT', detail: 'Jenis masukan pemain tidak dikenal.' });
+      }
+      const problem = hasUnsafeText(event.text, MAX_DIALOGUE_CHARS);
+      if (problem === 'empty') {
+        issues.push({ beatId, code: 'TEXT_EMPTY', detail: 'Masukan pemain kosong.' });
+      } else if (problem === 'tooLong') {
+        issues.push({ beatId, code: 'TEXT_TOO_LONG', detail: 'Masukan pemain terlalu panjang.' });
+      } else if (problem === 'control') {
+        issues.push({ beatId, code: 'TEXT_HAS_CONTROL_CHARS', detail: 'Masukan pemain memuat karakter kontrol.' });
+      }
+      break;
+    }
     case 'narrate': {
       const problem = hasUnsafeText(event.text, MAX_NARRATION_CHARS);
       if (problem === 'empty') {

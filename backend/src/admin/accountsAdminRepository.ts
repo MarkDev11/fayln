@@ -11,7 +11,7 @@
  */
 
 import type { Database } from '../db/pool';
-import { utcDateKey } from '../repositories/usageRepository';
+import { jakartaDateKey } from '../repositories/usageRepository';
 
 export type AccountAdminRow = {
   accountId: string;
@@ -68,7 +68,7 @@ export class AccountsAdminRepository {
   async listAccounts(input: { search: string; limit?: number }): Promise<AccountAdminRow[]> {
     const limit = input.limit ?? 100;
     const search = input.search.trim();
-    const today = utcDateKey();
+    const today = jakartaDateKey();
 
     const { rows } = await this.db.query<{
       account_id: string;
@@ -107,7 +107,7 @@ export class AccountsAdminRepository {
   }
 
   async findAccount(accountId: string): Promise<AccountDetail | null> {
-    const today = utcDateKey();
+    const today = jakartaDateKey();
     const { rows } = await this.db.query<{
       account_id: string;
       display_name: string | null;
@@ -237,7 +237,7 @@ export class AccountsAdminRepository {
    * jadi panel tidak boleh berpura-pura sudah bisa.
    */
   async setTierForToday(accountId: string, tier: 'free' | 'paid'): Promise<void> {
-    const today = utcDateKey();
+    const today = jakartaDateKey();
     await this.db.query(
       `INSERT INTO usage_days (account_id, usage_date, tier, spent_tokens, reserved_tokens)
        VALUES ($1, $2, $3, 0, 0)
@@ -256,7 +256,7 @@ export class AccountsAdminRepository {
    * menolak penagihan ulang yang sah.
    */
   async resetTodayUsage(accountId: string): Promise<void> {
-    const today = utcDateKey();
+    const today = jakartaDateKey();
     await this.db.query(
       `UPDATE usage_days SET spent_tokens = 0, reserved_tokens = 0, updated_at = now()
        WHERE account_id = $1 AND usage_date = $2`,

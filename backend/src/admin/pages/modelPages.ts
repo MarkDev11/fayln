@@ -595,22 +595,25 @@ ${
 }
 
 export async function modelForm(ctx: AdminPageContext, modelId: string | null): Promise<SafeHtml> {
-  const [model, providers, freeMultiplier, paidMultiplier] = await Promise.all([
+  const [model, providers, freeMultiplier] = await Promise.all([
     modelId ? ctx.models.findModel(modelId) : Promise.resolve(null),
     ctx.providers.listOfferable(),
     ctx.settings.quotaMultiplier('free'),
-    ctx.settings.quotaMultiplier('paid'),
   ]);
 
   /*
-   * Jatah harian yang SEDANG berlaku, dihitung dari konfigurasi server dikali
-   * pengali promosi. Angkanya tidak ditulis ulang di halaman: halaman yang
-   * menyebut jatah keliru lebih buruk daripada halaman yang tidak menyebutnya,
-   * karena admin akan mengisi biaya per giliran berdasarkan angka yang salah.
+   * Jatah poin harian yang SEDANG berlaku, dihitung dari konfigurasi server
+   * dikali pengali promosi (docs/17: pengali berlaku pada poin harian).
+   * Angkanya tidak ditulis ulang di halaman: halaman yang menyebut jatah
+   * keliru lebih buruk daripada halaman yang tidak menyebutnya, karena admin
+   * akan mengisi biaya per giliran berdasarkan angka yang salah.
+   *
+   * Jatah paket berbayar sengaja belum ada — fitur bayarnya belum dibuat
+   * (docs/17 bagian 3). Tier Paid tetap dipertahankan karena rantai fallback
+   * modelnya sudah ada.
    */
   const dailyQuota = {
-    free: Math.round(ctx.plan.free.dailyTokens * freeMultiplier),
-    paid: Math.round(ctx.plan.paid.dailyTokens * paidMultiplier),
+    free: Math.round(ctx.points.dailyPoints * freeMultiplier),
   };
 
   if (modelId && !model) {
@@ -703,18 +706,18 @@ export async function modelForm(ctx: AdminPageContext, modelId: string | null): 
     name: 'tier',
     label: 'Tier',
     required: true,
-    hint: 'Menentukan rantai mana yang memakai model ini, dan jatah token pemain yang mana. Angka jatah di bawah dibaca dari konfigurasi server, jadi ia yang benar-benar ditegakkan.',
+    hint: 'Menentukan rantai mana yang memakai model ini. Jatah poin harian pemain satu untuk semua tier dan dibaca dari konfigurasi server — 10 poin per giliran, tetap (docs/17).',
     value: model?.tier ?? 'free',
     options: [
       {
         value: 'free',
-        label: `Free — ${formatNumber(dailyQuota.free)} token/hari`,
-        data: { 'data-daily-tokens': String(dailyQuota.free) },
+        label: `Free — ${formatNumber(dailyQuota.free)} poin/hari`,
+        data: { 'data-daily-points': String(dailyQuota.free) },
       },
       {
         value: 'paid',
-        label: `Paid — ${formatNumber(dailyQuota.paid)} token/hari`,
-        data: { 'data-daily-tokens': String(dailyQuota.paid) },
+        label: 'Paid — jatah poin ditunda (paket berbayar belum ada)',
+        data: { 'data-daily-points': '0' },
       },
     ],
   })}

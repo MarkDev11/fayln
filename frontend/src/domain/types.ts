@@ -213,6 +213,7 @@ export const EVENT_TYPES = [
   'narrate',
   'presentChoices',
   'relationshipDelta',
+  'playerInput',
   'setFlag',
   'memoryWrite',
   'endArc',
@@ -234,6 +235,12 @@ export type RelationshipDeltaEvent = {
   npcId: string;
   status: RelationStatus;
   reasonPublic: string;
+};
+/** Pemain ejaan/opsi sebagai beat riwayat, bukan dialog panggung. */
+export type PlayerInputEvent = {
+  type: 'playerInput';
+  inputKind: 'choice' | 'custom';
+  text: string;
 };
 export type SetFlagEvent = { type: 'setFlag'; key: string; value: string | number | boolean };
 export type MemoryWriteEvent = { type: 'memoryWrite'; summary: string; sourceTurnIds: string[] };
@@ -261,6 +268,7 @@ export type StoryEvent =
   | NarrateEvent
   | PresentChoicesEvent
   | RelationshipDeltaEvent
+  | PlayerInputEvent
   | SetFlagEvent
   | MemoryWriteEvent
   | EndArcEvent;
@@ -357,15 +365,53 @@ export type JourneyDetailDTO = JourneySummary & {
 export const TIERS = ['free', 'paid'] as const;
 export type Tier = (typeof TIERS)[number];
 
+/**
+ * Kuota harian dalam POIN, bukan token (docs/17).
+ *
+ * Sejak ekonomi poin: `available`/`allowanceLimit` bermakna poin, saldo hanya
+ * ada setelah klaim harian, dan pergantian hari terjadi 00.00 WIB. Pencatatan
+ * token tetap berjalan di server, tetapi hanya untuk analitik biaya — frontend
+ * tidak boleh menampilkannya ke pemain sebagai mata uang.
+ */
 export type UsageDTO = {
   tier: Tier;
+  /** Poin yang sudah terpakai hari ini. */
   spent: number;
   reserved: number;
+  /** Poin yang masih bisa dipakai; 0 sebelum klaim hari ini. */
   available: number;
+  /** Jatah dasar harian dalam poin (tanpa bonus streak). */
   allowanceLimit: number;
+  /** Tengah malam WIB berikutnya, ISO. */
   resetAt: string;
   /** Angka dari klien selalu estimasi; angka final hanya dari server. */
   isEstimate: boolean;
+  /** Hari ini belum diklaim — popup klaim harian harus tampil. */
+  claimableToday: boolean;
+  /**
+   * Hari streak saat ini (1..7 dalam siklus). Aturannya milik server;
+   * frontend hanya menampilkan, tidak pernah menghitung sendiri.
+   */
+  streakDay: number;
+  /** Biaya satu adegan dalam poin. Ditampilkan apa adanya dari server. */
+  sceneCost: number;
+};
+
+/**
+ * Hasil klaim poin harian dari `POST /v1/usage/claim`.
+ *
+ * `awarded` 0 pada klaim ulang di hari yang sama (idempoten, bukan galat)
+ * supaya percobaan ulang setelah kegagalan jaringan selalu aman.
+ */
+export type ClaimResultDTO = {
+  /** Poin dasar yang diberikan klaim ini; 0 bila hari ini sudah diklaim. */
+  awarded: number;
+  /** Bonus streak (kelipatan 7 hari); 0 bila tidak ada. */
+  bonus: number;
+  streakDay: number;
+  /** Saldo tersedia SETELAH klaim diterapkan. */
+  available: number;
+  resetAt: string;
 };
 
 export type EntitlementDTO = {
