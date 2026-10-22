@@ -7,10 +7,12 @@
     "scheme": "fayln",
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
+    "icon": "./assets/icon.png",
     "android": {
       "package": "id.fayln.app",
       "edgeToEdgeEnabled": true,
       "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#F6F3EC"
       }
     },
@@ -20,7 +22,8 @@
     },
     "web": {
       "bundler": "metro",
-      "output": "static"
+      "output": "static",
+      "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-router",

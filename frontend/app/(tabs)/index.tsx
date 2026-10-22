@@ -14,6 +14,7 @@ import {
   type NativeSyntheticEvent,
 } from 'react-native';
 
+import { BrandLogo } from '@/components/BrandLogo';
 import { Button } from '@/components/Button';
 import { Chip } from '@/components/Chip';
 import { HeroCard } from '@/components/HeroCard';
@@ -753,7 +754,17 @@ export default function HomeScreen() {
               // Tajuk yang sudah keluar layar tidak boleh lagi menerima ketukan.
               pointerEvents={searchOpen ? 'none' : 'auto'}
             >
-                <Text variant="screen">{t('home.title')}</Text>
+                {/*
+                  Logo merek, bukan judul layar. Tab di bawah sudah menyebut
+                  "Beranda"; mengulanginya sebagai teks besar hanya memakan
+                  ruang kepala. Label pembaca layar tetap menyebut keduanya
+                  supaya konteks halaman tidak hilang.
+                */}
+                <BrandLogo
+                  size={30}
+                  accessibilityLabel={`${t('app.name')} — ${t('home.title')}`}
+                  testID="home-logo"
+                />
 
                 <View style={styles.headerActions}>
                   {/*
