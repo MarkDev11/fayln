@@ -34,6 +34,7 @@ import type {
 } from '../contracts/types';
 
 import type { StoryEngine, StoryEngineResult, StoryContext } from './storyEngine';
+import type { EngineEventKind } from '../repositories/engineEventRepository';
 import {
   buildStoryUserPrompt,
   cadanganPertanyaan,
@@ -63,7 +64,25 @@ export type AiStoryEngineDeps = {
    * terlihat di log.
    */
   onSkipped?: (rinci: string) => void;
+  /**
+   * Kejadian mesin yang direkam sebagai DATA, bukan sekadar log.
+   *
+   * Dipisah dari `onFailure`/`onSkipped` karena kegunaannya berbeda: dua
+   * callback lama menulis log yang hilang begitu log platform bergulir, sedangkan
+   * `onEvent` mengisi tabel `engine_events` yang dibaca halaman /admin/mesin.
+   * Pemanggil yang hanya ingin log boleh tidak menyediakannya.
+   *
+   * Pencatatnya WAJIB tidak pernah melempar (lihat `EngineEventRepository`);
+   * mesin ini memanggilnya apa adanya tanpa try/catch.
+   */
+  onEvent?: (event: { kind: EngineEventKind; detail: string }) => void;
 };
+
+/**
+ * Jenis kejadian mesin didefinisikan SEKALI, di `EngineEventRepository` —
+ * tepat di samping CHECK migrasinya. Mesin hanya memakai tipenya.
+ */
+export type { EngineEventKind } from '../repositories/engineEventRepository';
 
 /** Alasan sebuah adegan ditolak. Dipakai untuk log dan pengujian. */
 export type RejectReason =
@@ -157,11 +176,32 @@ export class AiStoryEngine implements StoryEngine {
      * Aturan bahasanya harus mengikuti pilihan pemain; konstanta statis membuat
      * opsi "English" tidak berpengaruh apa pun.
      */
-    const panggilan = await this.deps.call(
-      storySystemPrompt(context.responseLocale ?? 'id-ID'),
-      userPrompt,
-    );
+    const systemPrompt = storySystemPrompt(context.responseLocale ?? 'id-ID');
+
+    /*
+     * SATU percobaan ulang untuk kegagalan transport.
+     *
+     * Dulu: satu blip jaringan — timeout, koneksi putus, 5 sekunder provider —
+     * langsung menjatuhkan giliran ke simulator. Kualitas cerita turun senyap,
+     * dan pemain hanya melihat adegan yang tiba-tiba membosankan.
+     *
+     * Sekarang: kegagalan transport dicoba SEKALI lagi sebelum menyerah. Yang
+     * TIDAK dicoba ulang adalah penolakan adegan (`adegan ditolak`) — itu
+     * keputusan validator, bukan kecelakaan jaringan; mencobanya lagi dengan
+     * masukan yang sama hampir pasti menghasilkan penolakan yang sama.
+     *
+     * Idempotensinya aman: kedua percobaan memakai operasi dan giliran yang
+     * sama, jadi tak ada yang ditagih dua kali (FR-52).
+     *
+     * BUKTI MUTASI: hapus blok retry ini (kembalikan satu panggilan langsung),
+     * lalu uji "mencoba ulang sekali saat panggilan gagal" memerah.
+     */
+    let panggilan = await this.deps.call(systemPrompt, userPrompt);
     if (!panggilan.ok) {
+      panggilan = await this.deps.call(systemPrompt, userPrompt);
+    }
+    if (!panggilan.ok) {
+      this.deps.onEvent?.({ kind: 'engine_failed', detail: `panggilan gagal: ${panggilan.detail}` });
       return this.serahkanKeSimulator(context, playerAction, `panggilan gagal: ${panggilan.detail}`);
     }
 
@@ -175,6 +215,10 @@ export class AiStoryEngine implements StoryEngine {
     if (!diperiksa.ok) {
       // Nilai yang ditolak ikut dicatat: tanpa itu penyebabnya harus ditebak.
       const rinci = diperiksa.detail ? ` (${diperiksa.detail})` : '';
+      this.deps.onEvent?.({
+        kind: 'scene_rejected',
+        detail: `adegan ditolak: ${diperiksa.reason}${rinci}`,
+      });
       return this.serahkanKeSimulator(
         context,
         playerAction,
@@ -190,6 +234,9 @@ export class AiStoryEngine implements StoryEngine {
      */
     if (diperiksa.skipped.length > 0) {
       this.deps.onSkipped?.(diperiksa.skipped.join(', '));
+      // Giliran ini BERHASIL — kejadiannya bukan kegagalan, tetapi isi adegan
+      // berkurang, dan jumlahnya perlu terlihat di panel.
+      this.deps.onEvent?.({ kind: 'events_skipped', detail: diperiksa.skipped.join(', ') });
     }
 
     return bungkusJadiHasil(diperiksa.events, context, this.estimatedTurnCost);
@@ -201,6 +248,17 @@ export class AiStoryEngine implements StoryEngine {
     sebab: string,
   ): Promise<StoryEngineResult> {
     this.deps.onFailure?.(sebab);
+    /*
+     * Satu-satunya titik rekam `simulator_used`.
+     *
+     * Ya, giliran ini biasanya sudah merekam `engine_failed` atau
+     * `scene_rejected` lebih dulu, jadi satu penyerahan menghasilkan dua baris.
+     * Itu disengaja: baris pertama menjawab MENGAPA, baris ini menjawab APA
+     * YANG TERJADI ke pemain. Mode uji (seluruh mesin = simulator) sengaja
+     * TIDAK terekam di sini, karena bukan degradasi — ceritanya memang
+     * dikerjakan simulator dari awal.
+     */
+    this.deps.onEvent?.({ kind: 'simulator_used', detail: sebab });
 
     const konteks: StoryContext = {
       ...context,

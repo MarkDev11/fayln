@@ -42,6 +42,7 @@ import { MediaRepository } from './repositories/mediaRepository';
 import { OperationRepository } from './repositories/operationRepository';
 import { ReportRepository } from './repositories/reportRepository';
 import { UsageRepository } from './repositories/usageRepository';
+import { EngineEventRepository } from './repositories/engineEventRepository';
 import { buildApp } from './server';
 import { JourneyService } from './services/journeyService';
 import { chooseOpeningBackground } from './admin/visionClient';
@@ -218,6 +219,12 @@ async function main(): Promise<void> {
       : { ok: false, detail: hasil.detail };
   };
 
+  /*
+   * Kejadian mesin direkam sebagai DATA (tabel engine_events), bukan sekadar
+   * log: log platform bergulir dan hilang, sedangkan pemilik harus dapat
+   * melihat dari panel berapa sering simulator mengambil alih giliran.
+   */
+  const engineEvents = new EngineEventRepository(db);
   const storyEngine = new AiStoryEngine({
     call: panggilAdegan,
     fallback: new DeterministicStoryEngine(),
@@ -227,6 +234,11 @@ async function main(): Promise<void> {
     // Bukan kegagalan: giliran tetap jalan, tetapi sebagian isi model dibuang.
     onSkipped: (rinci) => {
       app.log.warn({ dibuang: rinci }, 'Sebagian peristiwa adegan dibuang.');
+    },
+    // `record()` menelan galatnya sendiri; pencatatan tidak boleh menggagalkan
+    // giliran yang sedang dilayani.
+    onEvent: (event) => {
+      void engineEvents.record(event);
     },
   });
 
@@ -260,6 +272,7 @@ async function main(): Promise<void> {
     characters: new CharactersRepository(db),
     locations: new LocationsRepository(db),
     providers: new ProvidersRepository(db),
+    engineEvents,
 
     plan: config.plan,
     points: config.points,

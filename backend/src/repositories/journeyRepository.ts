@@ -36,6 +36,12 @@ type JourneyRow = {
   has_unread_beats: boolean;
   created_at: Date;
   updated_at: Date;
+  /**
+   * Kapan perjalanan TAMAT (beat `endArc` di-commit); null berarti masih
+   * berjalan. Yang tamat adalah TERMINAL: tidak memblokir perjalanan baru di
+   * dunia yang sama (lihat migrasi 024).
+   */
+  ended_at: Date | null;
 };
 
 type BeatRow = {
@@ -80,19 +86,31 @@ export class JourneyRepository {
     const { rows } = await this.db.query<JourneyRow>(
       `SELECT journey_id, account_id, world_id, world_version, persona_name, persona_age,
               response_locale, last_read_beat_id, last_read_sequence, decision_count,
-              has_unread_beats, created_at, updated_at
+              has_unread_beats, created_at, updated_at, ended_at
        FROM journeys WHERE journey_id = $1 LIMIT 1`,
       [journeyId],
     );
     return rows[0] ?? null;
   }
 
+  /**
+   * Perjalanan yang MASIH BERJALAN untuk pasangan akun dan dunia ini.
+   *
+   * Sejak migrasi 024, perjalanan yang sudah sampai `endArc` membawa
+   * `ended_at` dan TIDAK dihitung: ia terminal, dan tidak boleh memblokir
+   * perjalanan baru di dunia yang sama. Invarian yang ditegakkan di sini dan di
+   * indeks unik parsialnya adalah "maksimal SATU PERJALANAN AKTIF per dunia",
+   * bukan lagi "maksimal satu perjalanan".
+   *
+   * BUKTI MUTASI: hapus klausa `AND ended_at IS NULL`, lalu uji
+   * "perjalanan yang sudah tamat tidak memblokir perjalanan baru" memerah.
+   */
   async findByAccountAndWorld(accountId: string, worldId: string): Promise<JourneyRow | null> {
     const { rows } = await this.db.query<JourneyRow>(
       `SELECT journey_id, account_id, world_id, world_version, persona_name, persona_age,
               response_locale, last_read_beat_id, last_read_sequence, decision_count,
-              has_unread_beats, created_at, updated_at
-       FROM journeys WHERE account_id = $1 AND world_id = $2 LIMIT 1`,
+              has_unread_beats, created_at, updated_at, ended_at
+       FROM journeys WHERE account_id = $1 AND world_id = $2 AND ended_at IS NULL LIMIT 1`,
       [accountId, worldId],
     );
     return rows[0] ?? null;
@@ -420,6 +438,14 @@ export class JourneyRepository {
    *
    * `revision` dihitung dari jumlah turn yang ada, sehingga hasil yang tiba
    * terlambat tidak dapat menimpa turn yang lebih baru (AC-09).
+   *
+   * Bila salah satu beat yang di-commit adalah `endArc`, perjalanan yang sama
+   * DITANDAI tamat di transaksi yang sama (`ended_at`). Penandanya di sini,
+   * bukan di layanan, supaya TIDAK ADA jalur penyimpanan beat yang dapat
+   * melupakannya: satu-satunya jalan masuk beat adalah metode ini.
+   *
+   * BUKTI MUTASI: hapus kolom `ended_at` dari UPDATE di bawah, lalu uji
+   * "mencatat ended_at saat beat endArc di-commit" memerah.
    */
   async appendTurn(input: {
     turnId: string;
@@ -459,9 +485,10 @@ export class JourneyRepository {
 
       await client.query(
         `UPDATE journeys
-         SET has_unread_beats = true, updated_at = now()
+         SET has_unread_beats = true, updated_at = now(),
+             ended_at = coalesce(ended_at, CASE WHEN $2 THEN now() END)
          WHERE journey_id = $1`,
-        [input.journeyId],
+        [input.journeyId, input.beats.some((beat) => beat.event.type === 'endArc')],
       );
 
       return revision;

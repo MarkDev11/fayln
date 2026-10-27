@@ -10,11 +10,17 @@
  * milik orang lain mengembalikan HTTP 200 beserta perjalanan akun tersebut.
  *
  * Sekarang akun hanya dapat ditentukan oleh token sesi yang dibuktikan terhadap
- * tabel `player_sessions`. Header lama masih diterima HANYA bila mode transisi
- * dinyalakan lewat `FAYLN_ALLOW_LEGACY_ACCOUNT_HEADER=1`, dan mode itu mati
- * secara bawaan. Tujuannya satu: memberi jalan agar panel admin dan pengujian
- * lama tidak langsung rusak, tanpa membiarkan pintu itu terbuka diam-diam di
- * produksi.
+ * tabel `player_sessions`. Header lama tidak diterima sama lagi.
+ *
+ * ---------------------------------------------------------------------------
+ * MODE TRANSISI DIHAPUS 27 OKTOBER 2026
+ * ---------------------------------------------------------------------------
+ * Mode transisi `FAYLN_ALLOW_LEGACY_ACCOUNT_HEADER=1` pernah ada untuk memberi
+ * jalan agar panel admin dan pengujian lama tidak langsung rusak. Fungsinya
+ * sudah selesai — tidak ada lagi pemanggil yang membutuhkannya — dan setiap
+ * hari ia tetap ada adalah satu hari lagi pintu itu menunggu untuk
+ * dinyalakan diam-diam lewat satu variabel lingkungan. Pintu yang harus
+ * dijaga lebih baik daripada dihapus tidak layak dipertahankan.
  *
  * ---------------------------------------------------------------------------
  * MENGAPA `resolveAccountId` MASIH SINKRON
@@ -31,8 +37,6 @@ import type { FastifyInstance, FastifyRequest } from 'fastify';
 
 import { readBearerToken } from '../routes/auth';
 
-export const ACCOUNT_HEADER = 'x-account-id';
-
 /** Akun demo yang dibuat oleh migrasi seed. */
 export const DEMO_ACCOUNT_ID = 'acc_demo';
 
@@ -40,16 +44,6 @@ export type IdentityMode = 'placeholder' | 'authenticated';
 
 /** Mode identitas yang berlaku saat ini. */
 export const CURRENT_IDENTITY_MODE: IdentityMode = 'authenticated';
-
-/**
- * Apakah header lama masih diterima.
- *
- * Dibaca dari lingkungan setiap kali dipanggil, bukan disimpan saat modul dimuat,
- * supaya pengujian dapat menyalakannya tanpa memuat ulang modul.
- */
-export function legacyHeaderAllowed(): boolean {
-  return process.env.FAYLN_ALLOW_LEGACY_ACCOUNT_HEADER === '1';
-}
 
 /**
  * Akun yang sudah dibuktikan untuk permintaan ini.
@@ -183,31 +177,15 @@ export function registerIdentityHook(
       }
     }
 
-    if (legacyHeaderAllowed()) {
-      const legacy = readLegacyAccountId(request);
-      if (legacy) {
-        await deps.accounts.ensure(legacy);
-        (request as WithIdentity)[RESOLVED] = legacy;
-        return;
-      }
-    }
-
+    /*
+     * Tidak ada jalur ketiga. Header `x-account-id` TIDAK dipercaya lagi —
+     * bukan "dipercaya bila sebuah variabel lingkungan menyala". Mode transisi
+     * dihapus; lihat catatan di kepala berkas.
+     *
+     * BUKTI MUTASI: tambahkan kembali penerimaan header lama di sini, lalu uji
+     * "MENOLAK header x-account-id sebagai identitas" di tests/api.test.ts
+     * memerah.
+     */
     throw new UnauthenticatedError();
   });
-}
-
-/** Membaca header lama beserta batas panjang dan karakternya. */
-function readLegacyAccountId(request: FastifyRequest): string | null {
-  const raw = request.headers[ACCOUNT_HEADER];
-  const value = Array.isArray(raw) ? raw[0] : raw;
-
-  if (typeof value !== 'string') {
-    return null;
-  }
-  const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return null;
-  }
-  // Dibatasi agar tidak menjadi jalur penyisipan.
-  return /^[A-Za-z0-9_-]{1,64}$/.test(trimmed) ? trimmed : null;
 }

@@ -14,6 +14,7 @@ import type {
   RelationVocabularyEntry,
   WorldStatus,
 } from './types';
+import { DEFAULT_RELATION_STATUSES } from './types';
 
 /**
  * Label BAWAAN untuk delapan status lama.
@@ -112,6 +113,81 @@ export function relationTone(
     default:
       return 'secondary';
   }
+}
+
+/**
+ * Arah pencapaian sebuah perubahan hubungan — untuk memberi tanpa warna saja
+ * (NFR-01): ikon + kata + warna di `RelationNotice`.
+ *
+ * ---------------------------------------------------------------------------
+ * DARI MANA ARAHNYA DITURUNKAN
+ * ---------------------------------------------------------------------------
+ * 1. KOSAKATA DUNIA. Ketika kedua status (yang lama dan yang baru) ada di
+ *    kosakata, urutan `position` adalah sumber kebenarannya: naik posisi =
+ *    membaik, turun posisi = menegang. Status di posisi TERTINGGI kosakata
+ *    adalah puncak, apa pun status sebelumnya.
+ * 2. DELAPAN STATUS BAWAAN. Bila kosakatanya kosong (sesi belum termuat) dan
+ *    kedua status termasuk delapan status lama, urutan
+ *    `DEFAULT_RELATION_STATUSES` dipakai dengan aturan yang sama; `sayang` dan
+ *    `cinta` di ujungnya adalah puncak.
+ * 3. NETRAL. Bila arah tidak dapat ditentukan — kosakata kosong, status di
+ *    luar daftar bawaan, atau status sebelumnya tidak diketahui — hasilnya
+ *    netral. Menampilkan arah yang dikarang lebih buruk daripada tidak
+ *    menampilkannya.
+ */
+export type RelationMilestone = 'peak' | 'improvement' | 'determination' | 'neutral';
+
+export function relationMilestone(
+  status: RelationStatus | 'unknown',
+  previousStatus: RelationStatus | 'unknown' | null | undefined,
+  vocabulary: readonly RelationVocabularyEntry[],
+): RelationMilestone {
+  if (status === 'unknown') {
+    return 'neutral';
+  }
+
+  const posisiBawaan = DEFAULT_RELATION_STATUSES as readonly string[];
+
+  const current = vocabulary.find((item) => item.relationId === status);
+  if (current && vocabulary.length > 0) {
+    const maxPosition = Math.max(...vocabulary.map((item) => item.position));
+    if (current.position >= maxPosition) {
+      return 'peak';
+    }
+    if (previousStatus && previousStatus !== 'unknown') {
+      const previous = vocabulary.find((item) => item.relationId === previousStatus);
+      if (previous) {
+        if (current.position > previous.position) {
+          return 'improvement';
+        }
+        if (current.position < previous.position) {
+          return 'determination';
+        }
+      }
+    }
+    return 'neutral';
+  }
+
+  // Kosakata kosong atau status di luarnya: coba delapan status bawaan.
+  const currentIndex = posisiBawaan.indexOf(status);
+  if (currentIndex >= 0) {
+    if (status === 'sayang' || status === 'cinta') {
+      return 'peak';
+    }
+    if (previousStatus && previousStatus !== 'unknown') {
+      const previousIndex = posisiBawaan.indexOf(previousStatus);
+      if (previousIndex >= 0) {
+        if (currentIndex > previousIndex) {
+          return 'improvement';
+        }
+        if (currentIndex < previousIndex) {
+          return 'determination';
+        }
+      }
+    }
+  }
+
+  return 'neutral';
 }
 
 /**

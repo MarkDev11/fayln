@@ -135,8 +135,53 @@ export class RelationsRepository {
   }
 
   async find(relationId: string): Promise<RelationRow | null> {
-    const all = await this.list();
-    return all.find((item) => item.relationId === relationId) ?? null;
+    /*
+     * SATU baris, TANPA menghitung pemakaian.
+     *
+     * Bentuk lama memanggil `list()` — yang menjalankan `usageCounts()`
+     * beserta pemindaian JSONB `beats` penuh — hanya untuk mengambil satu
+     * baris. Pemanggil `find()` (validasi formulir wizard, halaman admin)
+     * tidak memakai angka pemakaiannya; menghitungnya di sini murni sia-sia,
+     * dan biayanya tumbuh linier terhadap `beats` — tabel yang tumbuh tanpa
+     * batas.
+     *
+     * BUKTI MUTASI: kembalikan `const all = await this.list(); return all.find(
+     * ...)` di sini, lalu uji "TIDAK memindai beat saat mengambil satu baris"
+     * memerah.
+     */
+    const { rows } = await this.db.query<{
+      relation_id: string;
+      label_id: string;
+      label_en: string;
+      meaning: string;
+      behaviour_hint: string;
+      position: number;
+      active: boolean;
+      created_at: Date | string;
+    }>(
+      `SELECT relation_id, label_id, label_en, meaning, behaviour_hint, position, active, created_at
+       FROM relation_definitions
+       WHERE relation_id = $1`,
+      [relationId],
+    );
+    const row = rows[0];
+    if (!row) {
+      return null;
+    }
+    return {
+      relationId: row.relation_id,
+      labelId: row.label_id,
+      labelEn: row.label_en,
+      meaning: row.meaning,
+      behaviourHint: row.behaviour_hint,
+      position: row.position,
+      active: row.active,
+      // Angka pemakaian hanya dihitung di `list()` dan `usageCounts()` — lihat
+      // komentar di atas. `0` di sini bukan data, melainkan tanda "tidak
+      // dihitung"; pemanggil yang butuh angka sejati memakai `usageCounts()`.
+      usageCount: 0,
+      createdAt: row.created_at,
+    };
   }
 
   /**
@@ -144,12 +189,23 @@ export class RelationsRepository {
    *
    * Yang diperiksa adalah keberadaan, bukan keaktifan: menyunting dunia lama yang
    * memakai status nonaktif tidak boleh membuang status itu diam-diam.
+   *
+   * SATU kueri keberadaan, bukan `list()`. Jalur ini dipanggil di SETIAP render
+   * formulir karakter dan setiap simpan wizard; menyisipkan penghitungan
+   * pemakaian (dengan pemindaian `beats`) di sana berarti membayar biaya yang
+   * paling mahal pada jalur yang paling sering dilalui.
+   *
+   * BUKTI MUTASI: kembalikan `const known = new Set((await this.list()).map(
+   * ...))`, lalu uji "TIDAK memindai beat saat memvalidasi keberadaan" memerah.
    */
   async existingIds(candidates: readonly string[]): Promise<string[]> {
     if (candidates.length === 0) {
       return [];
     }
-    const known = new Set((await this.list()).map((item) => item.relationId));
+    const { rows } = await this.db.query<{ relation_id: string }>(
+      'SELECT relation_id FROM relation_definitions',
+    );
+    const known = new Set(rows.map((row) => row.relation_id));
     return [...new Set(candidates)].filter((id) => known.has(id));
   }
 

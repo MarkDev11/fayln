@@ -17,6 +17,7 @@ import type { CharactersRepository } from '../charactersRepository';
 import type { LocationsRepository } from '../locationsRepository';
 import type { ProvidersRepository } from '../providersRepository';
 import type { RelationsRepository } from '../relationsRepository';
+import type { EngineEventRepository } from '../../repositories/engineEventRepository';
 import type { MediaRepository } from '../../repositories/mediaRepository';
 
 export type AdminPageContext = {
@@ -77,6 +78,12 @@ export type AdminPageContext = {
    * NAMA variabel lingkungannya.
    */
   providers: ProvidersRepository;
+  /**
+   * Kejadian mesin cerita: kegagalan model, penolakan adegan, pengambilalihan
+   * simulator. Hanya MEMBACA; yang menulis adalah hook mesin di `index.ts`,
+   * dan pencatatnya sengaja tidak pernah menggagalkan permintaan.
+   */
+  engineEvents: EngineEventRepository;
   /** Berkas gambar unggahan; dipakai halaman Aset untuk menghitung pemakaian. */
   media: MediaRepository;
   /**

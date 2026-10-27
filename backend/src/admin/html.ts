@@ -349,6 +349,15 @@ const NAV: NavItem[] = [
     to: '#7d6343',
     icon: navIcon('<circle cx="8" cy="8" r="5.6"/><path d="M8 4.9V8l2.2 1.4"/>'),
   },
+  {
+    href: '/admin/mesin',
+    label: 'Mesin cerita',
+    key: 'mesin',
+    from: '#ff6b22',
+    to: '#c2410c',
+    // Garis denyut: kesehatan mesin yang menulis cerita.
+    icon: navIcon('<path d="M1.9 8h3l1.6-4 2.6 8 1.7-4h3.3"/>'),
+  },
 ];
 
 /**

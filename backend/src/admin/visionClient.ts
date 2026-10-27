@@ -950,7 +950,26 @@ const MAX_TEXT_TOKENS = 16_000;
  * kira-kira 1.500 token, jadi 20-50 detik untuk menulisnya saja — belum termasuk
  * waktu berpikir model yang bernalar.
  */
-export const TEXT_TIMEOUT_MS = 180_000;
+/**
+ * Batas waktu satu PERCOBAAN teks adegan.
+ *
+ * ---------------------------------------------------------------------------
+ * MENGAPA 45 DETIK, BUKAN LEBIH
+ * ---------------------------------------------------------------------------
+ * Adegan biasanya selesai dalam 21-35 detik. Dengan batas 180 detik, satu
+ * provider yang menggantung membuat pemain menunggu TIGA MENIT penuh sebelum
+ * jatuh ke simulator — dan selama itu koneksi kolam basis data tertahan. Pada
+ * puluhan pemain bersamaan, kolam itu habis lebih dulu daripada apa pun, dan
+ * kegagalan satu orang merambat menjadi kegagalan semua orang.
+ *
+ * Batas ini per PERCOBAAN, bukan per giliran: `panggilAdegan` mencoba ulang
+ * satu kali sebelum menyerah, jadi giliran yang sehat tetap punya dua kesempatan
+ * dalam ~90 detik — masih lebih pendek daripada satu percobaan yang dulu.
+ *
+ * BUKTI MUTASI: kembalikan angka ini ke 180_000, lalu uji "mencoba ulang sekali
+ * saat panggilan gagal" memerah (durasi mensimulasikan kegagalan berulang).
+ */
+export const TEXT_TIMEOUT_MS = 45_000;
 
 /** Batas panjang satu bidang teks dunia yang diterima dari model. */
 const MAX_WORLD_TEXT = 4_000;

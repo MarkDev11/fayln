@@ -445,6 +445,61 @@ describe('pembuatan perjalanan', () => {
     expect(result.opening.simulator).toBe(true);
   });
 
+  it('MENGAMBIL ALIH klaim basi, tetapi bukan klaim yang masih dikerjakan', async () => {
+    /*
+     * ---------------------------------------------------------------------------
+     * PEMULIHAN OPERASI BASI
+     * ---------------------------------------------------------------------------
+     * Proses yang mati di tengah giliran (deploy ulang, crash) meninggalkan
+     * operasi dengan state `running` selamanya: tidak ada yang akan menandainya
+     * selesai, dan pemain yang menekan ulang terkunci dari ceritanya sendiri
+     * tanpa satu pun galat.
+     *
+     * Aturannya: klaim `running` berumur > 10 menit dianggap mati dan boleh
+     * diambil alih; klaim yang muda TIDAK boleh tersentuh (ia mungkin sedang
+     * benar-benar dikerjakan proses lain). Operasi `succeeded` tidak pernah
+     * disentuh — hasilnya harus tetap dikembalikan untuk pengulangan yang sama
+     * (FR-52).
+     *
+     * BUKTI MUTASI: hapus klausa `OR operations.created_at < ...` pada
+     * `OperationRepository.claim` (kembalikan `DO NOTHING` tanpa syarat), lalu
+     * uji ini memerah pada pengambilan alih klaim basi.
+     */
+    const operations = new OperationRepository(ctx.db);
+    const id = operationId('stale');
+
+    expect(await operations.claim({ operationId: id, accountId: auth.accountId, journeyId: null, kind: 'create_journey' })).toBe(true);
+    // Klaim kedua segera DITOLAK: operasinya masih muda dan mungkin sedang dikerjakan.
+    expect(await operations.claim({ operationId: id, accountId: auth.accountId, journeyId: null, kind: 'create_journey' })).toBe(false);
+
+    // Proses mati: klaim tertinggal 11 menit.
+    await ctx.db.query(
+      `UPDATE operations
+       SET created_at = now() - interval '11 minutes'
+       WHERE operation_id = $1`,
+      [id],
+    );
+    expect(await operations.claim({ operationId: id, accountId: auth.accountId, journeyId: null, kind: 'create_journey' })).toBe(true);
+
+    // Dan operasi yang BERHASIL tidak pernah dapat direbut, berapa pun usianya.
+    await operations.complete(id, {
+      operationId: id,
+      beats: [],
+      usage: { turnTokens: 0, totalTokens: 0 },
+      budget: null,
+      simulator: true,
+      responseLocale: 'id-ID',
+      revision: 1,
+    } as never);
+    await ctx.db.query(
+      `UPDATE operations
+       SET created_at = now() - interval '11 minutes'
+       WHERE operation_id = $1`,
+      [id],
+    );
+    expect(await operations.claim({ operationId: id, accountId: auth.accountId, journeyId: null, kind: 'create_journey' })).toBe(false);
+  });
+
   /**
    * Regresi produksi: perangkat baru mengirim ID buatannya sendiri, dan baris
    * `accounts`-nya belum ada. Sebelum perbaikan, pembuatan perjalanan pertama

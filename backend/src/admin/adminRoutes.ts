@@ -27,6 +27,7 @@ import {
 } from './pages/locationPages';
 import { genresList } from './pages/genrePages';
 import { relationsList } from './pages/relationPages';
+import { engineList } from './pages/enginePages';
 import { wizardStep1, wizardStep2, wizardStep3 } from './pages/wizardPages';
 import { WIZARD_CSS, WIZARD_JS } from './wizardClient';
 import { modelForm, modelsList, providerForm, providersList } from './pages/modelPages';
@@ -95,6 +96,7 @@ type AdminPages = {
   locationCategoriesList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   genresList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   relationsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
+  engineList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   assetsList: (ctx: AdminPageContext) => Promise<SafeHtml>;
   wizardStep1: (ctx: AdminPageContext, worldId: string | null) => Promise<SafeHtml>;
   wizardStep2: (ctx: AdminPageContext, worldId: string) => Promise<SafeHtml>;
@@ -123,6 +125,7 @@ const DEFAULT_PAGES: AdminPages = {
   locationCategoriesList,
   genresList,
   relationsList,
+  engineList,
   assetsList,
   wizardStep1,
   wizardStep2,
@@ -628,6 +631,10 @@ export function registerAdminRoutes(app: FastifyInstance, deps: AdminRouteDeps):
 
   app.get('/admin/relations', async (request, reply) =>
     send(reply, request, 'Hubungan', await pages.relationsList(ctx), 'relations'),
+  );
+
+  app.get('/admin/mesin', async (request, reply) =>
+    send(reply, request, 'Mesin cerita', await pages.engineList(ctx), 'mesin'),
   );
 
   app.get('/admin/assets', async (request, reply) =>

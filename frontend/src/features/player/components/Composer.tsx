@@ -82,9 +82,11 @@ export function Composer({
             tone={isTooLong ? 'danger' : 'secondary'}
             style={styles.metaText}
           >
-            {isTooLong
-              ? t('player.customTooLong')
-              : t('player.charactersLeft', { count: remaining })}
+            {submitting
+              ? t('player.writingScene')
+              : isTooLong
+                ? t('player.customTooLong')
+                : t('player.charactersLeft', { count: remaining })}
           </Text>
         </View>
         <Button

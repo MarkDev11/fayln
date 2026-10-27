@@ -357,6 +357,116 @@ describe('AiStoryEngine', () => {
 });
 
 /**
+ * Kejadian mesin sebagai DATA (tabel engine_events, halaman /admin/mesin).
+ *
+ * Dulu satu-satunya jejak "model gagal, simulator mengambil alih" adalah log
+ * warn yang hilang begitu log platform bergulir. Sekarang mesin melaporkan
+ * kejadiannya lewat `onEvent`, dan yang direkam adalah: MENGAPA (engine_failed
+ * / scene_rejected) dan APA YANG TERJADI ke pemain (simulator_used).
+ *
+ * BUKTI MUTASI: hapus panggilan `this.deps.onEvent?.(...)` di
+ * `aiStoryEngine.ts` (baik di `tulis` maupun `serahkanKeSimulator`), lalu uji
+ * di bawah memerah satu per satu.
+ */
+describe('kejadian mesin (onEvent)', () => {
+  /*
+   * Salinan konteks milik blok ini, bukan milik `describe('AiStoryEngine')`
+   * di atas: variabel blok itu tidak terlihat di sini, dan mengambilnya lintas
+   * blok membuat uji patah dengan `ReferenceError` saat dijalankan terpisah.
+   */
+  const konteks: StoryContext = {
+    worldTitle: 'Bosku Mantan Pacarku',
+    premise: 'Kamu di kantor.',
+    synopsis: 'Hari pertama kerja.',
+    characters: KARAKTER,
+    manifest: MANIFEST,
+    relationVocabulary: KOSAKATA,
+    personaName: 'Marky',
+    personaAge: 24,
+    turnOrdinal: 1,
+    beatIdPrefix: 'j1-t1',
+  };
+
+  it('mencatat engine_failed dan simulator_used saat panggilan gagal dua kali', async () => {
+    const call = vi.fn().mockResolvedValue({ ok: false, detail: 'jaringan mati' });
+    const kejadian: { kind: string; detail: string }[] = [];
+    const mesin = new AiStoryEngine({
+      call,
+      fallback: new DeterministicStoryEngine(),
+      onEvent: (event) => kejadian.push(event),
+    });
+
+    const hasil = await mesin.generateOpening(konteks);
+
+    // Pemain tetap dilayani simulator...
+    expect(hasil.beats.length).toBeGreaterThan(0);
+    // ...dua percobaan dilakukan (satu retry)...
+    expect(call).toHaveBeenCalledTimes(2);
+    // ...dan KEDUA sisi kejadiannya tercatat.
+    expect(kejadian.map((item) => item.kind)).toEqual(['engine_failed', 'simulator_used']);
+    expect(kejadian[0]?.detail).toContain('jaringan mati');
+  });
+
+  it('mencatat scene_rejected dan simulator_used saat adegan ditolak', async () => {
+    const rusak = adeganSah() as Record<string, unknown>;
+    (rusak.beats as unknown[])[0] = { type: 'setBackground', assetId: 'bg_karangan' };
+
+    const call = vi.fn().mockResolvedValue({ ok: true, scene: rusak });
+    const kejadian: { kind: string; detail: string }[] = [];
+    const mesin = new AiStoryEngine({
+      call,
+      fallback: new DeterministicStoryEngine(),
+      onEvent: (event) => kejadian.push(event),
+    });
+
+    await mesin.generateTurn({ ...konteks, optionLabel: 'Berdiri' });
+
+    expect(kejadian.map((item) => item.kind)).toEqual(['scene_rejected', 'simulator_used']);
+    expect(kejadian[0]?.detail).toContain('asset-tidak-dikenal');
+  });
+
+  it('mencatat events_skipped saat adegan diterima tetapi sebagian dibuang', async () => {
+    // Satu peristiwa berstatus karangan: dibuang, bukan menjatuhkan adegannya.
+    const adegan = adeganSah() as Record<string, unknown>;
+    (adegan.beats as unknown[]).push({
+      type: 'relationshipDelta',
+      npcId: 'npc_rina',
+      status: 'marah',
+      reasonPublic: 'Ia tersinggung.',
+    });
+
+    const call = vi.fn().mockResolvedValue({ ok: true, scene: adegan });
+    const kejadian: { kind: string; detail: string }[] = [];
+    const mesin = new AiStoryEngine({
+      call,
+      fallback: new DeterministicStoryEngine(),
+      onEvent: (event) => kejadian.push(event),
+    });
+
+    const hasil = await mesin.generateTurn({ ...konteks, optionLabel: 'Berdiri' });
+
+    // Adegan tetap diterima; kejadiannya bukan kegagalan.
+    expect(kejadian.map((item) => item.kind)).toEqual(['events_skipped']);
+    expect(kejadian[0]?.detail).toContain('marah');
+    expect(hasil.beats.length).toBeGreaterThan(0);
+  });
+
+  it('TIDAK mencatat apa pun saat giliran sukses utuh', async () => {
+    const call = vi.fn().mockResolvedValue({ ok: true, scene: adeganSah() });
+    const kejadian: { kind: string; detail: string }[] = [];
+    const mesin = new AiStoryEngine({
+      call,
+      fallback: new DeterministicStoryEngine(),
+      onEvent: (event) => kejadian.push(event),
+    });
+
+    await mesin.generateOpening(konteks);
+
+    expect(kejadian).toEqual([]);
+  });
+});
+
+/**
  * Ekspresi bernama frasa berkoma.
  *
  * Panel admin menghasilkan nama ekspresi seperti

@@ -445,21 +445,33 @@ export async function wizardStep3(ctx: AdminPageContext, worldId: string): Promi
   /*
    * Pilihan hubungan awal.
    *
-   * Pilihan pertama SENGAJA kosong dan tidak dapat dikirim: hubungan awal harus
-   * dipilih, bukan diambil dari nilai bawaan. Dunia yang lahir tanpa sikap awal
-   * membuat mesin cerita tidak punya apa pun untuk diperankan pada adegan
-   * pertama — dan kegagalan itu tidak terlihat sebagai galat, hanya sebagai
-   * tokoh yang bersikap datar.
+   * Wajib, tetapi TIDAK lagi mulai dari kosong: satu rekomendasi SUDAH terpilih
+   * (status aktif dengan posisi terendah yang bukan perasaan paling dalam —
+   * biasanya `normal`). Dua alasan:
+   *
+   * 1. Admin membuat 3-6 karakter per dunia. Meminta pilihan sadar untuk SETIAP
+   *    tokoh mengubah langkah kreatif menjadi enam kali mengklik dropdown yang
+   *    isinya sama — dan pilihan yang dipaksakan berkali-kali lama-lama hanya
+   *    diklik sekenanya.
+   * 2. Rekomendasi tetap terlihat dan dapat diubah sebelum disimpan, jadi yang
+   *    sadar memilih masih bisa memilih; yang ingin cepat tidak terjebak.
+   *
+   * Perasaan paling dalam (`sayang`, `cinta`) sengaja TIDAK direkomendasikan:
+   * hubungan yang dimulai dari puncaknya tidak punya tempat untuk berjalan,
+   * dan itu keputusan kreatif yang seharusnya sadar.
    */
+  const rekomendasi =
+    hubunganAktif.find((relation) => !['sayang', 'cinta'].includes(relation.relationId)) ??
+    hubunganAktif[0];
+
   const pilihanHubungan =
     hubunganAktif.length > 0
-      ? [
-          html`<option value="">(pilih hubungan awal)</option>`,
-          ...hubunganAktif.map(
-            (relation) =>
-              html`<option value="${inputValue(relation.relationId)}">${esc(relation.labelId)}</option>`,
-          ),
-        ]
+      ? hubunganAktif.map(
+          (relation) =>
+            html`<option value="${inputValue(relation.relationId)}"${
+              relation.relationId === rekomendasi?.relationId ? ' selected' : ''
+            }>${esc(relation.labelId)}</option>`,
+        )
       : [html`<option value="">(master hubungan masih kosong)</option>`];
 
   const masterKosong = hubunganAktif.length === 0;
@@ -495,8 +507,9 @@ ${
       <span class="field__hint" id="rel-hint">
         <b>Wajib.</b> Sikap tokoh ini <em>saat cerita dimulai</em> — bukan sikap
         tetapnya. Mesin cerita memerankannya sejak adegan pertama, lalu
-        mengubahnya sesuai tindakanmu selama bermain. Pilihannya datang dari
-        <a href="/admin/relations">master hubungan</a>.
+        mengubahnya sesuai tindakanmu selama bermain. Satu rekomendasi sudah
+        terpilih (biasanya <em>Normal</em>); ganti bila ceritamu menuntut lain.
+        Pilihannya datang dari <a href="/admin/relations">master hubungan</a>.
       </span>
     </div>
   </div>

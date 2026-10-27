@@ -1,0 +1,53 @@
+name: CI
+
+# Gerbang sebelum push menjangkau produksi.
+#
+# Mengapa ini ada: deploy mengikuti push (followsPushes), jadi sebelum CI ada,
+# satu kegagalan `tsc` atau satu uji merah langsung menjadi produksi yang mati
+# di blitz sampai ada hotfix. Dengan gerbang ini, kegagalan berhenti di GitHub.
+#
+# Sengaja sederhana: tanpa caching, tanpa matriks versi. Kompleksitas pipeline
+# yang tidak terpelihara lebih berbahaya daripada menit-build yang lebih lama.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  backend:
+    name: Backend (tsc + vitest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pasang dependensi
+        run: npm ci
+        working-directory: backend
+      - name: Periksa tipe
+        run: npm run typecheck
+        working-directory: backend
+      - name: Uji
+        run: npm run test
+        working-directory: backend
+
+  frontend:
+    name: Frontend (tsc + jest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Pasang dependensi
+        run: npm ci
+        working-directory: frontend
+      - name: Periksa tipe
+        run: npm run typecheck
+        working-directory: frontend
+      - name: Uji
+        run: npm run test
+        working-directory: frontend

@@ -28,6 +28,7 @@ export const id = {
   'sim.badge': 'SIMULATOR',
   'sim.notice':
     'Mode simulator. Cerita di bawah ini berasal dari contoh bawaan, bukan dari AI sungguhan.',
+  'sim.turnNotice': 'Giliran ini ditulis mesin cadangan',
 
   'home.title': 'Beranda',
   'home.searchLabel': 'Cari judul cerita',
@@ -334,6 +335,9 @@ export const id = {
   'player.composerHint':
     'Ketik biasa = kamu mengucapkannya. Apit dengan *bintang* = kamu melakukannya. ' +
     'Mis. "kamu marah?" versus *aku menepuk meja*. Usahamu bisa ditolak atau disalahpahami.',
+  /* Kejujuran soal lamanya: giliran AI memakan 21-35 detik; tanpa angka ini
+   pemain mengira aplikasi macet. */
+  'player.writingScene': 'Menulis adegan… (biasanya sekitar 30 detik)',
   'player.send': 'Kirim',
   'player.charactersLeft': '{count} karakter tersisa',
   'player.customTooLong': 'Tindakanmu terlalu panjang. Pendekkan sedikit.',
@@ -364,6 +368,8 @@ export const id = {
   'log.narration': 'Narasi',
   'log.unknownSpeaker': 'Tokoh',
   'log.you': 'Kamu',
+  'log.historyTitle': 'Bagaimana kami sampai di sini',
+  'log.turnOrdinal': 'Giliran {turn}',
   'log.empty': 'Belum ada yang tercatat di perjalanan ini.',
   'log.readOnly': 'Riwayat hanya untuk dibaca. Entri terbaru ada di atas; gulir ke bawah untuk awal cerita. Membuka riwayat tidak memakai kuota.',
 
@@ -376,6 +382,18 @@ export const id = {
 
   'notice.relationChanged': 'Hubungan dengan {name}: {status}',
   'notice.dismiss': 'Tutup pemberitahuan',
+  /*
+   * Tiga rasa perubahan hubungan (lihat relationMilestone di RelationNotice):
+   * membaik, memburuk, dan mencapai puncak. Teksnya sengaja pendek karena
+   * tampil sebagai label kecil di samping ikon.
+   */
+  'notice.milestoneImprovement': 'Lebih dekat',
+  'notice.milestoneDetermination': 'Menjauh',
+  'notice.milestonePeak': 'Hubungan yang dalam',
+
+  'endArc.title': 'Cerita selesai',
+  'endArc.finalRelations': 'Keadaan hubungan terakhir',
+  'endArc.newJourney': 'Perjalanan baru',
 
   'gateway.retry': 'Coba lagi',
   'gateway.retryHint': 'Percobaan ulang memakai permintaan yang sama, jadi tidak ada biaya ganda.',

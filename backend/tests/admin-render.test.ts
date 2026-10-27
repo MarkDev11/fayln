@@ -57,6 +57,7 @@ import { CatalogRepository } from '../src/repositories/catalogRepository';
 import { JourneyRepository } from '../src/repositories/journeyRepository';
 import { MediaRepository } from '../src/repositories/mediaRepository';
 import { OperationRepository } from '../src/repositories/operationRepository';
+import { EngineEventRepository } from '../src/repositories/engineEventRepository';
 import { ReportRepository } from '../src/repositories/reportRepository';
 import { UsageRepository } from '../src/repositories/usageRepository';
 import { buildApp } from '../src/server';
@@ -120,6 +121,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     characters: new CharactersRepository(ctx.db),
     locations: new LocationsRepository(ctx.db),
     providers: new ProvidersRepository(ctx.db),
+    engineEvents: new EngineEventRepository(ctx.db),
 
     plan: testConfig().plan,
     points: testConfig().points,
@@ -631,10 +633,11 @@ describe('bilah sisi ala System Settings', () => {
      * sebuah menu ditambahkan tanpa ikonnya. Yang dijaga justru saat keduanya
      * berbeda — dan itu terjadi setiap kali ada menu baru.
      *
-     * 15 menu: Dasbor, Dunia, Karakter, Lokasi, Kategori lokasi, Genre,
-     * Hubungan, Aset, Akun, Model, Provider, Promosi, Pengaturan, Admin, Audit.
+     * 16 menu: Dasbor, Dunia, Karakter, Lokasi, Kategori lokasi, Genre,
+     * Hubungan, Aset, Akun, Model, Provider, Promosi, Pengaturan, Admin, Audit,
+     * Mesin cerita.
      */
-    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(15);
+    expect(icons.length, 'jumlah ikon tidak sama dengan jumlah menu').toBe(16);
     expect(body).toContain('--i-a:#0a84ff;--i-b:#0055c4');
     expect(body).toMatch(/nav__icon[^>]*>\s*<svg/);
     expect(body, 'ikon tidak boleh dimuat dari jaringan').not.toMatch(/<img[^>]+src="https?:/);

@@ -52,6 +52,15 @@ export type SceneNotice = {
   kind: 'relationship';
   npcId: string;
   status: RelationEntry['status'];
+  /**
+   * Status NPC SEBELUM perubahan ini diterapkan.
+   *
+   * Dipakai untuk menurunkan arah pencapaian (membaik/menegang) di
+   * `RelationNotice` lewat urutan `position` kosakata. `undefined` bila tidak
+   * ada status sebelumnya — arah tidak dapat ditentukan dan tampilan tetap
+   * netral, bukan arah yang dikarang.
+   */
+  previousStatus?: RelationEntry['status'];
   reasonPublic: string;
 };
 

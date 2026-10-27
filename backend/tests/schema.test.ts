@@ -17,6 +17,7 @@ import {
   runMigrations,
 } from '../src/db/migrate';
 import { createTestDatabase, type TestDatabase } from './helpers/testDb';
+import { JourneyRepository } from '../src/repositories/journeyRepository';
 
 let ctx: TestDatabase;
 
@@ -60,6 +61,8 @@ describe('migrasi', () => {
     '020_akun_pemain.sql',
     '021_master_hubungan.sql',
     '022_ekonomi_poin.sql',
+    '023_engine_events.sql',
+    '024_perjalanan_selesai_bisa_diulang.sql',
   ];
 
   it('menerapkan seluruh berkas migrasi pada database kosong', async () => {
@@ -370,6 +373,96 @@ describe('batasan yang menegakkan aturan domain', () => {
   it('menolak dua perjalanan aktif untuk dunia yang sama (D-12)', async () => {
     await insertJourney('j_pertama');
     await expect(insertJourney('j_kedua')).rejects.toThrow();
+  });
+
+  it('perjalanan yang sudah tamat tidak memblokir perjalanan baru', async () => {
+    /*
+     * ---------------------------------------------------------------------------
+     * PERJALANAN TAMAT = TERMINAL (migrasi 024)
+     * ---------------------------------------------------------------------------
+     * Sebelum migrasi 024, indeks unik `journeys_one_active_per_world` penuh:
+     * satu baris perjalanan APA PUN mengunci dunianya selamanya, sehingga pemain
+     * yang menamatkan cerita tidak bisa memulainya lagi. Sekarang indeksnya
+     * PARSIAL: hanya baris dengan `ended_at IS NULL` yang ditegakkan.
+     *
+     * BUKTI MUTASI: hapus klausa `WHERE ended_at IS NULL` pada
+     * 024_perjalanan_selesai_bisa_diulang.sql, lalu uji ini memerah - penyisipan
+     * kedua ditolak indeks unik penuh.
+     */
+    await insertJourney('j_tamat');
+    await ctx.db.query('UPDATE journeys SET ended_at = now() WHERE journey_id = $1', ['j_tamat']);
+
+    await expect(insertJourney('j_baru')).resolves.toBeDefined();
+
+    // Invariannya tetap: maksimal SATU perjalanan AKTIF.
+    await expect(insertJourney('j_kedua_aktif')).rejects.toThrow();
+  });
+
+  it('mencatat ended_at saat beat endArc di-commit, dan perjalanannya bisa diulang', async () => {
+    /*
+     * Penanda tamat diisi `appendTurn` di transaksi yang sama dengan beatnya,
+     * sehingga tidak ada jalur penyimpanan beat yang dapat melupakannya.
+     *
+     * BUKTI MUTASI: hapus kolom `ended_at` dari UPDATE di `appendTurn`
+     * (journeyRepository.ts), lalu uji ini memerah: `ended_at` tetap null,
+     * perjalanan lama masih dianggap aktif, dan perjalanan baru diblokir.
+     */
+    await insertJourney('j_cerita-rina');
+
+    /*
+     * `turns.operation_id` adalah kunci asing ke `operations` — papan gigi uji
+     * lupa menyisipkan barisnya, sehingga ujinya gagal pada pelanggaran kunci
+     * asing yang tidak berhubungan dengan yang sedang diuji.
+     */
+    await ctx.db.query(
+      `INSERT INTO operations (operation_id, account_id, journey_id, kind, state)
+       VALUES ('op_tamat-001', 'acc_demo', 'j_cerita-rina', 'submit_choice', 'running')`,
+    );
+
+    const journeys = new JourneyRepository(ctx.db);
+    await journeys.appendTurn({
+      turnId: 't_tamat-001',
+      journeyId: 'j_cerita-rina',
+      operationId: 'op_tamat-001',
+      inputKind: 'option',
+      inputOptionId: 'opt1',
+      beats: [
+        { beatId: 't_tamat-001-b001', sequence: 1, event: { type: 'endArc', reasonPublic: 'Cerita selesai.' } },
+      ],
+    });
+
+    const baris = await ctx.db.query<{ ended_at: Date | null }>(
+      'SELECT ended_at FROM journeys WHERE journey_id = $1',
+      ['j_cerita-rina'],
+    );
+    expect(baris.rows[0]?.ended_at).not.toBeNull();
+
+    // Repositori membaca hanya yang aktif...
+    expect(await journeys.findByAccountAndWorld('acc_demo', 'w_bosku-mantan')).toBeNull();
+    // ...sehingga perjalanan baru di dunia yang sama tidak diblokir.
+    await expect(insertJourney('j_cerita-rina-2')).resolves.toBeDefined();
+  });
+
+  it('menerima jenis kejadian mesin yang sah dan menolak yang tidak dikenal', async () => {
+    /*
+     * Tabel `engine_events` hanya menerima jenis dari daftar CHECK-nya. Tanpa
+     * CHECK, salah ketik jenis di kode produksi akan menciptakan jenis baru
+     * secara senyap dan halaman admin kehilangan hitungannya.
+     *
+     * BUKTI MUTASI: hapus CONSTRAINT engine_events_kind_check di
+     * 023_engine_events.sql, lalu uji penolakan di bawah memerah.
+     */
+    await expect(
+      ctx.db.query(
+        `INSERT INTO engine_events (id, kind, detail) VALUES ('ee_uji1', 'simulator_used', 'coba')`,
+      ),
+    ).resolves.toBeDefined();
+
+    await expect(
+      ctx.db.query(
+        `INSERT INTO engine_events (id, kind, detail) VALUES ('ee_uji2', 'jenis_ngarang', 'coba')`,
+      ),
+    ).rejects.toThrow();
   });
 
   it('mengizinkan perjalanan pada dunia berbeda', async () => {

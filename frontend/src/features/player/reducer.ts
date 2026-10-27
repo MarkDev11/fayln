@@ -171,7 +171,11 @@ function applyRelation(
   return copy;
 }
 
-function makeNotice(event: StoryEvent, beatId: string): SceneNotice | null {
+function makeNotice(
+  event: StoryEvent,
+  beatId: string,
+  previousStatus: RelationEntry['status'] | undefined,
+): SceneNotice | null {
   if (event.type !== 'relationshipDelta') {
     return null;
   }
@@ -180,6 +184,7 @@ function makeNotice(event: StoryEvent, beatId: string): SceneNotice | null {
     kind: 'relationship',
     npcId: event.npcId,
     status: coerceRelationStatus(event.status),
+    previousStatus,
     reasonPublic: event.reasonPublic,
   };
 }
@@ -270,8 +275,11 @@ function consume(state: PlaybackState): PlaybackState {
     if (isInstantEvent(event)) {
       scene = applyScene(scene, event);
       if (event.type === 'relationshipDelta') {
+        // Tangkap status LAMA sebelum diterapkan — arah pencapaian di
+        // RelationNotice butuh pembanding, bukan tebakan.
+        const previousStatus = relations.find((item) => item.npcId === event.npcId)?.status;
         relations = applyRelation(relations, event, beat.turnId);
-        const notice = makeNotice(event, beat.beatId);
+        const notice = makeNotice(event, beat.beatId, previousStatus);
         if (notice) {
           notices = [...notices, notice];
         }

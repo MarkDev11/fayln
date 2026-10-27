@@ -22,6 +22,7 @@ export const en: Dictionary = {
   'sim.badge': 'SIMULATOR',
   'sim.notice':
     'Simulator mode. The story below comes from bundled sample data, not from a real AI.',
+  'sim.turnNotice': 'This turn was written by the fallback engine',
 
   'home.title': 'Home',
   'home.searchLabel': 'Search story titles',
@@ -313,6 +314,7 @@ export const en: Dictionary = {
   'player.composerHint':
     'Type plainly = you say it. Wrap in *asterisks* = you do it. ' +
     'e.g. "are you angry?" versus *I slap the table*. Your attempt can be refused or misread.',
+  'player.writingScene': 'Writing the scene… (usually about 30 seconds)',
   'player.send': 'Send',
   'player.charactersLeft': '{count} characters left',
   'player.customTooLong': 'Your action is too long. Try shortening it.',
@@ -343,6 +345,8 @@ export const en: Dictionary = {
   'log.narration': 'Narration',
   'log.unknownSpeaker': 'Character',
   'log.you': 'You',
+  'log.historyTitle': 'How we got here',
+  'log.turnOrdinal': 'Turn {turn}',
   'log.empty': 'Nothing recorded in this journey yet.',
   'log.readOnly': 'History is read-only. Newest entries are at the top; scroll down for the beginning. Opening it costs no quota.',
 
@@ -355,6 +359,13 @@ export const en: Dictionary = {
 
   'notice.relationChanged': 'Relationship with {name}: {status}',
   'notice.dismiss': 'Dismiss notice',
+  'notice.milestoneImprovement': 'Growing closer',
+  'notice.milestoneDetermination': 'Drifting apart',
+  'notice.milestonePeak': 'A deep bond',
+
+  'endArc.title': 'The story ends',
+  'endArc.finalRelations': 'Final relationships',
+  'endArc.newJourney': 'New journey',
 
   'gateway.retry': 'Try again',
   'gateway.retryHint': 'A retry reuses the same request, so nothing is charged twice.',

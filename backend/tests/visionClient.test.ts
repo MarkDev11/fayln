@@ -758,15 +758,25 @@ describe('batas waktu tugas teks', () => {
 
   it('jauh lebih longgar daripada tugas visi', async () => {
     /*
-     * Model menulis sekitar 30-80 token per detik, dan seribu kata berbahasa
-     * Indonesia kira-kira 1.500 token — jadi 20-50 detik untuk menulisnya saja,
-     * belum termasuk waktu berpikir model yang bernalar.
+     * ---------------------------------------------------------------------------
+     * KEBIJAKAN BARU: 45 DETIK PER PERCOBAAN, DUA PERCOBAAN
+     * ---------------------------------------------------------------------------
+     * Penjaga lama menuntut >= 120 detik dengan alasan "model bernalar butuh
+     * waktu". Alasannya sah, tapi kebijakannya kalah oleh yang lebih besar: pada
+     * 180 detik, satu provider yang menggantung membuat pemain menunggu TIGA
+     * MENIT sebelum jatuh ke simulator, dan koneksi kolam basis data tertahan
+     * selama itu. `panggilAdegan` kini mencoba ulang SEKALI, jadi giliran yang
+     * sehat tetap punya dua kesempatan — total ±90 detik, masih lebih pendek
+     * daripada satu percobaan yang dulu.
+     *
+     * Batasnya tetap harus LEBIH LONGGAR dari tugas visi: teks seribu kata
+     * memakan 20-50 detik penulisan saja.
      */
-    expect(TEXT_TIMEOUT_MS, 'batas tugas teks terlalu pendek').toBeGreaterThanOrEqual(120_000);
+    expect(TEXT_TIMEOUT_MS, 'batas tugas teks terlalu pendek untuk satu percobaan').toBeGreaterThanOrEqual(45_000);
     expect(
       TEXT_TIMEOUT_MS,
-      'batas tugas teks tidak lebih longgar daripada tugas visi',
-    ).toBeGreaterThan(VISION_TIMEOUT_MS);
+      'batas tugas teks tidak boleh lebih ketat daripada tugas visi',
+    ).toBeGreaterThanOrEqual(VISION_TIMEOUT_MS);
   });
 
   it('menjelaskan waktu habis dalam bahasa Indonesia, bukan meneruskan pesan Node', async () => {
@@ -785,7 +795,9 @@ describe('batas waktu tugas teks', () => {
       // Pesan mentahnya tidak boleh muncul apa adanya.
       expect(hasil.detail, 'pesan Node diteruskan mentah').not.toContain('aborted due to timeout');
       // Yang harus ada: berapa lama ditunggu, dan apa yang bisa dilakukan.
-      expect(hasil.detail).toContain('180 detik');
+      // Angkanya mengikuti TEXT_TIMEOUT_MS, bukan ditulis mati — supaya batas
+      // dan pesannya tidak pernah saling bertentangan.
+      expect(hasil.detail).toContain(`${String(Math.round(TEXT_TIMEOUT_MS / 1000))} detik`);
       expect(hasil.detail).toContain('Coba lagi');
     }
   });

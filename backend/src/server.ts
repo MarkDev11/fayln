@@ -118,9 +118,12 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
      * aplikasi tampak "tidak dapat menghubungi server" padahal server sehat dan
      * tidak pernah menerima permintaannya.
      *
-     * `x-account-id` masih didaftarkan demi mode transisi (FAYLN_ALLOW_LEGACY_ACCOUNT_HEADER).
+     * `x-account-id` TIDAK didaftarkan lagi: header itu tidak pernah membuktikan
+     * apa pun, dan mencantumkannya di CORS berarti mengumumkan pintu yang sudah
+     * lama ditutup. Mode transisinya juga sudah dihapus — lihat catatan di
+     * `src/http/identity.ts`.
      */
-    allowedHeaders: ['content-type', 'authorization', 'x-account-id'],
+    allowedHeaders: ['content-type', 'authorization'],
     maxAge: 600,
   });
 
@@ -141,9 +144,11 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
       if (token) {
         return token;
       }
-      const raw = request.headers['x-account-id'];
-      const value = Array.isArray(raw) ? raw[0] : raw;
-      return typeof value === 'string' && value.length > 0 ? value : request.ip;
+      // Tanpa token (permintaan anonim ke jalur bebas-identitas), alamat IP
+      // adalah kunci yang tersisa. Header `x-account-id` tidak lagi dipakai
+      // sebagai kunci: ia tidak membuktikan siapa pun, dan memakainya berarti
+      // satu pemain dapat mengunci pemain lain dengan mengarang id-nya.
+      return request.ip;
     },
     // Balasan 429 memakai bentuk kesalahan yang sama dengan kesalahan lain,
     // sehingga frontend tidak perlu menangani dua bentuk.

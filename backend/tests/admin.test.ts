@@ -48,6 +48,7 @@ import { MediaRepository } from '../src/repositories/mediaRepository';
 import { OperationRepository } from '../src/repositories/operationRepository';
 import { ReportRepository } from '../src/repositories/reportRepository';
 import { UsageRepository } from '../src/repositories/usageRepository';
+import { EngineEventRepository } from '../src/repositories/engineEventRepository';
 import { buildApp } from '../src/server';
 import { JourneyService } from '../src/services/journeyService';
 import { DeterministicStoryEngine } from '../src/services/storyEngine';
@@ -103,6 +104,7 @@ async function buildTestApp(): Promise<FastifyInstance> {
     characters,
     locations,
     providers: new ProvidersRepository(ctx.db),
+    engineEvents: new EngineEventRepository(ctx.db),
 
     plan: testConfig().plan,
     points: testConfig().points,
