@@ -11,12 +11,12 @@ import type { CatalogAdminRepository } from '../catalogAdminRepository';
 import type { AccountsAdminRepository } from '../accountsAdminRepository';
 import type { PromotionsRepository } from '../promotionsRepository';
 import type { ModelsRepository } from '../modelsRepository';
-import type { WorldDraftRepository } from '../worldDraftRepository';
+import type { WorldDraftRepository } from '../../repositories/worldDraftRepository';
 import type { GenresRepository } from '../genresRepository';
 import type { CharactersRepository } from '../charactersRepository';
 import type { LocationsRepository } from '../locationsRepository';
 import type { ProvidersRepository } from '../providersRepository';
-import type { RelationsRepository } from '../relationsRepository';
+import type { RelationsRepository } from '../../repositories/relationsRepository';
 import type { EngineEventRepository } from '../../repositories/engineEventRepository';
 import type { MediaRepository } from '../../repositories/mediaRepository';
 

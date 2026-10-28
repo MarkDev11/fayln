@@ -29,7 +29,7 @@
 
 import { randomUUID } from 'node:crypto';
 
-import { freezeRelationVocabulary } from './relationsRepository';
+import { freezeRelationVocabulary } from '../repositories/relationsRepository';
 import type { Database, DbClient } from '../db/pool';
 import type { ContentRating, GenreId, RelationStatus, ResponseLocale } from '../contracts/types';
 

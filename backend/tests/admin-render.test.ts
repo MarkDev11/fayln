@@ -34,7 +34,7 @@ import { AccountsAdminRepository } from '../src/admin/accountsAdminRepository';
 import { AdminRepository } from '../src/admin/adminRepository';
 import { CatalogAdminRepository } from '../src/admin/catalogAdminRepository';
 import { GenresRepository } from '../src/admin/genresRepository';
-import { RelationsRepository } from '../src/admin/relationsRepository';
+import { RelationsRepository } from '../src/repositories/relationsRepository';
 import { CharactersRepository } from '../src/admin/charactersRepository';
 import { LocationsRepository } from '../src/admin/locationsRepository';
 import { ProvidersRepository } from '../src/admin/providersRepository';
@@ -48,7 +48,7 @@ import {
   MAX_WORLD_PREMISE,
   MAX_WORLD_SYNOPSIS,
   WorldDraftRepository,
-} from '../src/admin/worldDraftRepository';
+} from '../src/repositories/worldDraftRepository';
 import { resetLoginAttempts, SESSION_COOKIE } from '../src/admin/session';
 import { parseConfig, type AppConfig } from '../src/config';
 import { AccountRepository } from '../src/repositories/accountRepository';

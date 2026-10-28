@@ -27,8 +27,8 @@
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { RelationsRepository, freezeRelationVocabulary } from '../src/admin/relationsRepository';
-import { WorldDraftRepository } from '../src/admin/worldDraftRepository';
+import { RelationsRepository, freezeRelationVocabulary } from '../src/repositories/relationsRepository';
+import { WorldDraftRepository } from '../src/repositories/worldDraftRepository';
 import { JourneyRepository } from '../src/repositories/journeyRepository';
 import { cocokkanStatus, periksaAdegan } from '../src/services/aiStoryEngine';
 import { buildStoryUserPrompt } from '../src/services/storyPrompt';

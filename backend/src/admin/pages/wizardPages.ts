@@ -24,9 +24,9 @@ import {
   type DraftWorld,
   type NpcRow,
   type WizardStep,
-} from '../worldDraftRepository';
+} from '../../repositories/worldDraftRepository';
 import type { AdminPageContext } from './context';
-import type { RelationRow } from '../relationsRepository';
+import type { RelationRow } from '../../repositories/relationsRepository';
 
 /* ------------------------------------------------------------------ */
 /* Bagian yang dipakai bersama                                        */

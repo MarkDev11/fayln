@@ -35,7 +35,7 @@ import { promotionForm, promotionsList } from './pages/promotionPages';
 import type { SafeHtml } from './html';
 import { ACCEPTED_IMAGE_TYPES, inspectImage } from '../media/imageFile';
 import { isMediaId, type MediaRepository } from '../repositories/mediaRepository';
-import { MAX_WORLD_PREMISE, MAX_WORLD_SYNOPSIS } from './worldDraftRepository';
+import { MAX_WORLD_PREMISE, MAX_WORLD_SYNOPSIS } from '../repositories/worldDraftRepository';
 import type { CharacterFailure } from './charactersRepository';
 import type { CategoryFailure, LocationFailure } from './locationsRepository';
 import type { ModelFailure } from './modelsRepository';

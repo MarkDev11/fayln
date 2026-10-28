@@ -30,7 +30,7 @@ import { ModelsRepository } from '../src/admin/modelsRepository';
 import type { AdminPageContext } from '../src/admin/pages/context';
 import { PromotionsRepository } from '../src/admin/promotionsRepository';
 import { SettingsRepository } from '../src/admin/settingsRepository';
-import { WorldDraftRepository } from '../src/admin/worldDraftRepository';
+import { WorldDraftRepository } from '../src/repositories/worldDraftRepository';
 import { resetLoginAttempts, SESSION_COOKIE } from '../src/admin/session';
 import { parseConfig, type AppConfig } from '../src/config';
 import { AccountRepository } from '../src/repositories/accountRepository';

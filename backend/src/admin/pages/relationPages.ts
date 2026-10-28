@@ -28,7 +28,7 @@
 
 import { esc, escOr, html, inputValue, pill, table, type SafeHtml } from '../html';
 import type { AdminPageContext } from './context';
-import type { RelationRow } from '../relationsRepository';
+import type { RelationRow } from '../../repositories/relationsRepository';
 
 export async function relationsList(ctx: AdminPageContext): Promise<SafeHtml> {
   const relations = await ctx.relations.list();
