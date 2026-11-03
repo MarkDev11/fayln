@@ -43,6 +43,7 @@
 import { randomUUID } from 'node:crypto';
 
 import type { Database } from '../db/pool';
+import { hostRejection } from './hostGuard';
 import { decryptSecret, encryptSecret, SecretsUnavailableError } from './secretBox';
 
 export const MAX_PROVIDER_NAME = 120;
@@ -567,7 +568,7 @@ function isKeyPresent(envName: string): boolean {
  * memanggil alamatnya — mencoba menghubungi setiap alamat yang diketik akan
  * membuat panel menggantung karena satu alamat yang tidak menjawab.
  */
-function normaliseBaseUrl(raw: string): string | null {
+export function normaliseBaseUrl(raw: string): string | null {
   const trimmed = raw.trim().replace(/\/+$/, '');
   if (trimmed.length === 0 || trimmed.length > MAX_BASE_URL) {
     return null;
@@ -584,6 +585,11 @@ function normaliseBaseUrl(raw: string): string | null {
     return null;
   }
   if (parsed.hostname.length === 0) {
+    return null;
+  }
+  // Server mengirim kunci API ke alamat ini; jangan biarkan menunjuk ke jaringan
+  // internal. Lihat `hostGuard.ts` untuk batas perlindungannya.
+  if (hostRejection(parsed, { isProduction: process.env.NODE_ENV === 'production' }) !== null) {
     return null;
   }
   return trimmed;

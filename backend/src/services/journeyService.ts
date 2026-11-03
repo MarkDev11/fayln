@@ -6,9 +6,12 @@
  *
  * Urutan tersebut penting dan disengaja:
  *   1. Operasi yang sudah selesai dikembalikan apa adanya (FR-52).
- *   2. Kuota diperiksa SEBELUM cerita dibuat, bukan sesudah.
+ *   2. Poin DITAHAN secara atomik SEBELUM cerita dibuat (bukan sekadar
+ *      diperiksa): pemeriksaan lalu penagihan belakangan membuat giliran
+ *      paralel sama-sama lolos dan saldo menjadi negatif.
  *   3. Keluaran mesin divalidasi terhadap dunia SEBELUM disimpan (FR-55).
- *   4. Penagihan memakai operation_id yang sama, sehingga tidak dapat ganda.
+ *   4. Beat disimpan DAN poin ditagih dalam SATU transaksi; penagihan memakai
+ *      operation_id yang sama, sehingga tidak dapat ganda.
  *
  * Ekonomi poin (docs/17): adegan PEMBUKA gratis; giliran ditagih tepat
  * SCENE_POINT_COST poin, hanya bila giliran benar-benar ditulis mesin AI.
@@ -22,6 +25,7 @@ import { randomUUID } from 'node:crypto';
 import { AppError, conflict, notFound, quotaExhausted, worldRetired } from '../contracts/errors';
 import type {
   Beat,
+  ContentRating,
   JourneyDetailDTO,
   JourneySessionDTO,
   JourneySummary,
@@ -33,7 +37,8 @@ import type {
 import type { CatalogRepository } from '../repositories/catalogRepository';
 import type { JourneyRepository } from '../repositories/journeyRepository';
 import type { OperationRepository } from '../repositories/operationRepository';
-import type { UsageRepository } from '../repositories/usageRepository';
+import type { PointReservation, UsageRepository } from '../repositories/usageRepository';
+import { sanitizePlayerText } from './storyPrompt';
 import {
   gantiPenandaBeats,
   karakterDenganEkspresiTampil,
@@ -68,7 +73,11 @@ function ringkasBeatTerakhir(beats: Beat[], jumlah = 12): string[] {
         baris.push(`${e.npcId}: ${e.text}`);
         break;
       case 'playerInput':
-        baris.push(`[pemain ${e.inputKind === 'choice' ? 'memilih' : 'menulis'}: ${e.text}]`);
+        // Teks pemain masuk lagi ke prompt giliran berikutnya lewat sini, jadi
+        // diperlakukan sama seperti masukan baru: satu baris, tanpa pembatas.
+        baris.push(
+          `[pemain ${e.inputKind === 'choice' ? 'memilih' : 'menulis'}: ${sanitizePlayerText(e.text)}]`,
+        );
         break;
       case 'setBackground':
         baris.push(`[latar berpindah ke ${e.assetId}]`);
@@ -123,9 +132,22 @@ export type OpeningBackgroundPicker = (
   backgrounds: { assetId: string; label: string }[],
 ) => Promise<string | null>;
 
+/** Umur minimum pembaca per rating konten. */
+const MIN_AGE_BY_RATING: Record<ContentRating, number> = {
+  all: 0,
+  '13_plus': 13,
+  '18_plus': 18,
+};
+
 export type CreateJourneyCommand = {
   operationId: string;
   accountId: string;
+  /**
+   * Umur yang dinyatakan akun, atau null bila tidak diisi / tidak diketahui.
+   * Hanya klaim pemain sendiri, tetapi server tetap menegakkannya: batas yang
+   * hanya ada di klien tidak menghalangi siapa pun.
+   */
+  accountAge?: number | null;
   worldId: string;
   persona: { name: string; age: number };
   responseLocale: ResponseLocale;
@@ -197,6 +219,26 @@ export class JourneyService {
     const detail = await this.deps.catalog.getWorldDetail(command.worldId, world.world_version);
     if (!detail) {
       throw notFound('Cerita tidak ditemukan.');
+    }
+
+    /*
+     * Rating konten ditegakkan di SERVER.
+     *
+     * Persona wajib memenuhi umur minimum. Bila akun menyatakan umurnya, akun
+     * juga wajib memenuhinya — kalau tidak, akun 14 tahun cukup mengisi persona
+     * berumur 40 untuk membuka cerita 18+. Akun yang umurnya kosong hanya dinilai
+     * dari persona; menolaknya sama sekali membuat pendaftaran tanpa umur tak
+     * dapat membaca apa pun.
+     */
+    const minAge = MIN_AGE_BY_RATING[detail.contentRating] ?? 0;
+    const accountTooYoung =
+      command.accountAge !== undefined && command.accountAge !== null && command.accountAge < minAge;
+    if (command.persona.age < minAge || accountTooYoung) {
+      throw new AppError({
+        code: 'VALIDATION',
+        message: `Cerita ini untuk pembaca berusia ${String(minAge)} tahun ke atas.`,
+        internalDetail: `rating=${detail.contentRating} personaAge=${String(command.persona.age)} accountAge=${String(command.accountAge ?? 'null')}`,
+      });
     }
 
     // Adegan pembuka GRATIS (docs/17 bagian 3 butir 3): membuat perjalanan
@@ -401,6 +443,7 @@ export class JourneyService {
         inputKind: 'opening',
         inputOptionId: null,
         beats: generated.beats,
+        expectedTurnCount: 0,
       });
 
       /*
@@ -427,8 +470,7 @@ export class JourneyService {
       return { journeyId, worldVersion: world.world_version, opening: envelope };
     } catch (error) {
       // Operasi gagal dilepas agar percobaan ulang dapat dikerjakan (FR-52).
-      await this.deps.operations.fail(command.operationId, toErrorCode(error));
-      await this.deps.operations.releaseFailed(command.operationId);
+      await this.releaseOperation(command.operationId, error);
       throw error;
     }
   }
@@ -503,14 +545,19 @@ export class JourneyService {
    * Dipakai klien untuk menanyakan hasil operasi yang tertunda, misalnya setelah
    * permintaan pertama terputus sebelum balasannya diterima (FR-52).
    */
-  async operationStatus(operationId: string): Promise<{
+  async operationStatus(
+    operationId: string,
+    accountId: string,
+  ): Promise<{
     operationId: string;
     state: 'running' | 'succeeded' | 'failed';
     result: TurnResultEnvelope | null;
     errorCode: string | null;
   }> {
     const operation = await this.deps.operations.find(operationId);
-    if (!operation) {
+    // Milik akun lain dijawab sama persis dengan "tidak ada": id operasi dibuat
+    // klien, dan hasilnya memuat isi cerita pemilik aslinya.
+    if (!operation || operation.accountId !== accountId) {
       throw notFound('Operasi tidak ditemukan.');
     }
     return {
@@ -549,8 +596,6 @@ export class JourneyService {
       throw worldRetired();
     }
 
-    await this.assertQuotaAvailable(command.accountId);
-
     const claimed = await this.deps.operations.claim({
       operationId: command.operationId,
       accountId: command.accountId,
@@ -564,6 +609,14 @@ export class JourneyService {
       }
       throw conflict('Permintaan ini sedang diproses. Coba lagi sebentar lagi.');
     }
+
+    /*
+     * Poin yang ditahan untuk giliran ini. `null` berarti tidak ada yang perlu
+     * dilepas — baik belum ditahan maupun sudah ditagih/dilepas. Pelepasan di
+     * `catch` hanya boleh terjadi sekali, kalau tidak `reserved` milik giliran
+     * lain ikut berkurang.
+     */
+    let reservation: PointReservation | null = null;
 
     try {
       const existingBeats = await this.deps.journeys.beats(command.journeyId);
@@ -663,6 +716,16 @@ export class JourneyService {
         ...(command.optionId !== undefined ? { optionId: command.optionId } : null),
       };
 
+      /*
+       * TAHAN poin sebelum memanggil model. Ini SATU pernyataan atomik, bukan
+       * pemeriksaan yang diikuti penagihan belakangan; lihat `UsageRepository.reserve`.
+       */
+      const reserved = await this.deps.usage.reserve(command.accountId, this.deps.now());
+      if (!reserved.ok) {
+        throw await this.reserveFailure(command.accountId, reserved.reason);
+      }
+      reservation = reserved.reservation;
+
       const generated = this.siapkan(await this.deps.engine.generateTurn(context), context);
       const issues = validateEngineBeats(generated.beats, context);
       if (issues.length > 0) {
@@ -700,15 +763,6 @@ export class JourneyService {
         }),
       ];
 
-      const revision = await this.deps.journeys.appendTurn({
-        turnId,
-        journeyId: command.journeyId,
-        operationId: command.operationId,
-        inputKind: command.optionId ? 'option' : 'custom',
-        inputOptionId: command.optionId ?? null,
-        beats: committedBeats,
-      });
-
       /*
        * Tagih hanya bila giliran ini benar-benar ditulis MESIN AI (docs/17
        * bagian 3 butir 3).
@@ -717,19 +771,46 @@ export class JourneyService {
        *   - mesin yang terpasang simulator (mode uji/rudi);
        *   - mesin AI menyerahkan giliran ini ke simulator cadangan
        *     (modelId === SIMULATOR_MODEL_ID).
-       * Pemain tidak membayar untuk barang yang tidak jadi. Jalur yang gagal
-       * (SUBMIT_FAILED) tidak pernah sampai ke sini — galat dilempar sebelum
-       * penagihan, sehingga tidak ditagih juga.
+       * Pemain tidak membayar untuk barang yang tidak jadi — poin yang ditahan
+       * dilepas. Jalur yang gagal tidak pernah sampai ke sini; galatnya
+       * ditangkap di bawah dan reservasinya dilepas.
+       *
+       * Untuk giliran yang ditagih, penagihan berjalan DI DALAM transaksi
+       * penyimpanan beat: keduanya berhasil bersama atau batal bersama.
        */
       const simulatorTurn =
         this.deps.engine.isSimulator || generated.modelId === SIMULATOR_MODEL_ID;
-      if (!simulatorTurn) {
-        await this.charge(command.accountId, command.operationId, {
-          promptTokens: generated.usage.promptTokens,
-          completionTokens: generated.usage.completionTokens,
-          // Tepat biaya poin satu adegan — bukan estimasi token mesin.
-          chargedTotal: this.deps.usage.sceneCost,
-        });
+      const held = reservation;
+
+      const revision = await this.deps.journeys.appendTurn(
+        {
+          turnId,
+          journeyId: command.journeyId,
+          operationId: command.operationId,
+          inputKind: command.optionId ? 'option' : 'custom',
+          inputOptionId: command.optionId ?? null,
+          beats: committedBeats,
+          expectedTurnCount: countTurns(existingBeats),
+        },
+        simulatorTurn
+          ? undefined
+          : async (client) => {
+              await this.deps.usage.settleReservation(client, {
+                reservation: held,
+                operationId: command.operationId,
+                entryId: `ue_${randomUUID()}`,
+                promptTokens: generated.usage.promptTokens,
+                completionTokens: generated.usage.completionTokens,
+              });
+            },
+      );
+
+      if (simulatorTurn) {
+        reservation = null;
+        await this.deps.usage.release(held);
+      } else {
+        // Sudah ditagih di dalam transaksi; tidak ada yang tersisa untuk dilepas.
+        reservation = null;
       }
 
       const envelope = await this.buildEnvelope({
@@ -747,8 +828,14 @@ export class JourneyService {
       await this.deps.operations.complete(command.operationId, envelope);
       return envelope;
     } catch (error) {
-      await this.deps.operations.fail(command.operationId, toErrorCode(error));
-      await this.deps.operations.releaseFailed(command.operationId);
+      if (reservation) {
+        try {
+          await this.deps.usage.release(reservation);
+        } catch {
+          // Gagal melepas tidak boleh menutupi galat aslinya.
+        }
+      }
+      await this.releaseOperation(command.operationId, error);
       throw error;
     }
   }
@@ -765,6 +852,22 @@ export class JourneyService {
    * `@user` mentah di layar padahal namanya sudah diisi di lembar persona.
    * Diletakkan di satu fungsi supaya jalur yang ditulis nanti tidak dapat lupa.
    */
+  /**
+   * Menandai operasi gagal lalu melepasnya supaya dapat dicoba ulang.
+   *
+   * Galat pembersihan DITELAN: pemanggilnya sedang melempar galat yang
+   * sebenarnya, dan galat sekunder dari sini tidak boleh menggantikannya —
+   * pemain dan log harus melihat sebab aslinya, bukan akibat pembersihannya.
+   */
+  private async releaseOperation(operationId: string, cause: unknown): Promise<void> {
+    try {
+      await this.deps.operations.fail(operationId, toErrorCode(cause));
+      await this.deps.operations.releaseFailed(operationId);
+    } catch {
+      // Klaim yang tertinggal diambil alih setelah STALE_CLAIM_MS.
+    }
+  }
+
   private siapkan(hasil: StoryEngineResult, context: StoryContext): StoryEngineResult {
     return { ...hasil, beats: gantiPenandaBeats(hasil.beats, context) };
   }
@@ -784,39 +887,32 @@ export class JourneyService {
   }
 
   /**
-   * Memastikan poin cukup untuk SATU giliran sebelum cerita disusun (FR-50).
+   * Galat untuk penahanan poin yang ditolak (FR-50).
    *
    * Sejak ekonomi poin (docs/17), biaya satu giliran adalah ANGKA PASTI dari
    * konfigurasi (`SCENE_POINT_COST`, bawaan 10), bukan estimasi token mesin.
    * Tanpa klaim harian, `available` memang 0 — dan pesannya mengarahkan
    * pemain ke popup klaim, bukan sekadar "coba lagi besok".
    */
-  private async assertQuotaAvailable(accountId: string): Promise<void> {
-    const usage = await this.deps.usage.usage(accountId, this.deps.now());
-
-    if (usage.available < usage.sceneCost) {
-      throw quotaExhausted(
-        usage.claimableToday
-          ? 'Sisa poinmu belum cukup untuk melanjutkan cerita. Klaim poin harianmu dulu dari Beranda — gratis, sekali sehari.'
-          : 'Sisa poin harianmu sudah habis. Riwayat dan pengaturan tetap bisa dibuka; poin baru bisa diklaim besok.',
-      );
-    }
-  }
-
-  private async charge(
+  private async reserveFailure(
     accountId: string,
-    operationId: string,
-    usage: { promptTokens: number; completionTokens: number; chargedTotal: number },
-  ): Promise<void> {
-    await this.deps.usage.charge({
-      accountId,
-      operationId,
-      entryId: `ue_${randomUUID()}`,
-      promptTokens: usage.promptTokens,
-      completionTokens: usage.completionTokens,
-      chargedTotal: usage.chargedTotal,
-      at: this.deps.now(),
-    });
+    reason: 'insufficient' | 'global-cap',
+  ): Promise<AppError> {
+    if (reason === 'global-cap') {
+      return new AppError({
+        code: 'MAINTENANCE',
+        message: 'Layanan cerita sedang sangat padat hari ini. Coba lagi besok.',
+        retryable: false,
+        internalDetail: 'GLOBAL_DAILY_POINT_CAP tercapai.',
+      });
+    }
+
+    const usage = await this.deps.usage.usage(accountId, this.deps.now());
+    return quotaExhausted(
+      usage.claimableToday
+        ? 'Sisa poinmu belum cukup untuk melanjutkan cerita. Klaim poin harianmu dulu dari Beranda — gratis, sekali sehari.'
+        : 'Sisa poin harianmu sudah habis. Riwayat dan pengaturan tetap bisa dibuka; poin baru bisa diklaim besok.',
+    );
   }
 
   private async buildEnvelope(input: {

@@ -33,6 +33,24 @@ jobs:
       - name: Uji
         run: npm run test
         working-directory: backend
+      # Informatif, bukan gerbang: temuan di dependensi transitif sering belum
+      # punya perbaikan, dan memerahkan CI karenanya membuat tim terbiasa
+      # mengabaikan CI. Hasilnya tetap terlihat di log.
+      - name: Audit dependensi produksi
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: backend
+        continue-on-error: true
+
+  # Deploy memakai Dockerfile ini langsung (blitz.cloud). Tanpa langkah ini,
+  # Dockerfile yang rusak baru ketahuan SETELAH push menjangkau produksi.
+  backend-image:
+    name: Backend (docker build)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Bangun image (tanpa push)
+        run: docker build --platform linux/amd64 -t fayln-backend:ci .
+        working-directory: backend
 
   frontend:
     name: Frontend (tsc + jest)
@@ -51,3 +69,7 @@ jobs:
       - name: Uji
         run: npm run test
         working-directory: frontend
+      - name: Audit dependensi produksi
+        run: npm audit --omit=dev --audit-level=high
+        working-directory: frontend
+        continue-on-error: true

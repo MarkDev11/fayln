@@ -55,6 +55,24 @@ export class SecretsUnavailableError extends Error {
   }
 }
 
+/**
+ * Kekuatan kunci yang terpasang.
+ *
+ * - `absent`: tidak terpasang.
+ * - `strong`: base64 persis 32 byte — bentuk yang seharusnya.
+ * - `weak`: frasa biasa yang di-hash. Ia tetap diterima (menolaknya membuat
+ *   seluruh kunci tersimpan tiba-tiba tak terbaca), tetapi seaman frasanya
+ *   dan di-hash tanpa fungsi penurun kunci yang lambat. Server memberi
+ *   peringatan saat mulai supaya kunci diganti secara terencana.
+ */
+export function secretsKeyStrength(): 'absent' | 'strong' | 'weak' {
+  const raw = process.env[SECRETS_KEY_ENV];
+  if (typeof raw !== 'string' || raw.trim().length === 0) {
+    return 'absent';
+  }
+  return Buffer.from(raw.trim(), 'base64').length === KEY_BYTES ? 'strong' : 'weak';
+}
+
 /** Apakah kunci enkripsi tersedia. Dipakai panel untuk menonaktifkan bidangnya. */
 export function secretsKeyConfigured(): boolean {
   return readKey() !== null;

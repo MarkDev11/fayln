@@ -27,7 +27,7 @@ import { GenresRepository } from './admin/genresRepository';
 import { RelationsRepository } from './repositories/relationsRepository';
 import { CharactersRepository } from './admin/charactersRepository';
 import { LocationsRepository } from './admin/locationsRepository';
-import { ProvidersRepository } from './admin/providersRepository';
+import { ProvidersRepository, type ApiType as ProviderApiType } from './admin/providersRepository';
 import { validatePassword } from './admin/password';
 import type { AdminPageContext } from './admin/pages/context';
 import { parseConfig } from './config';
@@ -45,11 +45,11 @@ import { UsageRepository } from './repositories/usageRepository';
 import { EngineEventRepository } from './repositories/engineEventRepository';
 import { buildApp } from './server';
 import { JourneyService } from './services/journeyService';
-import { chooseOpeningBackground } from './admin/visionClient';
+import { chooseOpeningBackground, generateStoryScene } from './admin/visionClient';
+import { secretsKeyStrength } from './admin/secretBox';
 import { AiStoryEngine } from './services/aiStoryEngine';
 import type { StorySceneCall } from './services/aiStoryEngine';
 import type { OpeningBackgroundPicker } from './services/journeyService';
-import { generateStoryScene } from './admin/visionClient';
 import { DeterministicStoryEngine } from './services/storyEngine';
 
 async function main(): Promise<void> {
@@ -107,9 +107,21 @@ async function main(): Promise<void> {
    * repositori kuota tidak boleh bergantung pada repositori panel admin.
    */
   const settingsRepository = new SettingsRepository(db);
-  const usage = new UsageRepository(db, config.points, () =>
-    settingsRepository.quotaMultiplier('free'),
+  const usage = new UsageRepository(
+    db,
+    config.points,
+    () => settingsRepository.quotaMultiplier('free'),
+    config.abuse.globalDailyPointCap,
   );
+
+  const keyStrength = secretsKeyStrength();
+  if (keyStrength === 'weak') {
+    logger.warn(
+      {},
+      'FAYLN_SECRETS_KEY bukan base64 32 byte: kunci enkripsi diturunkan dari frasa dan selemah frasanya. ' +
+        'Buat kunci acak (openssl rand -base64 32) lalu simpan ulang kunci API provider.',
+    );
+  }
 
   // Akun diadakan saat pertama kali terlihat. Klien membuat ID perangkat sendiri,
   // jadi baris `accounts`-nya belum ada sampai hook identitas membuatkannya.
@@ -156,41 +168,19 @@ async function main(): Promise<void> {
   const providerRepo = new ProvidersRepository(db);
   const modelRepo = new ModelsRepository(db);
 
-  const pickOpeningBackground: OpeningBackgroundPicker = async (narration, backgrounds) => {
-    const model = (await modelRepo.listModels()).find(
-      (item) => item.isActive && item.providerId !== null,
-    );
-    if (!model?.providerId) {
-      return null;
-    }
-
-    const provider = await providerRepo.find(model.providerId);
-    if (!provider) {
-      return null;
-    }
-
-    const apiKey = await providerRepo.apiKeyFor(provider.providerId);
-    if (!apiKey) {
-      return null;
-    }
-
-    const hasil = await chooseOpeningBackground(
-      { baseUrl: provider.baseUrl, apiType: provider.apiType, modelKey: model.modelKey },
-      apiKey,
-      { narration, backgrounds },
-    );
-
-    return hasil.ok ? hasil.assetId : null;
-  };
-
   /*
-   * Mesin cerita berbasis MODEL, dengan simulator sebagai CADANGAN.
-   *
-   * Setiap giliran kini bergantung pada model. Tanpa cadangan, satu kegagalan
-   * jaringan menghentikan cerita di tengah dan pemain tidak dapat berbuat apa pun.
-   * Simulator memang sederhana, tetapi ia selalu berhasil.
+   * Model aktif dibaca ulang paling sering tiap 15 detik, bukan di setiap
+   * giliran: tiap pemanggilan sebelumnya memuat seluruh daftar model, mencari
+   * provider, dan mendekripsi kunci API. Akibatnya perubahan di panel (ganti
+   * model, putar kunci) berlaku paling lambat 15 detik kemudian.
    */
-  const panggilAdegan: StorySceneCall = async (systemPrompt, userPrompt) => {
+  const ACTIVE_MODEL_TTL_MS = 15_000;
+  type ActiveModel =
+    | { ok: true; endpoint: { baseUrl: string; apiType: ProviderApiType; modelKey: string }; apiKey: string }
+    | { ok: false; detail: string };
+  let activeModelCache: { at: number; value: ActiveModel } | null = null;
+
+  const loadActiveModel = async (): Promise<ActiveModel> => {
     const model = (await modelRepo.listModels()).find(
       (item) => item.isActive && item.providerId !== null,
     );
@@ -208,11 +198,54 @@ async function main(): Promise<void> {
       return { ok: false, detail: 'Provider belum punya kunci API.' };
     }
 
-    const hasil = await generateStoryScene(
-      { baseUrl: provider.baseUrl, apiType: provider.apiType, modelKey: model.modelKey },
+    return {
+      ok: true,
+      endpoint: { baseUrl: provider.baseUrl, apiType: provider.apiType, modelKey: model.modelKey },
       apiKey,
-      { systemPrompt, userPrompt },
-    );
+    };
+  };
+
+  const activeModel = async (): Promise<ActiveModel> => {
+    const now = Date.now();
+    if (activeModelCache && now - activeModelCache.at < ACTIVE_MODEL_TTL_MS) {
+      return activeModelCache.value;
+    }
+    const value = await loadActiveModel();
+    activeModelCache = { at: now, value };
+    return value;
+  };
+
+  const pickOpeningBackground: OpeningBackgroundPicker = async (narration, backgrounds) => {
+    const active = await activeModel();
+    if (!active.ok) {
+      return null;
+    }
+
+    const hasil = await chooseOpeningBackground(active.endpoint, active.apiKey, {
+      narration,
+      backgrounds,
+    });
+
+    return hasil.ok ? hasil.assetId : null;
+  };
+
+  /*
+   * Mesin cerita berbasis MODEL, dengan simulator sebagai CADANGAN.
+   *
+   * Setiap giliran kini bergantung pada model. Tanpa cadangan, satu kegagalan
+   * jaringan menghentikan cerita di tengah dan pemain tidak dapat berbuat apa pun.
+   * Simulator memang sederhana, tetapi ia selalu berhasil.
+   */
+  const panggilAdegan: StorySceneCall = async (systemPrompt, userPrompt) => {
+    const active = await activeModel();
+    if (!active.ok) {
+      return { ok: false, detail: active.detail };
+    }
+
+    const hasil = await generateStoryScene(active.endpoint, active.apiKey, {
+      systemPrompt,
+      userPrompt,
+    });
 
     return hasil.ok
       ? { ok: true, scene: hasil.scene }

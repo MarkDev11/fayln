@@ -21,9 +21,12 @@
  *    akunnya tidak ditemukan — tanpa itu, waktu balasan membedakan keduanya
  *    walaupun pesannya sama.
  *
- * 3. Pembatasan percobaan memakai pola yang sama dengan panel admin
- *    (`src/admin/session.ts`): dihitung per email, disimpan di memori. Ia hanya
- *    memperlambat penebakan; pengaman utamanya tetap scrypt yang lambat.
+ * 3. Pembatasan percobaan masuk dihitung per `email|alamat IP`, BUKAN per email
+ *    saja, ditambah batas kegagalan per IP. Per email saja membuat siapa pun
+ *    dapat mengunci akun korban dengan sepuluh percobaan gagal ke emailnya.
+ *    Disimpan di memori (satu instance); ia hanya memperlambat penebakan,
+ *    pengaman utamanya tetap scrypt yang lambat. Pendaftaran dibatasi per IP
+ *    per jam supaya akun massal tidak murah.
  *
  * 4. Token sesi dikembalikan di BADAN balasan, bukan cookie. Aplikasi ini
  *    berjalan di perangkat (Expo) maupun peramban, dan cookie lintas asal
@@ -36,50 +39,38 @@ import type { FastifyInstance } from 'fastify';
 import { AppError } from '../contracts/errors';
 import { loginBodySchema, registerBodySchema } from '../http/schemas';
 import { hashPassword, verifyPassword } from '../admin/password';
+import { WindowLimiter } from '../http/limiter';
 import type { AuthRepository } from '../repositories/authRepository';
 
 /**
- * Pembatasan percobaan masuk, per email.
+ * Pembatasan percobaan masuk.
  *
- * Disimpan di memori dengan sengaja — sama seperti panel admin. Kalau instance
- * dijalankan ulang, hitungannya nol lagi, dan itu dapat diterima: tujuannya
- * memperlambat penebakan, bukan menjadi pengaman utama.
+ * Dua lapis, keduanya hanya menghitung KEGAGALAN:
+ *   - per `email|ip`: menahan penebakan satu akun dari satu sumber, tanpa
+ *     memberi orang lain kemampuan mengunci akun itu;
+ *   - per ip: menahan satu sumber yang menebak banyak email.
+ *
+ * Di memori dengan sengaja; hilang saat restart dan itu dapat diterima.
  */
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
 const LOGIN_MAX_ATTEMPTS = 10;
+const LOGIN_MAX_FAILURES_PER_IP = 30;
 
-type Attempt = { count: number; firstAt: number };
-const loginAttempts = new Map<string, Attempt>();
+const loginByEmailIp = new WindowLimiter({ max: LOGIN_MAX_ATTEMPTS, windowMs: LOGIN_WINDOW_MS });
+const loginByIp = new WindowLimiter({ max: LOGIN_MAX_FAILURES_PER_IP, windowMs: LOGIN_WINDOW_MS });
+
+/** Pendaftaran per IP. Batasnya dari konfigurasi, jadi dibuat per aplikasi. */
+const REGISTER_WINDOW_MS = 60 * 60 * 1000;
+
+/** Pembatas pendaftaran yang dibuat per instance aplikasi; direset bersama yang lain. */
+const registerLimiters = new Set<WindowLimiter>();
 
 export function resetLoginAttempts(): void {
-  loginAttempts.clear();
-}
-
-function recordLoginFailure(key: string): void {
-  const now = Date.now();
-  const existing = loginAttempts.get(key);
-  if (!existing || now - existing.firstAt > LOGIN_WINDOW_MS) {
-    loginAttempts.set(key, { count: 1, firstAt: now });
-    return;
+  loginByEmailIp.reset();
+  loginByIp.reset();
+  for (const limiter of registerLimiters) {
+    limiter.reset();
   }
-  existing.count += 1;
-}
-
-function isLoginBlocked(key: string): boolean {
-  const now = Date.now();
-  const existing = loginAttempts.get(key);
-  if (!existing) {
-    return false;
-  }
-  if (now - existing.firstAt > LOGIN_WINDOW_MS) {
-    loginAttempts.delete(key);
-    return false;
-  }
-  return existing.count >= LOGIN_MAX_ATTEMPTS;
-}
-
-function clearLoginFailures(key: string): void {
-  loginAttempts.delete(key);
 }
 
 /**
@@ -103,8 +94,13 @@ function userAgentOf(headers: Record<string, unknown>): string {
 
 export function registerAuthRoutes(
   app: FastifyInstance,
-  deps: { auth: AuthRepository },
+  deps: { auth: AuthRepository; registerMaxPerIpHour?: number },
 ): void {
+  const registerLimiter = new WindowLimiter({
+    max: deps.registerMaxPerIpHour ?? 10,
+    windowMs: REGISTER_WINDOW_MS,
+  });
+  registerLimiters.add(registerLimiter);
   /**
    * Daftar.
    *
@@ -113,6 +109,21 @@ export function registerAuthRoutes(
    * "pendaftaran berhasil, tetapi masuk gagal".
    */
   app.post('/v1/auth/register', async (request, reply) => {
+    /*
+     * Dihitung SEBELUM validasi dan sebelum scrypt: setiap percobaan, sah atau
+     * tidak, memakan CPU. Penghitungnya per IP, jadi pemain lain di jaringan
+     * berbeda tidak terpengaruh.
+     */
+    const registerState = registerLimiter.consume(request.ip);
+    if (registerState.blocked) {
+      throw new AppError({
+        code: 'RATE_LIMITED',
+        message: 'Terlalu banyak pendaftaran dari jaringan ini. Coba lagi nanti.',
+        retryable: true,
+        retryAfterSec: registerState.retryAfterSec,
+      });
+    }
+
     const body = registerBodySchema.parse(request.body);
 
     const existing = await deps.auth.findByEmail(body.email);
@@ -150,6 +161,13 @@ export function registerAuthRoutes(
       throw error;
     }
 
+    // Pembersihan murah dan tidak boleh menggagalkan pendaftaran.
+    try {
+      await deps.auth.deleteExpiredSessions();
+    } catch {
+      // Diabaikan dengan sengaja.
+    }
+
     const session = await deps.auth.createSession({
       accountId: account.accountId,
       userAgent: userAgentOf(request.headers as Record<string, unknown>),
@@ -173,12 +191,16 @@ export function registerAuthRoutes(
   app.post('/v1/auth/login', async (request) => {
     const body = loginBodySchema.parse(request.body);
 
-    if (isLoginBlocked(body.email)) {
+    const emailIpKey = `${body.email}|${request.ip}`;
+    const blocked = [loginByEmailIp.check(emailIpKey), loginByIp.check(request.ip)].find(
+      (state) => state.blocked,
+    );
+    if (blocked) {
       throw new AppError({
         code: 'RATE_LIMITED',
         message: 'Terlalu banyak percobaan masuk. Tunggu sebentar, lalu coba lagi.',
         retryable: true,
-        retryAfterSec: Math.ceil(LOGIN_WINDOW_MS / 1000),
+        retryAfterSec: blocked.retryAfterSec || Math.ceil(LOGIN_WINDOW_MS / 1000),
       });
     }
 
@@ -188,7 +210,8 @@ export function registerAuthRoutes(
     const ok = await verifyPassword(body.password, found?.passwordHash ?? DUMMY_HASH);
 
     if (!found || !ok) {
-      recordLoginFailure(body.email);
+      loginByEmailIp.hit(emailIpKey);
+      loginByIp.hit(request.ip);
       throw new AppError({
         code: 'UNAUTHORIZED',
         message: 'Email atau kata sandi salah.',
@@ -196,7 +219,7 @@ export function registerAuthRoutes(
       });
     }
 
-    clearLoginFailures(body.email);
+    loginByEmailIp.clear(emailIpKey);
 
     // Pembersihan murah dan tidak boleh menggagalkan proses masuk.
     try {

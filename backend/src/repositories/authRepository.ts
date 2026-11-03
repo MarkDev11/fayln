@@ -30,6 +30,24 @@ import type { Database } from '../db/pool';
  */
 export const PLAYER_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 
+/**
+ * Sesi yang tidak dipakai selama ini dianggap mati, walau belum kedaluwarsa.
+ *
+ * Token tersimpan lama di perangkat (di web: `localStorage`). Tanpa batas
+ * idle, token yang bocor dari perangkat yang sudah ditinggalkan tetap sah
+ * sampai 30 hari. Dengan batas ini, token yang tidak pernah dipakai lagi mati
+ * dalam 14 hari tanpa mengganggu pemain aktif.
+ */
+export const PLAYER_SESSION_IDLE_MS = 14 * 24 * 60 * 60 * 1000;
+
+/**
+ * Jeda minimum antar pembaruan `last_seen_at`.
+ *
+ * Tanpa jeda, setiap permintaan ber-token menulis ke basis data. Ketelitian
+ * lima menit sangat cukup untuk batas idle yang diukur dalam hari.
+ */
+export const SESSION_TOUCH_INTERVAL_MS = 5 * 60 * 1000;
+
 export type PlayerAccount = {
   accountId: string;
   email: string;
@@ -116,6 +134,15 @@ export class AuthRepository {
     };
   }
 
+  /** Umur yang dinyatakan akun, atau null bila tidak diisi / akun tidak ada. */
+  async ageOf(accountId: string): Promise<number | null> {
+    const { rows } = await this.db.query<{ age: number | null }>(
+      'SELECT age FROM accounts WHERE account_id = $1 LIMIT 1',
+      [accountId],
+    );
+    return rows[0]?.age ?? null;
+  }
+
   async updateLastLogin(accountId: string): Promise<void> {
     await this.db.query('UPDATE accounts SET last_login_at = now(), updated_at = now() WHERE account_id = $1', [
       accountId,
@@ -146,9 +173,11 @@ export class AuthRepository {
    * pemanggil tidak perlu membedakannya, dan membedakannya hanya akan memberi
    * tahu penyerang apakah sebuah token pernah ada.
    */
-  async resolveSession(token: string): Promise<PlayerAccount | null> {
-    const { rows } = await this.db.query<AccountRow & { expires_at: Date | string }>(
-      `SELECT a.account_id, a.email, a.display_name, a.age, s.expires_at
+  async resolveSession(token: string, at: Date = new Date()): Promise<PlayerAccount | null> {
+    const { rows } = await this.db.query<
+      AccountRow & { expires_at: Date | string; last_seen_at: Date | string }
+    >(
+      `SELECT a.account_id, a.email, a.display_name, a.age, s.expires_at, s.last_seen_at
        FROM player_sessions s
        JOIN accounts a ON a.account_id = s.account_id
        WHERE s.session_hash = $1
@@ -161,7 +190,12 @@ export class AuthRepository {
       return null;
     }
 
-    if (new Date(row.expires_at).getTime() <= Date.now()) {
+    if (new Date(row.expires_at).getTime() <= at.getTime()) {
+      return null;
+    }
+
+    // Sesi yang menganggur terlalu lama dianggap mati (lihat PLAYER_SESSION_IDLE_MS).
+    if (at.getTime() - new Date(row.last_seen_at).getTime() >= PLAYER_SESSION_IDLE_MS) {
       return null;
     }
 
@@ -173,11 +207,16 @@ export class AuthRepository {
     };
   }
 
-  /** Memperbarui `last_seen_at`. Kegagalannya tidak boleh menggagalkan permintaan. */
-  async touchSession(token: string): Promise<void> {
-    await this.db.query('UPDATE player_sessions SET last_seen_at = now() WHERE session_hash = $1', [
-      hashSessionToken(token),
-    ]);
+  /**
+   * Memperbarui `last_seen_at`, paling sering sekali per `SESSION_TOUCH_INTERVAL_MS`.
+   * Kegagalannya tidak boleh menggagalkan permintaan.
+   */
+  async touchSession(token: string, at: Date = new Date()): Promise<void> {
+    await this.db.query(
+      `UPDATE player_sessions SET last_seen_at = $2
+       WHERE session_hash = $1 AND last_seen_at < $3`,
+      [hashSessionToken(token), at, new Date(at.getTime() - SESSION_TOUCH_INTERVAL_MS)],
+    );
   }
 
   /** Keluar: mencabut satu sesi. Idempoten. */
@@ -191,7 +230,10 @@ export class AuthRepository {
    * Tanpa ini tabelnya tumbuh selamanya. Dipanggil saat masuk, bukan lewat
    * penjadwal — jumlahnya kecil dan pembersihannya murah.
    */
-  async deleteExpiredSessions(): Promise<void> {
-    await this.db.query('DELETE FROM player_sessions WHERE expires_at <= now()');
+  async deleteExpiredSessions(at: Date = new Date()): Promise<void> {
+    await this.db.query(
+      'DELETE FROM player_sessions WHERE expires_at <= $1 OR last_seen_at <= $2',
+      [at, new Date(at.getTime() - PLAYER_SESSION_IDLE_MS)],
+    );
   }
 }

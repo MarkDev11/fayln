@@ -272,6 +272,9 @@ async function sendToProvider(
       },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(tugas.timeoutMs),
+      // Pengalihan tidak diikuti: penyedia di alamat publik dapat mengalihkan ke
+      // alamat internal, dan kunci API ikut terkirim ke sana.
+      redirect: 'error',
     });
   } catch (error) {
     /*

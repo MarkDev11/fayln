@@ -27,6 +27,14 @@ const positiveInt = (fallback: number) =>
     .transform((value) => (value === undefined || value.trim() === '' ? fallback : Number(value)))
     .pipe(z.number().int().positive());
 
+/** Bilangan bulat >= 0. Nol berarti "dimatikan". */
+const nonNegativeInt = (fallback: number) =>
+  z
+    .string()
+    .optional()
+    .transform((value) => (value === undefined || value.trim() === '' ? fallback : Number(value)))
+    .pipe(z.number().int().min(0));
+
 const envSchema = z.object({
   NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
 
@@ -68,8 +76,26 @@ const envSchema = z.object({
   FREE_CONTEXT_TOKENS: positiveInt(64_000),
   PAID_CONTEXT_TOKENS: positiveInt(256_000),
 
+  /** Batas permintaan per AKUN terbukti per jendela. */
   RATE_LIMIT_MAX: positiveInt(60),
   RATE_LIMIT_WINDOW_MS: positiveInt(60_000),
+  /**
+   * Batas per ALAMAT IP = RATE_LIMIT_MAX x faktor ini.
+   *
+   * Lebih longgar dari batas akun karena satu IP publik dapat dipakai banyak
+   * pemain (kantor, kampus, CGNAT), tetapi tetap membatasi permintaan yang
+   * tidak membawa identitas terbukti.
+   */
+  RATE_LIMIT_IP_FACTOR: positiveInt(5),
+
+  /** Pendaftaran akun baru per alamat IP per jam. */
+  REGISTER_MAX_PER_IP_HOUR: positiveInt(10),
+  /**
+   * Anggaran poin seluruh pemain per hari WIB (terpakai + tertahan).
+   * 0 = tanpa batas. Pengaman biaya: akun massal tidak dapat menguras
+   * kuota penyedia model tanpa batas.
+   */
+  GLOBAL_DAILY_POINT_CAP: nonNegativeInt(0),
 });
 
 export type AppConfig = {
@@ -93,7 +119,12 @@ export type AppConfig = {
     streakBonusPoints: number;
     streakCycleDays: number;
   };
-  rateLimit: { max: number; windowMs: number };
+  rateLimit: { max: number; windowMs: number; ipFactor: number };
+  abuse: {
+    registerMaxPerIpHour: number;
+    /** 0 = tanpa batas. */
+    globalDailyPointCap: number;
+  };
 };
 
 export function parseConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
@@ -131,6 +162,14 @@ export function parseConfig(env: NodeJS.ProcessEnv = process.env): AppConfig {
       streakBonusPoints: value.STREAK_BONUS_POINTS,
       streakCycleDays: value.STREAK_CYCLE_DAYS,
     },
-    rateLimit: { max: value.RATE_LIMIT_MAX, windowMs: value.RATE_LIMIT_WINDOW_MS },
+    rateLimit: {
+      max: value.RATE_LIMIT_MAX,
+      windowMs: value.RATE_LIMIT_WINDOW_MS,
+      ipFactor: value.RATE_LIMIT_IP_FACTOR,
+    },
+    abuse: {
+      registerMaxPerIpHour: value.REGISTER_MAX_PER_IP_HOUR,
+      globalDailyPointCap: value.GLOBAL_DAILY_POINT_CAP,
+    },
   };
 }

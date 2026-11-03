@@ -20,7 +20,11 @@ import type { JourneyService } from '../services/journeyService';
 
 export function registerJourneyRoutes(
   app: FastifyInstance,
-  deps: { journeys: JourneyService },
+  deps: {
+    journeys: JourneyService;
+    /** Umur yang dinyatakan akun, untuk menegakkan rating konten di server. */
+    accountAge?: (accountId: string) => Promise<number | null>;
+  },
 ): void {
   app.get('/v1/journeys', async (request) => {
     const accountId = resolveAccountId(request);
@@ -35,6 +39,7 @@ export function registerJourneyRoutes(
     const result = await deps.journeys.createJourney({
       operationId: body.clientOperationId,
       accountId,
+      accountAge: (await deps.accountAge?.(accountId)) ?? null,
       worldId: body.worldId,
       persona: body.persona,
       responseLocale: body.responseLocale,
@@ -58,8 +63,9 @@ export function registerJourneyRoutes(
 
   /** Keadaan operasi yang tertunda (FR-52). */
   app.get('/v1/operations/:operationId', async (request) => {
+    const accountId = resolveAccountId(request);
     const { operationId } = operationParamsSchema.parse(request.params);
-    return deps.journeys.operationStatus(operationId);
+    return deps.journeys.operationStatus(operationId, accountId);
   });
 
   /** Sesi bermain: beat, baseline hubungan, dan dunia yang dikunci. */

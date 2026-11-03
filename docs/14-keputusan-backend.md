@@ -1,15 +1,22 @@
 # 14 — Keputusan Arsitektur Backend
 
-> Versi 1.0 · 30 September 2026 · Status: **usulan yang sudah dijalankan**, menunggu peninjauan.
+> Versi 1.1 · 30 September 2026 (diperbarui 3 November 2026) · Status: **usulan yang sudah dijalankan**, menunggu peninjauan.
 > Dokumen ini melengkapi [09](09-arsitektur-frontend-dan-kontrak.md) dan tidak menggantikannya.
+>
+> **Catatan pembaruan 3 November 2026:** bagian 1 dan 6 di bawah ditulis sebelum panel admin
+> (`src/admin/`), akun pemain dan sesi (`routes/auth.ts`, migrasi 020), serta ekonomi poin
+> ([17](17-rencana-ekonomi-poin-harian.md)) dibangun; semuanya kini ada. B-02 (autentikasi)
+> **sudah diputuskan**: email + kata sandi (scrypt) dengan token sesi, lihat
+> `src/http/identity.ts`. Perbaikan keamanan dan integritas hasil audit ada di
+> [18](18-rencana-perbaikan-audit.md).
 
 ## 1. Lingkup
 
 Backend fayLN menyediakan: katalog dan kanon dunia, akun dan perjalanan, penyimpanan beat,
 pengelolaan kuota, orkestrasi model AI, validasi hasil AI, dan penerimaan laporan.
 
-Yang **tidak** dikerjakan pada tahap ini: panel admin, pembayaran, dan integrasi model
-produksi. Ketiganya tetap terkunci oleh O-08a/O-08b/O-09 di dokumen 02.
+Yang **tidak** dikerjakan pada tahap ini: ~~panel admin~~ (sudah ada), pembayaran, dan
+integrasi model produksi penuh. Pembayaran tetap terkunci oleh O-09 di dokumen 02.
 
 ## 2. Batasan platform yang membentuk keputusan
 
@@ -189,7 +196,7 @@ tetapi itu menambah satu aplikasi ke kuota paket.
 | ID | Pertanyaan | Status |
 |---|---|---|
 | B-01 | Penyedia dan model AI (Free dan Paid) | Terkunci; lihat O-08a/O-08b |
-| B-02 | Metode autentikasi dan penerbitan sesi | Belum diputuskan |
+| B-02 | Metode autentikasi dan penerbitan sesi | **Diputuskan:** email + kata sandi (scrypt), token sesi 30 hari dengan batas idle 14 hari |
 | B-03 | Penyedia pembayaran dan penegakan entitlement | Belum diputuskan |
 | B-04 | Retensi data, enkripsi kolom, dan pemulihan bencana | D-26 masih terbuka |
 | B-05 | Apakah egress ke penyedia model diizinkan dari sandbox runtime | **Harus diuji, bukan diasumsikan** |

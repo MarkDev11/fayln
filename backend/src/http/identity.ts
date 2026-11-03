@@ -35,6 +35,7 @@
 
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 
+import { AppError } from '../contracts/errors';
 import { readBearerToken } from '../routes/auth';
 
 /** Akun demo yang dibuat oleh migrasi seed. */
@@ -141,6 +142,14 @@ export function registerIdentityHook(
     resolveToken?: (token: string) => Promise<string | null>;
     /** Memperbarui `last_seen_at`. Opsional dan tidak boleh menggagalkan. */
     touchToken?: (token: string) => Promise<void>;
+    /**
+     * Menghitung satu permintaan untuk akun yang SUDAH TERBUKTI.
+     *
+     * Dipanggil hanya setelah token diverifikasi terhadap basis data. Batas
+     * per-akun tidak boleh memakai nilai token mentah sebagai kunci sebelum
+     * itu: token palsu yang berbeda-beda membuat bucket baru setiap kali.
+     */
+    limitAccount?: (accountId: string) => { blocked: boolean; retryAfterSec: number };
   },
 ): void {
   app.addHook('onRequest', async (request) => {
@@ -165,6 +174,15 @@ export function registerIdentityHook(
     if (token && deps.resolveToken) {
       const accountId = await deps.resolveToken(token);
       if (accountId) {
+        const limit = deps.limitAccount?.(accountId);
+        if (limit?.blocked) {
+          throw new AppError({
+            code: 'RATE_LIMITED',
+            message: 'Kamu mengirim permintaan terlalu cepat. Tunggu sebentar, lalu coba lagi.',
+            retryable: true,
+            retryAfterSec: limit.retryAfterSec,
+          });
+        }
         (request as WithIdentity)[RESOLVED] = accountId;
         if (deps.touchToken) {
           try {

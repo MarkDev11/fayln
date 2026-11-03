@@ -19,6 +19,11 @@ project2/
 └── frontend/   <- disiapkan, sengaja kosong sampai gate persetujuan
 ```
 
+> **Pembaruan 3 November 2026:** diagram dan paragraf ini menggambarkan keadaan **saat dokumen
+> ditulis (29 September 2026)**. Sejak itu `backend/` (Fastify + PostgreSQL, panel admin, akun,
+> ekonomi poin) dan `frontend/` (Expo) sudah dibangun; lihat [14](14-keputusan-backend.md) dan
+> [18](18-rencana-perbaikan-audit.md). Bagian ini dibiarkan sebagai catatan sejarah.
+
 Tidak ada aplikasi, server, database, pemanggilan AI, pembelian, akun cloud, atau aset gambar yang dibuat pada tahap ini. Contoh JSON dan struktur kode di dalam dokumen adalah **spesifikasi**, bukan implementasi. Backend dibahas hanya sejauh diperlukan agar frontend tidak dibangun di atas asumsi yang salah.
 
 Rencana ini berdiri sendiri. Stack Laravel, aturan HTML tanpa framework, dan metode kerja khusus `project1` tidak otomatis diwariskan ke `project2`.

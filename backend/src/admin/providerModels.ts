@@ -123,6 +123,8 @@ export async function fetchProviderModels(
       method: 'GET',
       headers: { accept: 'application/json', ...authHeaders(endpoint.apiType, apiKey) },
       signal: AbortSignal.timeout(MODELS_TIMEOUT_MS),
+      // Lihat catatan di visionClient: pengalihan membawa kunci API ke tempat lain.
+      redirect: 'error',
     });
   } catch (error) {
     // Termasuk waktu habis dan DNS gagal. Pesannya dipakai apa adanya karena

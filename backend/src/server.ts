@@ -18,7 +18,8 @@ import type { AdminRepository } from './admin/adminRepository';
 import type { AdminPageContext } from './admin/pages/context';
 import { registerAdminAuthHook } from './admin/session';
 import { registerAssetRoutes, defaultAssetsRoot } from './routes/assets';
-import { registerAuthRoutes, readBearerToken } from './routes/auth';
+import { registerAuthRoutes } from './routes/auth';
+import { WindowLimiter } from './http/limiter';
 import { registerCatalogRoutes } from './routes/catalog';
 import { registerHealthRoutes } from './routes/health';
 import { registerJourneyRoutes } from './routes/journeys';
@@ -128,36 +129,38 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   });
 
   /* ---------------- Rate limit (FR-73) ---------------- */
+  /*
+   * Dua lapis, dan urutannya penting.
+   *
+   * 1. Lapis ini (`onRequest`, SEBELUM identitas diselesaikan) berkunci ALAMAT
+   *    IP. Dulu kuncinya nilai header `Authorization` apa adanya, padahal nilai
+   *    itu belum dibuktikan: setiap token palsu yang berbeda membuka bucket
+   *    baru, jadi batas ini bisa dilewati tanpa batas (terukur: token palsu
+   *    berbeda masing-masing mendapat sisa jatah penuh). Batasnya dilonggarkan
+   *    dengan faktor karena satu IP dapat dipakai banyak pemain.
+   * 2. Batas per AKUN dipasang di hook identitas, hanya untuk akun yang token-
+   *    nya sudah dibuktikan terhadap basis data.
+   */
   await app.register(rateLimit, {
-    max: deps.config.rateLimit.max,
+    max: deps.config.rateLimit.max * deps.config.rateLimit.ipFactor,
     timeWindow: deps.config.rateLimit.windowMs,
-    // Kunci per akun, bukan per alamat IP: satu kantor dengan satu IP publik
-    // tidak boleh saling memblokir.
-    keyGenerator: (request) => {
-      /*
-       * Token sesi dipakai lebih dulu. Sebelum login ada, kuncinya adalah header
-       * `x-account-id`; sekarang header itu tidak lagi dipercaya, sehingga
-       * memakai token membuat batasnya tetap per pemain. Nilainya sudah berupa
-       * token acak dari server, jadi aman dipakai sebagai kunci.
-       */
-      const token = readBearerToken(request.headers.authorization);
-      if (token) {
-        return token;
-      }
-      // Tanpa token (permintaan anonim ke jalur bebas-identitas), alamat IP
-      // adalah kunci yang tersisa. Header `x-account-id` tidak lagi dipakai
-      // sebagai kunci: ia tidak membuktikan siapa pun, dan memakainya berarti
-      // satu pemain dapat mengunci pemain lain dengan mengarang id-nya.
-      return request.ip;
-    },
-    // Balasan 429 memakai bentuk kesalahan yang sama dengan kesalahan lain,
-    // sehingga frontend tidak perlu menangani dua bentuk.
-    errorResponseBuilder: (_request, context) => ({
-      code: 'RATE_LIMITED',
-      message: 'Kamu mengirim permintaan terlalu cepat. Tunggu sebentar, lalu coba lagi.',
-      retryable: true,
-      retryAfterSec: Math.ceil(context.ttl / 1000),
-    }),
+    keyGenerator: (request) => request.ip,
+    /*
+     * Balasan 429 memakai bentuk kesalahan yang sama dengan kesalahan lain,
+     * sehingga frontend tidak perlu menangani dua bentuk.
+     *
+     * HARUS berupa `AppError`, bukan objek biasa: plugin melempar apa pun yang
+     * dikembalikan di sini ke `setErrorHandler`, dan objek tanpa `statusCode`
+     * jatuh ke cabang "kesalahan tak terduga" — balasannya HTTP 500, bukan 429,
+     * sehingga klien menganggap server rusak alih-alih menunggu.
+     */
+    errorResponseBuilder: (_request, context) =>
+      new AppError({
+        code: 'RATE_LIMITED',
+        message: 'Kamu mengirim permintaan terlalu cepat. Tunggu sebentar, lalu coba lagi.',
+        retryable: true,
+        retryAfterSec: Math.ceil(context.ttl / 1000),
+      }),
   });
 
   /* ---------------- Penanganan galat ---------------- */
@@ -267,8 +270,14 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   // Sejak 9 Oktober 2026 hook ini juga MENYELESAIKAN IDENTITAS dari token sesi:
   // akun tidak lagi berasal dari klaim yang dikirim klien, melainkan dari token
   // yang dibuktikan terhadap tabel `player_sessions`.
+  const accountLimiter = new WindowLimiter({
+    max: deps.config.rateLimit.max,
+    windowMs: deps.config.rateLimit.windowMs,
+  });
+
   registerIdentityHook(app, {
     accounts: deps.accounts,
+    limitAccount: (accountId) => accountLimiter.consume(accountId),
     resolveToken: async (token) => {
       const account = await deps.auth.resolveSession(token);
       return account?.accountId ?? null;
@@ -278,10 +287,16 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   // Didaftarkan setelah hook identitas agar rute auth melewatinya (lihat daftar
   // jalur publik di dalam hook).
-  registerAuthRoutes(app, { auth: deps.auth });
+  registerAuthRoutes(app, {
+    auth: deps.auth,
+    registerMaxPerIpHour: deps.config.abuse.registerMaxPerIpHour,
+  });
 
   registerCatalogRoutes(app, { catalog: deps.catalog });
-  registerJourneyRoutes(app, { journeys: deps.journeys });
+  registerJourneyRoutes(app, {
+    journeys: deps.journeys,
+    accountAge: (accountId) => deps.auth.ageOf(accountId),
+  });
   registerUsageAndReportRoutes(app, { usage: deps.usage, reports: deps.reports });
 
   /** Ringkasan konfigurasi publik. Tidak memuat rahasia apa pun. */

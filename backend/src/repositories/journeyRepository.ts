@@ -9,7 +9,8 @@
  * - Beat tidak dapat diubah: tidak ada UPDATE atau DELETE pada tabel `beats`.
  */
 
-import type { Database } from '../db/pool';
+import { conflict } from '../contracts/errors';
+import type { Database, DbClient } from '../db/pool';
 import type {
   Beat,
   JourneyDetailDTO,
@@ -447,20 +448,53 @@ export class JourneyRepository {
    * BUKTI MUTASI: hapus kolom `ended_at` dari UPDATE di bawah, lalu uji
    * "mencatat ended_at saat beat endArc di-commit" memerah.
    */
-  async appendTurn(input: {
-    turnId: string;
-    journeyId: string;
-    operationId: string;
-    inputKind: 'opening' | 'option' | 'custom';
-    inputOptionId: string | null;
-    beats: { beatId: string; sequence: number; event: StoryEvent }[];
-  }): Promise<number> {
+  async appendTurn(
+    input: {
+      turnId: string;
+      journeyId: string;
+      operationId: string;
+      inputKind: 'opening' | 'option' | 'custom';
+      inputOptionId: string | null;
+      beats: { beatId: string; sequence: number; event: StoryEvent }[];
+      /**
+       * Jumlah turn yang diharapkan sudah ada pada perjalanan ini.
+       *
+       * Pemeriksaan "keputusan ini belum dijawab" di layanan terjadi SEBELUM
+       * transaksi ini, jadi dua permintaan bersamaan sama-sama melihat keputusan
+       * yang belum dijawab. Angka ini diperiksa DI DALAM transaksi, setelah baris
+       * perjalanan dikunci, sehingga yang kalah berlomba ditolak (CONFLICT) alih-
+       * alih menyimpan turn kedua dengan `revision` yang sama.
+       */
+      expectedTurnCount?: number;
+    },
+    /**
+     * Pekerjaan tambahan yang HARUS ikut atomik dengan penyimpanan beat,
+     * misalnya menagih poin. Bila melempar, seluruh turn dibatalkan.
+     */
+    within?: (client: DbClient) => Promise<void>,
+  ): Promise<number> {
     return this.db.transaction(async (client) => {
+      /*
+       * Mengunci baris perjalanan.
+       *
+       * `UPDATE` pada baris yang sama menahan transaksi lain sampai yang ini
+       * selesai (kunci baris PostgreSQL), tanpa `SELECT ... FOR UPDATE` yang
+       * tidak didukung mesin uji. Pada READ COMMITTED, pernyataan berikutnya
+       * melihat turn yang baru saja di-commit pemenang.
+       */
+      await client.query('UPDATE journeys SET updated_at = now() WHERE journey_id = $1', [
+        input.journeyId,
+      ]);
+
       const countResult = await client.query<{ count: string }>(
         'SELECT COUNT(*)::text AS count FROM turns WHERE journey_id = $1',
         [input.journeyId],
       );
-      const revision = Number.parseInt(countResult.rows[0]?.count ?? '0', 10) + 1;
+      const existingTurns = Number.parseInt(countResult.rows[0]?.count ?? '0', 10);
+      if (input.expectedTurnCount !== undefined && existingTurns !== input.expectedTurnCount) {
+        throw conflict('Keputusan ini sudah dijawab atau tidak lagi berlaku.');
+      }
+      const revision = existingTurns + 1;
 
       await client.query(
         `INSERT INTO turns (turn_id, journey_id, revision, operation_id, input_kind, input_option_id)
@@ -490,6 +524,10 @@ export class JourneyRepository {
          WHERE journey_id = $1`,
         [input.journeyId, input.beats.some((beat) => beat.event.type === 'endArc')],
       );
+
+      if (within) {
+        await within(client);
+      }
 
       return revision;
     });

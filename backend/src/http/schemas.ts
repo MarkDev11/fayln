@@ -73,11 +73,27 @@ export const operationParamsSchema = z.object({
   operationId: z.string().min(1).max(120),
 });
 
+/**
+ * Nama persona masuk ke prompt model, jadi karakter yang dapat memecah struktur
+ * prompt ditolak di pintu masuk: kontrol (termasuk baris baru), pembalik arah
+ * tulisan, tanda kutip, kurung sudut/kurawal, dan garis miring terbalik.
+ * Huruf dari aksara apa pun, angka, spasi, titik, apostrof, dan tanda hubung
+ * tetap sah.
+ */
+const PERSONA_NAME_FORBIDDEN = /[\p{Cc}\u2028\u2029\u202A-\u202E\u2066-\u2069"`<>{}\\]/u;
+
 export const createJourneyBodySchema = z.object({
   clientOperationId: z.string().min(8).max(120),
   worldId: z.string().min(1).max(80),
   persona: z.object({
-    name: z.string().trim().min(1).max(30),
+    name: z
+      .string()
+      .trim()
+      .min(1)
+      .max(30)
+      .refine((value) => !PERSONA_NAME_FORBIDDEN.test(value), {
+        message: 'Nama mengandung karakter yang tidak diizinkan.',
+      }),
     age: z.number().int().min(13).max(99),
   }),
   responseLocale: z.enum(RESPONSE_LOCALES),

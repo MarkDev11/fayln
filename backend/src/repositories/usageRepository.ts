@@ -58,6 +58,27 @@ export type UsageRow = {
   reserved: number;
 };
 
+/**
+ * Poin yang sedang ditahan untuk satu giliran.
+ *
+ * `dateKey` dibawa bersama reservasi, bukan dihitung ulang saat settle: giliran
+ * yang dimulai sebelum tengah malam WIB dan selesai sesudahnya harus tetap
+ * menyelesaikan baris hari ia ditahan, kalau tidak `reserved_tokens` hari
+ * lama tertahan selamanya.
+ */
+export type PointReservation = {
+  accountId: string;
+  dateKey: string;
+  points: number;
+};
+
+export type ReserveResult =
+  | { ok: true; reservation: PointReservation }
+  /** Saldo hari ini (sudah diklaim - terpakai - tertahan) tidak cukup. */
+  | { ok: false; reason: 'insufficient' }
+  /** Anggaran harian seluruh pemain habis (GLOBAL_DAILY_POINT_CAP). */
+  | { ok: false; reason: 'global-cap' };
+
 type DayRow = { tier: string; spent_tokens: string; reserved_tokens: string };
 type ClaimRow = { base_points: string; bonus_points: string; streak_day: string };
 
@@ -77,6 +98,13 @@ export class UsageRepository {
      * menyiapkan apa pun.
      */
     private readonly quotaMultiplier: () => Promise<number> = async () => 1,
+    /**
+     * Anggaran poin seluruh pemain per hari WIB; 0 = tanpa batas.
+     * Pemeriksaannya lunak (bukan atomik antar akun): dua giliran yang
+     * berbarengan tepat di ambang dapat sama-sama lolos. Itu dapat diterima —
+     * tujuannya memutus pengurasan massal, bukan akuntansi tepat.
+     */
+    private readonly globalDailyPointCap: number = 0,
   ) {}
 
   /** Biaya poin satu giliran; dipakai layanan perjalanan untuk pra-pemeriksaan. */
@@ -299,6 +327,140 @@ export class UsageRepository {
         [input.accountId, dateKey, input.chargedTotal],
       );
     });
+  }
+
+  /**
+   * Menahan poin satu giliran SECARA ATOMIK, sebelum model dipanggil.
+   *
+   * Memeriksa saldo lalu menagih belakangan (pola lama) membuat N giliran
+   * paralel di perjalanan berbeda sama-sama lolos pemeriksaan, lalu semuanya
+   * ditagih: saldo negatif dan adegan gratis. Di sini pemeriksaan dan penahanan
+   * adalah SATU `UPDATE` berkondisi pada baris hari itu, jadi PostgreSQL yang
+   * menserialkan pesaingnya — yang kalah mendapat rowCount 0.
+   *
+   * Poin yang ditahan langsung mengurangi `available`, sehingga giliran lain
+   * tidak dapat memakainya selama model bekerja.
+   */
+  async reserve(accountId: string, at: Date = new Date()): Promise<ReserveResult> {
+    const dateKey = jakartaDateKey(at);
+    const points = this.rules.sceneCost;
+
+    return this.db.transaction(async (client): Promise<ReserveResult> => {
+      const claim = await this.readClaim(client, accountId, dateKey);
+      const awarded = claim
+        ? Number.parseInt(claim.base_points, 10) + Number.parseInt(claim.bonus_points, 10)
+        : 0;
+      if (awarded < points) {
+        return { ok: false, reason: 'insufficient' };
+      }
+
+      await client.query(
+        `INSERT INTO usage_days (account_id, usage_date, tier, spent_tokens, reserved_tokens)
+         VALUES ($1, $2, 'free', 0, 0)
+         ON CONFLICT (account_id, usage_date) DO NOTHING`,
+        [accountId, dateKey],
+      );
+
+      if (this.globalDailyPointCap > 0) {
+        const { rows } = await client.query<{ total: string }>(
+          `SELECT coalesce(sum(spent_tokens + reserved_tokens), 0)::text AS total
+           FROM usage_days WHERE usage_date = $1`,
+          [dateKey],
+        );
+        const total = Number.parseInt(rows[0]?.total ?? '0', 10);
+        if (total + points > this.globalDailyPointCap) {
+          return { ok: false, reason: 'global-cap' };
+        }
+      }
+
+      // Syaratnya: terpakai + tertahan + biaya <= diklaim, ditulis sebagai
+      // terpakai + tertahan <= diklaim - biaya agar hanya satu sisi memuat kolom.
+      const { rowCount } = await client.query(
+        `UPDATE usage_days
+         SET reserved_tokens = reserved_tokens + $3, updated_at = now()
+         WHERE account_id = $1 AND usage_date = $2
+           AND spent_tokens + reserved_tokens <= $4`,
+        [accountId, dateKey, points, awarded - points],
+      );
+      if (rowCount === 0) {
+        return { ok: false, reason: 'insufficient' };
+      }
+
+      return { ok: true, reservation: { accountId, dateKey, points } };
+    });
+  }
+
+  /**
+   * Melepas poin yang ditahan tanpa menagih: giliran gagal, ditolak validasi,
+   * atau jatuh ke simulator. Aman dipanggil pada reservasi yang sudah hilang
+   * (tidak mengurangi di bawah nol).
+   */
+  async release(reservation: PointReservation): Promise<void> {
+    await this.db.query(
+      `UPDATE usage_days
+       SET reserved_tokens = reserved_tokens - $3::bigint, updated_at = now()
+       WHERE account_id = $1 AND usage_date = $2 AND reserved_tokens >= $3::bigint`,
+      [reservation.accountId, reservation.dateKey, reservation.points],
+    );
+  }
+
+  /**
+   * Mengubah reservasi menjadi tagihan, DI DALAM transaksi pemanggil.
+   *
+   * Dipanggil dari dalam transaksi `appendTurn`, jadi beat tersimpan dan poin
+   * terpotong sebagai satu kesatuan: tidak ada keadaan "adegan tersimpan tetapi
+   * penagihan gagal" (atau sebaliknya).
+   *
+   * `usage_entries.operation_id` unik, jadi penagihan ganda tetap ditolak
+   * database.
+   */
+  async settleReservation(
+    client: Queryable,
+    input: {
+      reservation: PointReservation;
+      operationId: string;
+      entryId: string;
+      promptTokens: number;
+      completionTokens: number;
+    },
+  ): Promise<void> {
+    const { reservation } = input;
+
+    await client.query(
+      `INSERT INTO usage_entries (
+         entry_id, account_id, usage_date, operation_id,
+         prompt_tokens, completion_tokens, charged_total
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+      [
+        input.entryId,
+        reservation.accountId,
+        reservation.dateKey,
+        input.operationId,
+        input.promptTokens,
+        input.completionTokens,
+        reservation.points,
+      ],
+    );
+
+    /*
+     * `$3::bigint` WAJIB pada pengurangan. Mesin uji (pg-mem) menghitung
+     * `kolom - $param` dengan operand terbalik bila parameternya tak bertipe:
+     * `reserved_tokens - $3` dengan 20 dan 10 dinilai -10 dan ditolak
+     * `usage_days_non_negative` (terukur). PostgreSQL asli menghitungnya benar;
+     * cast eksplisit membuat keduanya sepakat.
+     */
+    const { rowCount } = await client.query(
+      `UPDATE usage_days
+       SET spent_tokens = spent_tokens + $3::bigint,
+           reserved_tokens = reserved_tokens - $3::bigint,
+           updated_at = now()
+       WHERE account_id = $1 AND usage_date = $2 AND reserved_tokens >= $3::bigint`,
+      [reservation.accountId, reservation.dateKey, reservation.points],
+    );
+    if (rowCount === 0) {
+      // Melempar membatalkan transaksi: beat tidak boleh tersimpan tanpa tagihan.
+      throw new Error('Reservasi poin tidak ditemukan saat menagih.');
+    }
   }
 
   /** Baris `usage_days` hari terkait, atau null bila belum ada. */
