@@ -6,6 +6,8 @@
  * gagal, dan hanya nama berkas berkarakter aman yang boleh lewat.
  */
 
+import { resolve } from 'node:path';
+
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import type { FastifyInstance } from 'fastify';
 
@@ -24,8 +26,14 @@ import { DeterministicStoryEngine } from '../src/services/storyEngine';
 
 import { createTestDatabase, type TestDatabase } from './helpers/testDb';
 
-/** Folder aset nyata di repositori ini, dipakai juga oleh uji integrasi. */
-const REAL_ASSETS = 'C:/Users/arfandi/workspaces/Portofolio/project2/backend/assets';
+/**
+ * Folder aset nyata di repositori ini, dipakai juga oleh uji integrasi.
+ *
+ * Dihitung dari lokasi berkas uji ini, BUKAN jalur tetap: versi sebelumnya
+ * menulis jalur Windows milik satu mesin, sehingga di CI (Linux) asetnya tidak
+ * ditemukan dan empat uji gagal dengan 404.
+ */
+const REAL_ASSETS = resolve(__dirname, '..', 'assets');
 
 let ctx: TestDatabase;
 let app: FastifyInstance;
@@ -90,7 +98,7 @@ describe('keamanan jalur aset', () => {
     const result = safeAssetPath('portrait/./p_x.png', REAL_ASSETS);
     expect(result).toContain('portrait');
     expect(result?.endsWith('p_x.png')).toBe(true);
-    expect(result?.startsWith(REAL_ASSETS.replace(/\//g, '\\'))).toBe(true);
+    expect(result?.startsWith(resolve(REAL_ASSETS))).toBe(true);
   });
 
   it('menolak akhiran berkas yang tidak diizinkan', () => {
